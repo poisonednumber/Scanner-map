@@ -1,0 +1,1326 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+:root {
+    --primary-color: #00ff00;
+    --background-color: #000000;
+    --text-color: #00ff00;
+    --border-color: #00ff00;
+    --hover-color: #003300;
+}
+
+body, html {
+    font-family: 'Share Tech Mono', monospace;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background-color: var(--background-color);
+    color: var(--text-color);
+}
+
+#map {
+    height: 100vh;
+    width: 100%;
+}
+
+#control-panel {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.left-controls, .right-controls {
+    display: flex;
+    align-items: center;
+}
+
+.center-controls {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    margin: 0 20px;
+}
+
+#control-panel button, #control-panel select {
+    margin-right: 10px;
+    padding: 8px 12px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+#control-panel input[type="text"] {
+    width: 100%;
+    max-width: 300px;
+    padding: 8px 12px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+}
+
+#control-panel input[type="text"]::placeholder {
+    color: var(--text-color);
+    opacity: 0.7;
+}
+
+#control-panel button:hover, #control-panel select:hover, #control-panel input[type="text"]:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+.custom-popup {
+    max-width: 400px;
+    width: 350px;
+}
+
+.leaflet-popup-content {
+    width: 100% !important;
+    margin: 11px 11px;
+    line-height: 1.4;
+}
+
+.custom-popup audio {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.get-more-info {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 8px 5px;
+    background-color: var(--hover-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+    margin-right: 5px;
+}
+
+.get-more-info:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+.additional-transcription {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+
+.additional-info {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 15px;
+    padding-right: 10px;
+}
+
+.additional-info::-webkit-scrollbar {
+    width: 8px;
+    background-color: var(--background-color);
+}
+
+.additional-info::-webkit-scrollbar-thumb {
+    background-color: var(--primary-color);
+    border-radius: 4px;
+}
+
+.additional-info::-webkit-scrollbar-thumb:hover {
+    background-color: var(--hover-color);
+}
+
+.leaflet-control-custom-zoom {
+    background-color: var(--background-color);
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.leaflet-control-custom-zoom a {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+    color: var(--text-color);
+    font-size: 18px;
+    font-weight: bold;
+    padding: 5px 10px;
+    line-height: 30px;
+    background-color: var(--background-color);
+}
+
+.leaflet-control-custom-zoom a:first-child {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.leaflet-control-custom-zoom a:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+    background-color: rgba(0, 0, 0, 0.6);
+}
+
+.marker-cluster div {
+    width: 30px;
+    height: 30px;
+    margin-left: 5px;
+    margin-top: 5px;
+    text-align: center;
+    border-radius: 15px;
+    font: 12px "Helvetica Neue", Arial, Helvetica, sans-serif;
+    color: #fff;
+}
+
+.marker-cluster span {
+    line-height: 30px;
+}
+
+.waveform {
+    margin-top: 10px;
+    background-color: rgba(0, 255, 0, 0.1);
+    border: 1px solid var(--border-color);
+}
+
+.audio-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.play-pause {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 8px 12px;
+    background-color: var(--hover-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+    margin-right: 5px;
+}
+
+.play-pause:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+/* Common styles for both volume and heatmap intensity sliders */
+.volume, #heatmap-intensity {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px; /* Increased height for better visibility */
+    background: var(--background-color);
+    outline: none;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    border: 1px solid var(--text-color);
+    border-radius: 4px;
+}
+
+.volume:hover, #heatmap-intensity:hover {
+    opacity: 1;
+}
+
+/* Thumb styles */
+.volume::-webkit-slider-thumb, #heatmap-intensity::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--primary-color);
+    cursor: pointer;
+    border-radius: 50%;
+    border: 1px solid var(--text-color);
+    margin-top: -4px; /* Centers the thumb */
+}
+
+.volume::-moz-range-thumb, #heatmap-intensity::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--primary-color);
+    cursor: pointer;
+    border-radius: 50%;
+    border: 1px solid var(--text-color);
+}
+
+/* Track styles */
+.volume::-webkit-slider-runnable-track, #heatmap-intensity::-webkit-slider-runnable-track {
+    height: 8px;
+    background: var(--background-color);
+    border-radius: 4px;
+}
+
+.volume::-moz-range-track, #heatmap-intensity::-moz-range-track {
+    height: 8px;
+    background: var(--background-color);
+    border-radius: 4px;
+}
+
+/* MS-specific styles */
+.volume::-ms-track, #heatmap-intensity::-ms-track {
+    width: 100%;
+    height: 8px;
+    background: transparent;
+    border-color: transparent;
+    color: transparent;
+}
+
+.volume::-ms-fill-lower, .volume::-ms-fill-upper,
+#heatmap-intensity::-ms-fill-lower, #heatmap-intensity::-ms-fill-upper {
+    background: var(--background-color);
+    border: 1px solid var(--text-color);
+    border-radius: 4px;
+}
+
+.volume::-ms-thumb, #heatmap-intensity::-ms-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--primary-color);
+    cursor: pointer;
+    border-radius: 50%;
+    border: 1px solid var(--text-color);
+    margin-top: 0;
+}
+
+/* Specific adjustments for volume slider */
+.volume {
+    max-width: 150px;
+    vertical-align: middle;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1001;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.4);
+}
+
+.modal-content {
+    background-color: var(--background-color);
+    margin: 15% auto;
+    padding: 20px;
+    border: 1px solid var(--border-color);
+    width: 80%;
+    max-width: 500px;
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+}
+
+.modal-content h2 {
+    margin-top: 0;
+}
+
+.modal-content label {
+    display: block;
+    margin-top: 10px;
+}
+
+.modal-content input[type="date"],
+.modal-content input[type="time"] {
+    width: 100%;
+    padding: 5px;
+    margin-top: 5px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.modal-content button {
+    margin-top: 20px;
+    padding: 8px 12px;
+    background-color: var(--hover-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.modal-content button:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+
+.heatmap-controls label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.heatmap-controls input[type="checkbox"] {
+    margin-right: 5px;
+    accent-color: var(--primary-color);
+}
+
+#new-call-banner {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.7); /* Match control panel background */
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    z-index: 1001;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    transition: opacity 0.3s ease-in-out, top 0.3s ease-in-out;
+    padding: 10px 20px;
+    font-size: 18px;
+    text-align: center;
+    width: 80%;
+    max-width: 400px;
+}
+
+#new-call-banner.hidden {
+    opacity: 0;
+    pointer-events: none;
+    top: -50px; /* Move it off-screen when hidden */
+}
+
+.ellipsis::after {
+    content: '...';
+    animation: ellipsis 1.5s infinite;
+    display: inline-block;
+    width: 20px;
+    text-align: left;
+}
+
+@keyframes ellipsis {
+    0% { content: '.'; }
+    33% { content: '..'; }
+    66% { content: '...'; }
+}
+
+.leaflet-control-zoom {
+    top: 80px;
+}
+
+@media screen and (min-width: 769px) {
+    #new-call-banner {
+        top: 70px;
+        padding: 10px 20px;
+        font-size: 18px;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    #map {
+        height: calc(100vh - 120px);
+    }
+
+    #control-panel {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        top: auto;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+        align-items: stretch;
+    }
+
+    .left-controls, .center-controls, .right-controls {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+    }
+
+    .center-controls {
+        order: -1;
+    }
+
+    .search-heatmap-container {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    #search-input {
+        width: 100%;
+        max-width: none;
+        margin-bottom: 5px;
+    }
+
+    .heatmap-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    #control-panel button, 
+    #control-panel select, 
+    #control-panel input[type="text"] {
+        width: 48%;
+        margin: 2px 1%;
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
+    #time-filter {
+        width: 100%;
+        margin-bottom: 5px;
+    }
+
+    .leaflet-control-zoom {
+        display: block;
+        top: 70px;
+    }
+
+    .custom-popup {
+        max-width: 300px;
+        width: 300px;
+    }
+
+    #new-call-banner {
+        top: 5px;
+        font-size: 18px;
+        padding: 6px 12px;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    #control-panel button, 
+    #control-panel select, 
+    #control-panel input[type="text"] {
+        font-size: 11px;
+        padding: 5px 6px;
+    }
+
+    #new-call-banner {
+        font-size: 18px;
+        padding: 5px 10px;
+    }
+}
+
+/* Additional styles for better mobile experience */
+@media screen and (max-width: 768px) {
+    .modal-content {
+        width: 90%;
+        margin: 10% auto;
+    }
+
+    .modal-content input[type="date"],
+    .modal-content input[type="time"] {
+        font-size: 14px;
+    }
+
+    .modal-content button {
+        font-size: 14px;
+        padding: 6px 5px;
+    }
+
+    .audio-controls {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+
+    .play-pause, .get-more-info {
+        flex: 1;
+        margin: 0 5px;
+        padding: 5px 0px;
+        font-size: 11px;
+    }
+
+    .volume {
+        width: 80%;
+        margin-top: 10px;
+    }
+}
+
+/* Ensure consistent styling across browsers */
+input[type="date"],
+input[type="time"] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+/* Improve visibility of selection */
+::selection {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+
+/* Ensure smooth scrolling for all browsers */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Improve focus visibility for accessibility */
+*:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+#live-stream-button {
+    margin-left: 10px;
+    padding: 8px 12px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+}
+
+#live-stream-button:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+#live-stream-button.playing {
+    animation: pulse 2s infinite;
+    background-color: var(--hover-color);
+}
+
+.stream-warning-modal .modal-content {
+    max-width: 400px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.modal-buttons button {
+    padding: 10px 20px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-family: 'Share Tech Mono', monospace;
+}
+
+.modal-buttons button:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 20px var(--primary-color);
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.4);
+    }
+    70% {
+        box-shadow: 0 0 0 20px rgba(0, 255, 0, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
+    }
+}
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+    #live-stream-button {
+        font-size: 12px;
+        padding: 6px 8px;
+        margin-left: 5px;
+    }
+    
+    .stream-warning-modal .modal-content {
+        width: 90%;
+        margin: 10% auto;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    #live-stream-button {
+        font-size: 11px;
+        padding: 5px 6px;
+    }
+}
+/* Marker Correction Styles */
+
+.marker-correction-link a {
+    color: var(--text-color);
+    text-decoration: none;
+    font-size: 12px;
+    opacity: 0.7;
+    transition: all 0.3s;
+}
+
+.marker-correction-link a:hover {
+    opacity: 1;
+    text-shadow: 0 0 5px var(--primary-color);
+}
+
+/* Correction Modal */
+.correction-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    animation: modalAppear 0.3s ease-out;
+}
+
+.correction-modal .modal-content {
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    padding: 20px;
+    max-width: 400px;
+    width: 90%;
+}
+
+.correction-modal .modal-content h2 {
+    color: var(--text-color);
+    margin-bottom: 20px;
+    text-shadow: 0 0 5px var(--primary-color);
+}
+
+.correction-modal button {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.correction-modal button:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+/* Delete button specific styling */
+.correction-modal #delete-marker {
+    border-color: #ff3333;
+    color: #ff3333;
+}
+
+.correction-modal #delete-marker:hover {
+    background-color: #ff3333;
+    color: var(--background-color);
+    box-shadow: 0 0 10px #ff3333;
+}
+
+/* Relocation Banner */
+.relocation-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background-color: rgba(0, 0, 0, 0.9);
+    color: var(--text-color);
+    text-align: center;
+    padding: 15px;
+    font-family: 'Share Tech Mono', monospace;
+    border-bottom: 2px solid var(--primary-color);
+    box-shadow: 0 0 10px var(--primary-color);
+    z-index: 2000;
+    animation: slideDown 0.3s ease-out;
+}
+
+.relocation-banner button {
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s ease;
+    border: 1px solid var(--primary-color);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 0 5px;
+}
+
+.relocation-banner button:hover {
+    box-shadow: 0 0 10px var(--primary-color);
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+/* Preview Marker */
+.preview-marker {
+    cursor: move;
+}
+
+.preview-marker .marker-pulse {
+    transition: transform 0.2s;
+}
+
+.preview-marker:hover .marker-pulse {
+    transform: scale(1.2);
+}
+
+/* Notifications */
+.notification {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    z-index: 2000;
+    animation: notificationSlideIn 0.3s ease-out;
+    transition: all 0.3s ease-out;
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    background-color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+/* Animations */
+@keyframes modalAppear {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-100%); }
+    to { transform: translateY(0); }
+}
+
+@keyframes notificationSlideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Mobile Responsiveness */
+@media screen and (max-width: 768px) {
+    .correction-modal .modal-content {
+        width: 95%;
+        margin: 10px;
+        padding: 15px;
+    }
+
+    .correction-modal button {
+        padding: 10px;
+        font-size: 14px;
+    }
+
+    .notification {
+        bottom: 70px;
+        right: 10px;
+        left: 10px;
+        text-align: center;
+    }
+
+    .relocation-banner button {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.relocation-banner button {
+  font-family: 'Share Tech Mono', monospace;
+  transition: all 0.3s ease;
+  border: 1px solid var(--primary-color);
+}
+
+.relocation-banner button:hover {
+  box-shadow: 0 0 10px var(--primary-color);
+  background-color: var(--primary-color);
+  color: var(--background-color);
+}
+const notificationStyle = document.createElement('style');
+notificationStyle.textContent = `
+  @keyframes notificationSlideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+`;
+document.head.appendChild(notificationStyle);
+
+/* Popup link styles */
+.popup-top-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 0 5px 12px 5px;
+    border-bottom: 1px solid var(--border-color);
+    width: 100%;
+}
+
+/* Links container within top container */
+.popup-top-links {
+    display: flex;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border-bottom: none;
+}
+
+/* Individual link styles */
+.street-view-link, .correction-link {
+    color: var(--text-color) !important;
+    text-decoration: none !important;
+    font-size: 12px;
+    padding: 4px 8px;
+    background-color: var(--hover-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    transition: all 0.3s;
+    outline: none;
+    display: inline-block;
+    text-align: center;
+    width: auto;
+    min-width: 80px;
+    font-family: 'Share Tech Mono', monospace;
+}
+
+/* Timestamp container styles */
+.popup-timestamp {
+    font-size: 12px;
+    color: var(--text-color);
+    opacity: 0.8;
+}
+
+/* Hover effects for links */
+.street-view-link:hover, .correction-link:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color) !important;
+    box-shadow: 0 0 10px var(--primary-color);
+    text-decoration: none !important;
+}
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+    .popup-top-container {
+        padding: 0 5px 10px 5px;
+    }
+
+    .street-view-link, .correction-link {
+        font-size: 11px;
+        padding: 3px 6px;
+        min-width: 70px;
+    }
+
+    .popup-timestamp {
+        font-size: 11px;
+    }
+}
+
+.user-management-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: var(--background-color);
+    min-width: 160px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    border: 1px solid var(--border-color);
+    z-index: 1002;
+    border-radius: 4px;
+    right: 0;
+}
+
+.dropdown-content a {
+    color: var(--text-color);
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+}
+
+.dropdown-content a:hover {
+    background-color: var(--hover-color);
+}
+
+.show {
+    display: block;
+}
+
+/* User Management Modals */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-color);
+}
+
+.form-group input {
+    width: 100%;
+    padding: 8px;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+    border-radius: 4px;
+}
+
+.users-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 20px 0;
+}
+
+.user-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 10px;
+    border-radius: 4px;
+}
+
+.user-item:hover {
+    background-color: var(--hover-color);
+}
+
+.user-info {
+    flex-grow: 1;
+}
+
+.user-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.delete-user-btn {
+    background-color: #330000;
+    color: #ff0000;
+    border: 1px solid #ff0000;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+}
+
+.delete-user-btn:hover {
+    background-color: #ff0000;
+    color: var(--background-color);
+    box-shadow: 0 0 10px #ff0000;
+}
+
+@media screen and (max-width: 768px) {
+    .dropdown-content {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 90%;
+        max-width: 300px;
+    }
+
+    .user-item {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .user-actions {
+        margin-top: 10px;
+    }
+}
+.sessions-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.session-item {
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--background-color);
+}
+
+.session-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.session-details {
+    flex-grow: 1;
+}
+
+.session-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.terminate-session-btn {
+    background-color: #330000;
+    color: #ff0000;
+    border: 1px solid #ff0000;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+}
+
+.terminate-session-btn:hover {
+    background-color: #ff0000;
+    color: var(--background-color);
+    box-shadow: 0 0 10px #ff0000;
+}
+
+.current-session {
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 5px var(--primary-color);
+}
+
+.session-item small {
+    opacity: 0.7;
+}
+
+.device-info {
+    font-size: 0.9em;
+    margin-top: 5px;
+    color: var(--text-color);
+    opacity: 0.8;
+}
+/* Styled Select Box */
+.styled-select {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 8px;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    width: 100%;
+    appearance: none; /* Remove default arrow */
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    position: relative;
+    background-image: url('data:image/svg+xml;utf8,<svg fill="%23cccccc" height="12" viewBox="0 0 24 24" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 12px;
+}
+
+.user-selection {
+    margin-bottom: 15px;
+}
+
+.user-selection label {
+    margin-right: 10px;
+    font-weight: bold;
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+}
+
+.styled-select:hover {
+    border-color: var(--primary-color);
+}
+
+.styled-select:focus {
+    outline: none;
+    box-shadow: 0 0 5px var(--primary-color);
+    border-color: var(--primary-color);
+}
+/* Scrollbar Styles */
+.sessions-list::-webkit-scrollbar {
+    width: 12px;
+}
+
+.sessions-list::-webkit-scrollbar-track {
+    background: var(--background-color);
+}
+
+.sessions-list::-webkit-scrollbar-thumb {
+    background-color: var(--primary-color);
+    border-radius: 6px;
+    border: 2px solid var(--background-color);
+}
+
+.sessions-list::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-color);
+}
+
+/* For Firefox */
+.sessions-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary-color) var(--background-color);
+}
+
+/* Range Slider Styles */
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    background: transparent;
+}
+
+input[type="range"]:focus {
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 8px;
+    cursor: pointer;
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    border: 2px solid var(--primary-color);
+    height: 20px;
+    width: 20px;
+    border-radius: 50%;
+    background: var(--background-color);
+    cursor: pointer;
+    -webkit-appearance: none;
+    margin-top: -6px;
+}
+
+input[type="range"]:focus::-webkit-slider-runnable-track {
+    background: var(--primary-color);
+}
+
+input[type="range"]::-moz-range-track {
+    width: 100%;
+    height: 8px;
+    cursor: pointer;
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+input[type="range"]::-moz-range-thumb {
+    border: 2px solid var(--primary-color);
+    height: 20px;
+    width: 20px;
+    border-radius: 50%;
+    background: var(--background-color);
+    cursor: pointer;
+}
+
+input[type="range"]::-ms-track {
+    width: 100%;
+    height: 8px;
+    cursor: pointer;
+    background: transparent;
+    border-color: transparent;
+    color: transparent;
+}
+
+input[type="range"]::-ms-fill-lower {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+input[type="range"]::-ms-fill-upper {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+input[type="range"]::-ms-thumb {
+    border: 2px solid var(--primary-color);
+    height: 20px;
+    width: 20px;
+    border-radius: 50%;
+    background: var(--background-color);
+    cursor: pointer;
+}
+
+input[type="range"]:focus::-ms-fill-lower {
+    background: var(--primary-color);
+}
+
+input[type="range"]:focus::-ms-fill-upper {
+    background: var(--primary-color);
+}
+/* End of CSS file */
