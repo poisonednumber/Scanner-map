@@ -185,13 +185,15 @@ Set up alert keywords using Discord commands:
 4. **Install Dependencies**
    ```batch
    :: Install Node.js packages
-   npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js @discordjs/voice prism-media node-fetch socket.io wavesurfer.js leaflet.heat csv-parser openai path http fs crypto
+   npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js @discordjs/voice prism-media node-fetch@2 socket.io wavesurfer.js leaflet.heat csv-parser openai path http fs crypto
 
    :: Install Python packages (might need administrative PowerShell)
    pip install torch --extra-index-url https://download.pytorch.org/whl/cu117
    pip install openai-whisper
    pip install whisper-timestamped
    ```
+
+   Note: We specifically use node-fetch@2 because newer versions require ES modules.
 
 5. **Create Directory Structure**
    ```batch
