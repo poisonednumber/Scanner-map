@@ -5,329 +5,315 @@ const fetch = require('node-fetch');
 const winston = require('winston');
 const moment = require('moment-timezone');
 const OpenAI = require('openai');
-const geocoding = require('./geocoding.js');
-const config = require('./config/geocoding-config.js');
-geocoding.loadConfiguration(config);
 
-// Load environment variables with defaults
+// Logger setup
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: () => moment().tz('America/Chicago').format('MM/DD/YYYY HH:mm:ss.SSS')
+    }),
+    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`)
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
+    new winston.transports.Console()
+  ]
+});
+
+/**
+ * Configuration and Constants
+ */
+
+// Load environment variables
 const {
-    GOOGLE_MAPS_API_KEY,
-    OPENAI_API_KEY,
-    TIMEZONE = 'America/New_York',
-    DEFAULT_STATE = 'NY',
-    DEFAULT_COUNTRY = 'US'
+  GOOGLE_MAPS_API_KEY,
+  OPENAI_API_KEY,
+  GEOCODING_STATE = 'TX',
+  GEOCODING_COUNTRY = 'US'
 } = process.env;
 
-// Validate essential environment variables
 if (!GOOGLE_MAPS_API_KEY) {
-    throw new Error('GOOGLE_MAPS_API_KEY is not set in environment variables');
+  logger.error('GOOGLE_MAPS_API_KEY is not set in the environment variables.');
+  process.exit(1);
 }
 
 if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not set in environment variables');
+  logger.error('OPENAI_API_KEY is not set in the environment variables.');
+  process.exit(1);
 }
 
-/**
- * Logger Configuration
- */
-const logger = winston.createLogger({
-    level: 'info',
-    format: winston.format.combine(
-        winston.format.timestamp({
-            format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
-        }),
-        winston.format.printf(({ timestamp, level, message }) => 
-            `${timestamp} [${level.toUpperCase()}] ${message}`
-        )
-    ),
-    transports: [
-        new winston.transports.File({ filename: 'error.log', level: 'error' }),
-        new winston.transports.File({ filename: 'combined.log' }),
-        new winston.transports.Console()
-    ]
-});
-
-// Initialize OpenAI API
+// Initialize OpenAI API with v4 SDK
 const openai = new OpenAI({
-    apiKey: OPENAI_API_KEY,
+  apiKey: OPENAI_API_KEY,
 });
 
-/**
- * Configuration Objects
- * These should be loaded from external configuration files in production
- */
-
-// Example configuration - Replace with your own loaded from a config file
-const CONFIG = {
-    targetCities: [], // Load from configuration
-    talkGroups: {}, // Load from configuration
-    addressRules: {
-        streetCorrections: {},
-        commonPrefixes: {},
-        commonSuffixes: {},
-        highwayFormats: {},
-        intersectionFormats: {},
-        ignoredPatterns: []
-    }
+// Define talk groups and their associated towns
+const TALK_GROUPS = {
+  '2612': 'Longview',
+  '1234': 'Longview/Kilgore/Gladewater (pick most likley based on transcript',
+  '20086': 'Kilgore',
+  '2398': 'Kilgore',
+  '2624': 'Longview',
+  '2626': 'Longview',
+  '1': 'Gladewater',
+  '2610': 'Longview/Kilgore/Gladewater/White oak (pick most likley based on transcript',
+  '20084': 'Kilgore'
 };
 
+const TARGET_CITIES = ['Longview', 'Kilgore', 'Gladewater', 'White Oak'];
+
 /**
- * Load configuration from external source
- * @param {string} configPath - Path to configuration file
+ * Helper Functions
  */
-function loadConfiguration(configPath) {
-    try {
-        // Load and parse configuration file
-        // This is a placeholder - implement actual configuration loading
-        const config = require(configPath);
-        Object.assign(CONFIG, config);
-        logger.info('Configuration loaded successfully');
-    } catch (error) {
-        logger.error(`Error loading configuration: ${error.message}`);
-        throw error;
-    }
-}
 
 /**
- * Address Extraction using GPT
- */
-async function extractAddressWithGPT(transcript, town) {
-    try {
-        // Build system prompt from configuration
-        const systemPrompt = buildSystemPrompt(town);
-
-        const messages = [
-            {
-                role: 'system',
-                content: systemPrompt
-            },
-            {
-                role: 'user',
-                content: `From ${town}:\n"${transcript}"\n\nExtracted Address:`
-            }
-        ];
-
-        const response = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: messages,
-            max_tokens: 50,
-            temperature: 0,
-            top_p: 1,
-            frequency_penalty: 0,
-            presence_penalty: 0
-        });
-
-        const extractedAddress = response.choices[0].message.content.trim();
-        logger.info(`GPT-3.5 Extracted Address: "${extractedAddress}"`);
-        return extractedAddress === "No address found" ? null : extractedAddress;
-    } catch (error) {
-        if (error instanceof OpenAI.APIError) {
-            logger.error(`OpenAI API Error: ${error.message}`);
-            logger.error(`Status: ${error.status}, Code: ${error.code}, Type: ${error.type}`);
-        } else {
-            logger.error(`Error extracting address: ${error.message}`);
-        }
-        return null;
-    }
-}
-
-/**
- * Build system prompt from configuration
- */
-function buildSystemPrompt(town) {
-    return `You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
-    Focus on extracting a single full address, block, or intersection. 
-    If an address is incomplete, attempt to complete it based on the given town.
-    Only extract addresses for ${CONFIG.targetCities.join(', ')}, ${DEFAULT_STATE}.
-    If no valid address is found, return "No address found".
-
-    Address Formatting Rules:
-    - Full addresses: "123 Main St, Town, ${DEFAULT_STATE}"
-    - Blocks: "100 block of Main St, Town, ${DEFAULT_STATE}"
-    - Intersections: "Main St & Oak Ave, Town, ${DEFAULT_STATE}"
-
-    Special Rules for ${town}:
-    ${generateTownSpecificRules(town)}
-
-    Important:
-    - Verify the location is being discussed
-    - Ignore unit numbers and license plates
-    - Complete partial addresses based on context
-    - Apply standard corrections and formats`;
-}
-
-/**
- * Generate town-specific rules from configuration
- */
-function generateTownSpecificRules(town) {
-    const rules = [];
-    const townRules = CONFIG.addressRules[town] || {};
-
-    if (townRules.streetCorrections) {
-        rules.push('Street Name Corrections:');
-        Object.entries(townRules.streetCorrections)
-            .forEach(([incorrect, correct]) => 
-                rules.push(`- "${incorrect}" should be "${correct}"`));
-    }
-
-    if (townRules.highwayFormats) {
-        rules.push('Highway Formatting:');
-        Object.entries(townRules.highwayFormats)
-            .forEach(([highway, format]) => 
-                rules.push(`- Highway ${highway} format: ${format}`));
-    }
-
-    return rules.join('\n');
-}
-
-/**
- * Geocoding Functions
- */
-async function geocodeAddress(address) {
-    const endpoint = 'https://maps.googleapis.com/maps/api/geocode/json';
-    
-    // Extract city from address
-    const cityMatch = address.match(/(?:,\s*)([^,]+)(?:,\s*${DEFAULT_STATE})/i);
-    const city = cityMatch ? cityMatch[1].trim() : '';
-    
-    if (!CONFIG.targetCities.includes(city)) {
-        logger.warn(`City "${city}" not in target cities list`);
-        return null;
-    }
-
-    const params = new URLSearchParams({
-        address: address,
-        key: GOOGLE_MAPS_API_KEY,
-        components: `country:${DEFAULT_COUNTRY}|administrative_area:${DEFAULT_STATE}|locality:${city}`
-    });
-
-    try {
-        const response = await fetch(`${endpoint}?${params.toString()}`);
-        if (!response.ok) {
-            throw new Error(`Geocoding API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (data.status !== 'OK' || !data.results?.[0]) {
-            logger.warn(`Geocoding API status: ${data.status} for address: "${address}"`);
-            return null;
-        }
-
-        const result = data.results[0];
-        const { lat, lng } = result.geometry.location;
-        const formatted_address = result.formatted_address;
-
-        // Skip city-level results
-        if (isCityLevelResult(formatted_address)) {
-            logger.info(`Skipping city-level result: "${formatted_address}"`);
-            return null;
-        }
-
-        // Validate result
-        if (!isValidGeocodeResult(result)) {
-            logger.info(`Invalid geocode result for "${formatted_address}"`);
-            return null;
-        }
-
-        return { lat, lng, formatted_address };
-    } catch (error) {
-        logger.error(`Geocoding error for "${address}": ${error.message}`);
-        return null;
-    }
-}
-
-/**
- * Validation Functions
- */
-function isCityLevelResult(address) {
-    return CONFIG.targetCities.some(city => 
-        address.match(new RegExp(`^${city},\\s*${DEFAULT_STATE}\\s*\\d{5},\\s*${DEFAULT_COUNTRY}$`))
-    );
-}
-
-function isValidGeocodeResult(result) {
-    // Check for street numbers or specific types
-    const hasStreetNumber = /\d+/.test(result.formatted_address);
-    const validTypes = [
-        'street_address',
-        'premise',
-        'subpremise',
-        'route',
-        'intersection',
-        'establishment',
-        'point_of_interest',
-        'park',
-        'airport'
-    ];
-
-    const hasValidType = result.types.some(type => validTypes.includes(type));
-    
-    return hasStreetNumber || hasValidType;
-}
-
-/**
- * URL Generation
- */
-function generateMapUrl(address) {
-    const encodedAddress = encodeURIComponent(`${address}`);
-    return `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
-}
-
-/**
- * Process a complete transcript
- */
-async function processTranscript(transcript, talkGroupId) {
-    const town = CONFIG.talkGroups[talkGroupId] || 'Unknown';
-    if (town === 'Unknown') {
-        logger.warn(`Unknown talk group ID: ${talkGroupId}`);
-        return null;
-    }
-
-    const extractedAddress = await extractAddressWithGPT(transcript, town);
-    if (!extractedAddress) {
-        logger.info('No valid addresses extracted from transcript');
-        return null;
-    }
-
-    const geocodeResult = await geocodeAddress(extractedAddress);
-    if (!geocodeResult) {
-        logger.warn(`Failed to geocode address: "${extractedAddress}"`);
-        return null;
-    }
-
-    return geocodeResult;
-}
-
-/**
- * Extract addresses from transcript
- */
-async function extractAddress(transcript, talkGroupId) {
-    return await extractAddressWithGPT(transcript, CONFIG.talkGroups[talkGroupId] || 'Unknown');
-}
-
-/**
- * Create hyperlinked version of address in text
- */
-function hyperlinkAddress(transcript, address) {
-    if (!address) return transcript;
-
-    const mapUrl = generateMapUrl(address);
-    const regex = new RegExp(`\\b${escapeRegExp(address)}\\b`, 'gi');
-    return transcript.replace(regex, `[${address}](${mapUrl})`);
-}
-
-/**
- * Utility function to escape special characters in a string
+ * Escapes special characters in a string for use in a regular expression.
+ * @param {string} string - The string to escape.
+ * @returns {string} - The escaped string.
  */
 function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Uses GPT-3.5 to extract and complete addresses from the full transcript.
+ * @param {string} transcript - The full transcript text.
+ * @param {string} town - The town associated with the transcript.
+ * @returns {Promise<string|null>} - The extracted and completed address or null if not found.
+ */
+async function extractAddressWithGPT(transcript, town) {
+  try {
+    const messages = [
+      {
+        role: 'system',
+        content: `You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
+        Focus on extracting a single full address, block, or intersection. 
+        If an address is incomplete, attempt to complete it based on the given town.
+        Only extract addresses for ${TARGET_CITIES.join(', ')}, TX.
+        If no valid address is found, return "No address found".
+		Correct spelling of roads such as Gilmore to Gilmer, "fourth" will usally mean "N Fourth St" in longview,Mollo Drive will usally be "Mahlow Dr" in longview, "Odin St" is "Oden St" in Longview
+		McCann is always McCann Rd in Longview, "Ridgely Ave" will be "Ridgelea Ave" in Longview, "Buchanan" will be "E Buchanan Ave" in longview
+		Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
+		Keep in mind unit’s often start by saying their unit number and city sometimes the city is misspelled don’t get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
+        Format full addresses as: "123 Main St, Town, TX".
+        Format blocks as: "100 block of Main St, Town, TX".
+		When "highway 300" is used in longview its going to be "(house number TX-300",Wheatley is probably "Whaley St" in Longview, "Tami Lund" is usally "Tammy Lynn" in Longview, "Woodcrest" will be "Woodcrest Ln" in longview.
+		When the loop is mentioned in longview it will always have 281 after it for example "201 East Loop" will be "E Loop 281" etc, "Ruthland Drive" will be "Ruthlynn Dr" in longview, 2204 will be "FM 2204"."Chapel Street" will alawys be "Chappell St" in longview.
+		When the 31 is mentioned it will usally mean "TX-31" for example "On 31 and Bell Street" will be "TX-31 and Bell St" etc, make sure they are talking about a location and not unit numbers or something 31 can be ether in kilgore or longview so pick most likley.
+		When 259 or highway 259 are mentioned in longview besure format it as "(house number) US-259, Longview, TX 75605", 149 is usally "TX-149" in Longview, Fritz Swanson is a kilgore rd, Hopkins Parkway will be Hawkins Pkwy in Longview."Cary Lane" will be "Carrie Ln" in longview."Crystal Drive" will be "Christal Dr"in longview.
+		Young St = E Young St in longview, Samples Rd is always in kilgore.Northeastern Rd is usally N Eastman Rd in longview same with Southeastern is S Eastman Rd, "Huey" is usally "Hughey" in Longview."Swansea" will be "Swancy St" in longview."Marbley" will be "S Mobberly Ave" in longview.
+		"South Highway 31" will be "TX-31" in longview."Arle Boulevard will be "E Aurel Ave" in longview.
+        Format intersections as: "Main St & Oak Ave, Town, TX".`
+      },
+      {
+        role: 'user',
+        content: `From ${town}:\n"${transcript}"\n\nExtracted Address:`
+      }
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: messages,
+      max_tokens: 50,
+      temperature: 0,
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0
+    });
+
+    const extractedAddress = response.choices[0].message.content.trim();
+    logger.info(`GPT-3.5 Extracted Address: "${extractedAddress}"`);
+    return extractedAddress === "No address found" ? null : extractedAddress;
+  } catch (error) {
+    if (error instanceof OpenAI.APIError) {
+      logger.error(`OpenAI API Error extracting address: ${error.message}`);
+      logger.error(`Status: ${error.status}, Code: ${error.code}, Type: ${error.type}`);
+    } else {
+      logger.error(`Error extracting address with GPT-3.5: ${error.message}`);
+    }
+    return null;
+  }
+}
+
+/**
+ * Geocodes an address using Google's Geocoding API.
+ * @param {string} address - The validated address.
+ * @returns {Promise<{ lat: number, lng: number, formatted_address: string } | null>} - Geocoded data or null.
+ */
+async function geocodeAddress(address) {
+  const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
+  
+  // Extract the city name from the address
+  const cityMatch = address.match(/(?:,\s*)([^,]+)(?:,\s*TX)/i);
+  const city = cityMatch ? cityMatch[1] : '';
+  
+  if (!TARGET_CITIES.includes(city)) {
+    logger.warn(`Extracted city "${city}" is not in target cities list.`);
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    address: address,
+    key: GOOGLE_MAPS_API_KEY,
+    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}|locality:${city}`
+  });
+
+  try {
+    const response = await fetch(`${endpoint}?${params.toString()}`);
+    if (!response.ok) {
+      logger.error(`Geocoding API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+      logger.warn(`Geocoding API returned status: ${data.status} for address: "${address}"`);
+      return null;
+    }
+
+    const result = data.results[0];
+    const { lat, lng } = result.geometry.location;
+    const formatted_address = result.formatted_address;
+    const resultTypes = result.types;
+
+    // Add this check to filter out the specific Kilgore city result
+    if (formatted_address === "Kilgore, TX 75662, USA") {
+      logger.info(`Skipping city-level result for Kilgore: "${formatted_address}"`);
+      return null;
+    }
+	if (formatted_address === "Gladewater, TX 75647, USA") {
+      logger.info(`Skipping city-level result for Gladewater: "${formatted_address}"`);
+      return null;
+    }
+	if (formatted_address === "Longview, TX 75605, USA") {
+      logger.info(`Skipping city-level result for Longview: "${formatted_address}"`);
+      return null;
+    }
+
+    // **Enhanced Filtering Logic with Additional Specific Types Starts Here**
+
+    // 1. Check for the presence of street numbers
+    const hasStreetNumber = /\d+/.test(formatted_address);
+
+    // 2. Check if the address type includes 'intersection' or other specific types
+    const specificTypes = [
+      'street_address',
+      'premise',
+      'subpremise',
+      'route',
+      'intersection',
+      'establishment',
+      'point_of_interest',
+      'park',
+      'airport'
+      // Add more types as needed
+    ];
+
+    const hasSpecificType = resultTypes.some(type => specificTypes.includes(type));
+
+    // 3. Decide whether to process the address
+    if (!hasStreetNumber && !hasSpecificType) {
+      logger.info(`Geocoded address "${formatted_address}" lacks a street number and does not have a specific type. Skipping.`);
+      return null;
+    }
+
+    // **Enhanced Filtering Logic with Additional Specific Types Ends Here**
+
+    // Verify that the result is in one of our target cities
+    const resultCity = result.address_components.find(component => 
+      component.types.includes('locality')
+    )?.long_name;
+
+    if (resultCity && TARGET_CITIES.includes(resultCity)) {
+      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng})`);
+      return { lat, lng, formatted_address };
+    } else {
+      logger.warn(`Geocoded address "${formatted_address}" is not within target cities.`);
+      return null;
+    }
+  } catch (error) {
+    logger.error(`Error geocoding address "${address}": ${error.message}`);
+    return null;
+  }
+}
+
+
+/**
+ * Hyperlinks an address within the transcript text.
+ * @param {string} transcript - The transcript text.
+ * @param {string} address - The address to hyperlink.
+ * @returns {string} - Transcription with hyperlinked address.
+ */
+function hyperlinkAddress(transcript, address) {
+  if (!address) return transcript;
+
+  const encodedAddress = encodeURIComponent(`${address}`);
+  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+  
+  // Use a global, case-insensitive regex to replace all instances
+  const regex = new RegExp(`\\b${escapeRegExp(address)}\\b`, 'gi');
+  return transcript.replace(regex, `[${address}](${googleMapsUrl})`);
+}
+
+/**
+ * Extracts potential addresses from a transcript using GPT-3.5.
+ * @param {string} transcript - The transcript text.
+ * @param {string} talkGroupId - The talk group ID associated with the transcript.
+ * @returns {Promise<string|null>} - Extracted and completed addresses or null if none are found.
+ */
+async function extractAddress(transcript, talkGroupId) {
+  const town = TALK_GROUPS[talkGroupId] || 'Unknown';
+  if (town === 'Unknown') {
+    logger.warn(`Unknown talk group ID: ${talkGroupId}`);
+    return null;
+  }
+
+  const extractedAddress = await extractAddressWithGPT(transcript, town);
+  if (!extractedAddress || extractedAddress === "No address found") {
+    logger.info('No address extracted by GPT-3.5.');
+    return null;
+  }
+
+  return extractedAddress;
+}
+
+/**
+ * Processes a transcript to extract and geocode addresses.
+ * @param {string} transcript - The transcript text.
+ * @param {string} talkGroupId - The talk group ID associated with the transcript.
+ * @returns {Promise<Array<{ lat: number, lng: number, formatted_address: string }> | null>} - Array of geocoded data or null.
+ */
+async function processTranscript(transcript, talkGroupId) {
+  const extractedAddresses = await extractAddress(transcript, talkGroupId);
+  if (!extractedAddresses) {
+    logger.info('No valid addresses extracted from transcript.');
+    return null;
+  }
+
+  const addresses = extractedAddresses.split(';').map(addr => addr.trim());
+  const geocodedResults = [];
+
+  for (const address of addresses) {
+    const geocodeResult = await geocodeAddress(address);
+    if (geocodeResult) {
+      geocodedResults.push(geocodeResult);
+    }
+  }
+
+  if (geocodedResults.length === 0) {
+    logger.warn(`Failed to geocode any extracted addresses: "${extractedAddresses}"`);
+    return null;
+  }
+
+  return geocodedResults;
 }
 
 module.exports = {
-    loadConfiguration,
-    extractAddress,
-    geocodeAddress,
-    hyperlinkAddress,
-    processTranscript
+  extractAddress,
+  geocodeAddress,
+  hyperlinkAddress,
+  processTranscript
 };
