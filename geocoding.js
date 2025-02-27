@@ -93,18 +93,11 @@ async function extractAddressWithGPT(transcript, town) {
         If an address is incomplete, attempt to complete it based on the given town.
         Only extract addresses for ${TARGET_CITIES.join(', ')}, TX.
         If no valid address is found, return "No address found".
-		Correct spelling of roads such as Gilmore to Gilmer, "fourth" will usally mean "N Fourth St" in longview,Mollo Drive will usally be "Mahlow Dr" in longview, "Odin St" is "Oden St" in Longview
-		McCann is always McCann Rd in Longview, "Ridgely Ave" will be "Ridgelea Ave" in Longview, "Buchanan" will be "E Buchanan Ave" in longview
-		Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
-		Keep in mind unit’s often start by saying their unit number and city sometimes the city is misspelled don’t get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
+	Correct spelling of roads such as Gilmore to Gilmer.
+	Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
+	Keep in mind unit’s often start by saying their unit number and city sometimes the city is misspelled don’t get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
         Format full addresses as: "123 Main St, Town, TX".
         Format blocks as: "100 block of Main St, Town, TX".
-		When "highway 300" is used in longview its going to be "(house number TX-300",Wheatley is probably "Whaley St" in Longview, "Tami Lund" is usally "Tammy Lynn" in Longview, "Woodcrest" will be "Woodcrest Ln" in longview.
-		When the loop is mentioned in longview it will always have 281 after it for example "201 East Loop" will be "E Loop 281" etc, "Ruthland Drive" will be "Ruthlynn Dr" in longview, 2204 will be "FM 2204"."Chapel Street" will alawys be "Chappell St" in longview.
-		When the 31 is mentioned it will usally mean "TX-31" for example "On 31 and Bell Street" will be "TX-31 and Bell St" etc, make sure they are talking about a location and not unit numbers or something 31 can be ether in kilgore or longview so pick most likley.
-		When 259 or highway 259 are mentioned in longview besure format it as "(house number) US-259, Longview, TX 75605", 149 is usally "TX-149" in Longview, Fritz Swanson is a kilgore rd, Hopkins Parkway will be Hawkins Pkwy in Longview."Cary Lane" will be "Carrie Ln" in longview."Crystal Drive" will be "Christal Dr"in longview.
-		Young St = E Young St in longview, Samples Rd is always in kilgore.Northeastern Rd is usally N Eastman Rd in longview same with Southeastern is S Eastman Rd, "Huey" is usally "Hughey" in Longview."Swansea" will be "Swancy St" in longview."Marbley" will be "S Mobberly Ave" in longview.
-		"South Highway 31" will be "TX-31" in longview."Arle Boulevard will be "E Aurel Ave" in longview.
         Format intersections as: "Main St & Oak Ave, Town, TX".`
       },
       {
