@@ -1,4 +1,4 @@
-# Scanner Map
+# Scanner Map (made with lots of ai code)
 
 A real-time scanner mapping system that integrates with SDRTrunk, providing live audio streaming, transcription, and geographic visualization of radio communications. This system processes radio transmissions, extracts location data, and displays them on an interactive map with various visualization options.
 
