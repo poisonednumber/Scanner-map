@@ -33,7 +33,7 @@ db.serialize(() => {
 
 // Function to import talk groups from CSV
 function importTalkGroups() {
-  const talkGroupsFile = path.join(__dirname, 'txwarn_talkgroups.csv');
+  const talkGroupsFile = path.join(__dirname, 'talkgroups.csv');
   fs.createReadStream(talkGroupsFile)
     .pipe(csv({
       headers: ['DEC', 'HEX', 'Alpha Tag', 'Mode', 'Description', 'Tag', 'County'],
