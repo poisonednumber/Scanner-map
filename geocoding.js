@@ -49,7 +49,7 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Define talk groups and their associated towns
+// Define talk groups and their associated towns (what chat gpt will see)
 const TALK_GROUPS = {
   '2612': 'Longview',
   '1234': 'Longview/Kilgore/Gladewater (pick most likley based on transcript',
@@ -62,7 +62,7 @@ const TALK_GROUPS = {
   '20084': 'Kilgore'
 };
 
-const TARGET_CITIES = ['Longview', 'Kilgore', 'Gladewater', 'White Oak'];
+const TARGET_CITIES = ['Longview', 'Kilgore', 'Gladewater', 'White Oak']; // white list for google geocoding results.
 
 /**
  * Helper Functions
@@ -172,7 +172,7 @@ async function geocodeAddress(address) {
     const formatted_address = result.formatted_address;
     const resultTypes = result.types;
 
-    // Add this check to filter out the specific Kilgore city result
+    // Add this check to filter out default town location results.
     if (formatted_address === "Kilgore, TX 75662, USA") {
       logger.info(`Skipping city-level result for Kilgore: "${formatted_address}"`);
       return null;
