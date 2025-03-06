@@ -242,7 +242,7 @@ Set up alert keywords using Discord commands:
 
 9. **Import Radio Reference Data**
    - Export your talk groups from Radio Reference as CSV
-   - Save as `txwarn_talkgroups.csv` in root directory
+   - Save as `talkgroups.csv` in root directory
    - Export frequencies as `frequencies.csv`
    ```batch
    node import_csv.js
