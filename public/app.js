@@ -23,7 +23,12 @@ let currentSessionToken = null;
 // Animation Queue Variables
 const animationQueue = [];
 let isAnimating = false;
-
+const houseIcon = L.icon({
+    iconUrl: 'house.png',  // Make sure this image exists on your server
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -32]
+});
 // Custom icons
 const pdIcon = L.icon({
     iconUrl: 'pd.png',
@@ -47,7 +52,36 @@ const defaultIcon = L.icon({
     popupAnchor: [1, -34],
     shadowSize: [41, 41]
 });
+function addPermanentHouseMarkers() {
+    // Array of house locations - just coordinates
+    const houseLocations = [
+        { lat: 39.078635, lng: -76.932249 },
+        // Add more locations as needed
+        // { lat: 38.9907, lng: -77.0261 },
+    ];
 
+    // Create a separate layer group for permanent markers
+    const houseMarkersGroup = L.layerGroup();
+
+    // Add each house to the map
+    houseLocations.forEach(location => {
+        // Create marker
+        const marker = L.marker([location.lat, location.lng], { 
+            icon: houseIcon,
+            zIndexOffset: 1000,  // Ensure houses appear above other markers
+            interactive: false   // This makes the marker non-interactive (no click events)
+        });
+        
+        // Add the marker to the permanent layer group
+        houseMarkersGroup.addLayer(marker);
+    });
+
+    // Add the permanent markers layer to the map
+    map.addLayer(houseMarkersGroup);
+    
+    // Store the layer group in a global variable to avoid it being garbage collected
+    window.houseMarkersGroup = houseMarkersGroup;
+}
 function setupTimeFilter() {
     const timeFilterSelect = document.getElementById('time-filter');
     timeFilterSelect.addEventListener('change', handleTimeFilterChange);
@@ -97,9 +131,9 @@ function toggleLiveStream() {
         // Start playing
         audioContainer.innerHTML = `
             <audio id="live-stream-audio" autoplay>
-                <source src="http://123.123.123.123" type="audio/mp3">
-                <source src="http://123.123.123.123" type="audio/mpeg">
-                <source src="http://123.123.123.123" type="application/x-mpegURL">
+                <source src="http://alex11226.ddns.net:666" type="audio/mp3">
+                <source src="http://alex11226.ddns.net:666" type="audio/mpeg">
+                <source src="http://alex11226.ddns.net:666" type="application/x-mpegURL">
             </audio>
         `;
         
@@ -139,9 +173,9 @@ function createStreamIframe() {
         <html>
         <body>
             <audio autoplay controls>
-                <source src="http://123.123.123.123" type="audio/mp3">
-                <source src="http://123.123.123.123" type="audio/mpeg">
-                <source src="http://123.123.123.123" type="application/x-mpegURL">
+                <source src="http://alex11226.ddns.net:666" type="audio/mp3">
+                <source src="http://alex11226.ddns.net:666" type="audio/mpeg">
+                <source src="http://alex11226.ddns.net:666" type="application/x-mpegURL">
             </audio>
             <script>
                 const audio = document.querySelector('audio');
@@ -266,7 +300,7 @@ function attemptAutoplay() {
 // Initialize map
 function initMap() {
     map = L.map('map', {
-        center: [32.5007, -94.7405], // Longview, TX coordinates
+        center: [39.078635, -76.932249], // Longview, TX coordinates
         zoom: 13,
         maxZoom: 18,
         minZoom: 9,
@@ -364,6 +398,7 @@ function initMap() {
 
     map.on('zoomend', function() {
         console.log('Current zoom level:', map.getZoom());
+	addPermanentHouseMarkers();	
     });
 }
 
@@ -1117,14 +1152,15 @@ function getMarkerIcon(talkGroupName, talkGroupId, audioFilePath) {
     }
 
     if (talkGroupName === 'TXDPS Tyler 1' ||
-        talkGroupName.includes('PD') || 
+        talkGroupName.includes('MCPD') || 
         talkGroupName.includes('Police') || 
         talkGroupName === 'Gregg SO Disp 1' ||
+		talkGroupName === 'Gregg SO Disp 2' ||
         talkGroupName.includes('TXDPS')) {
         return pdIcon;
     }
 
-    if (talkGroupName.includes('FD') || talkGroupName.includes('Fire')) {
+    if (talkGroupName.includes('MCFR') || talkGroupName.includes('Fire')) {
         return fireIcon;
     }
 
