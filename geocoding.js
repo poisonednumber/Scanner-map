@@ -30,7 +30,7 @@ const logger = winston.createLogger({
 const {
   GOOGLE_MAPS_API_KEY,
   OPENAI_API_KEY,
-  GEOCODING_STATE = 'TX',
+  GEOCODING_STATE = 'MD',
   GEOCODING_COUNTRY = 'US'
 } = process.env;
 
@@ -49,20 +49,14 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Define talk groups and their associated towns (what chat gpt will see)
+// Define talk groups and their associated towns
 const TALK_GROUPS = {
-  '2612': 'Longview',
-  '1234': 'Longview/Kilgore/Gladewater (pick most likley based on transcript',
-  '20086': 'Kilgore',
-  '2398': 'Kilgore',
-  '2624': 'Longview',
-  '2626': 'Longview',
-  '1': 'Gladewater',
-  '2610': 'Longview/Kilgore/Gladewater/White oak (pick most likley based on transcript',
-  '20084': 'Kilgore'
+  '6010': 'Silver Spring or any town in Montgomery County MD',
+  '4005': 'Silver Spring or any town in Montgomery County MD',
 };
 
-const TARGET_CITIES = ['Longview', 'Kilgore', 'Gladewater', 'White Oak']; // white list for google geocoding results.
+// Keep the TARGET_CITIES list for reference and backward compatibility
+const TARGET_CITIES = ["Ashton-Sandy Spring", "Aspen Hill", "Bethesda", "Brookmont", "Burnt Mills", "Burtonsville", "Cabin John", "Chevy Chase", "Clarksburg", "Cloverly", "Colesville", "Damascus", "Darnestown", "Derwood", "Fairland", "Flower Hill", "Forest Glen", "Four Corners", "Friendship Heights Village", "Germantown", "Glenmont", "Kemp Mill", "Layhill", "Montgomery Village", "North Bethesda", "North Kensington", "North Potomac", "Olney", "Potomac", "Redland", "Silver Spring", "South Kensington", "Spencerville", "Ten Mile Creek", "Wheaton", "White Oak", "Calverton", "Hillandale"];
 
 /**
  * Helper Functions
@@ -91,14 +85,13 @@ async function extractAddressWithGPT(transcript, town) {
         content: `You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
         Focus on extracting a single full address, block, or intersection. 
         If an address is incomplete, attempt to complete it based on the given town.
-        Only extract addresses for ${TARGET_CITIES.join(', ')}, TX.
+        Only extract addresses for Montgomery County, MD.
         If no valid address is found, return "No address found".
-	Correct spelling of roads such as Gilmore to Gilmer.
-	Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
-	Keep in mind unit’s often start by saying their unit number and city sometimes the city is misspelled don’t get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
-        Format full addresses as: "123 Main St, Town, TX".
-        Format blocks as: "100 block of Main St, Town, TX".
-        Format intersections as: "Main St & Oak Ave, Town, TX".`
+		Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
+		Keep in mind unit's often start by saying their unit number and city sometimes the city is misspelled don't get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
+        Format full addresses as: "123 Main St, Town, MD".
+        Format blocks as: "100 block of Main St, Town, MD".
+        Format intersections as: "Main St & Oak Ave, Town, MD".`
       },
       {
         role: 'user',
@@ -138,19 +131,10 @@ async function extractAddressWithGPT(transcript, town) {
 async function geocodeAddress(address) {
   const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
   
-  // Extract the city name from the address
-  const cityMatch = address.match(/(?:,\s*)([^,]+)(?:,\s*TX)/i);
-  const city = cityMatch ? cityMatch[1] : '';
-  
-  if (!TARGET_CITIES.includes(city)) {
-    logger.warn(`Extracted city "${city}" is not in target cities list.`);
-    return null;
-  }
-
   const params = new URLSearchParams({
     address: address,
     key: GOOGLE_MAPS_API_KEY,
-    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}|locality:${city}`
+    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}`
   });
 
   try {
@@ -166,65 +150,53 @@ async function geocodeAddress(address) {
       logger.warn(`Geocoding API returned status: ${data.status} for address: "${address}"`);
       return null;
     }
-
-    const result = data.results[0];
+    
+    // Find the most specific result (preferring street_address over locality)
+    const preferredTypes = ['street_address', 'premise', 'subpremise', 'route', 'intersection', 'establishment', 'point_of_interest'];
+    let bestResult = null;
+    
+    // First try to find results with preferred types
+    for (const type of preferredTypes) {
+      const matchingResult = data.results.find(r => r.types.includes(type));
+      if (matchingResult) {
+        bestResult = matchingResult;
+        break;
+      }
+    }
+    
+    // If no preferred type found, use the first result
+    const result = bestResult || data.results[0];
     const { lat, lng } = result.geometry.location;
     const formatted_address = result.formatted_address;
     const resultTypes = result.types;
 
-    // Add this check to filter out default town location results.
-    if (formatted_address === "Kilgore, TX 75662, USA") {
-      logger.info(`Skipping city-level result for Kilgore: "${formatted_address}"`);
-      return null;
-    }
-	if (formatted_address === "Gladewater, TX 75647, USA") {
-      logger.info(`Skipping city-level result for Gladewater: "${formatted_address}"`);
-      return null;
-    }
-	if (formatted_address === "Longview, TX 75605, USA") {
-      logger.info(`Skipping city-level result for Longview: "${formatted_address}"`);
+    // Add this check to filter out the specific Silver Spring city result
+    if (formatted_address === "Silver Spring, MD 20910, USA") {
+      logger.info(`Skipping city-level result for Silver Spring: "${formatted_address}"`);
       return null;
     }
 
     // **Enhanced Filtering Logic with Additional Specific Types Starts Here**
 
-    // 1. Check for the presence of street numbers
-    const hasStreetNumber = /\d+/.test(formatted_address);
-
-    // 2. Check if the address type includes 'intersection' or other specific types
-    const specificTypes = [
-      'street_address',
-      'premise',
-      'subpremise',
-      'route',
-      'intersection',
-      'establishment',
-      'point_of_interest',
-      'park',
-      'airport'
-      // Add more types as needed
-    ];
-
-    const hasSpecificType = resultTypes.some(type => specificTypes.includes(type));
-
-    // 3. Decide whether to process the address
-    if (!hasStreetNumber && !hasSpecificType) {
-      logger.info(`Geocoded address "${formatted_address}" lacks a street number and does not have a specific type. Skipping.`);
+    // Skip only generic city-level results while keeping useful partial matches
+    if (resultTypes.includes('locality') && resultTypes.length <= 3 && !formatted_address.includes('Caravan')) {
+      logger.info(`Skipping city-level result: "${formatted_address}"`);
       return null;
     }
 
     // **Enhanced Filtering Logic with Additional Specific Types Ends Here**
 
-    // Verify that the result is in one of our target cities
-    const resultCity = result.address_components.find(component => 
-      component.types.includes('locality')
-    )?.long_name;
+    // Verify that the result is in Montgomery County
+    const countyComponent = result.address_components.find(component => 
+      component.types.includes('administrative_area_level_2') && 
+      component.long_name === 'Montgomery County'
+    );
 
-    if (resultCity && TARGET_CITIES.includes(resultCity)) {
+    if (countyComponent) {
       logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng})`);
       return { lat, lng, formatted_address };
     } else {
-      logger.warn(`Geocoded address "${formatted_address}" is not within target cities.`);
+      logger.warn(`Geocoded address "${formatted_address}" is not within Montgomery County.`);
       return null;
     }
   } catch (error) {
