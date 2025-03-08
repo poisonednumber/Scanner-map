@@ -55,9 +55,9 @@ const defaultIcon = L.icon({
 function addPermanentHouseMarkers() {
     // Array of house locations - just coordinates
     const houseLocations = [
-        { lat: 39.078635, lng: -76.932249 },
+        { lat: 30.741622, lng: -87.402731 },
         // Add more locations as needed
-        // { lat: 38.9907, lng: -77.0261 },
+        // { lat: 38.9907, lng: -87.402731 },
     ];
 
     // Create a separate layer group for permanent markers
@@ -131,9 +131,9 @@ function toggleLiveStream() {
         // Start playing
         audioContainer.innerHTML = `
             <audio id="live-stream-audio" autoplay>
-                <source src="http://alex11226.ddns.net:666" type="audio/mp3">
-                <source src="http://alex11226.ddns.net:666" type="audio/mpeg">
-                <source src="http://alex11226.ddns.net:666" type="application/x-mpegURL">
+                <source src="http://audiostream.com:1234" type="audio/mp3">
+                <source src="http://audiostream.com:1234" type="audio/mpeg">
+                <source src="http://audiostream.com:1234" type="application/x-mpegURL">
             </audio>
         `;
         
@@ -300,7 +300,7 @@ function attemptAutoplay() {
 // Initialize map
 function initMap() {
     map = L.map('map', {
-        center: [39.078635, -76.932249], // Longview, TX coordinates
+        center: [30.741622, -87.402731], // Longview, TX coordinates
         zoom: 13,
         maxZoom: 18,
         minZoom: 9,
