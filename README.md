@@ -165,13 +165,8 @@ Set up alert keywords using Discord commands:
    winget install OpenJS.NodeJS.LTS
    winget install Git.Git
    winget install Microsoft.VisualStudio.2022.BuildTools
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
    ```
-
-2. **Install CUDA Toolkit**
-   - Download [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
-   - Select Windows version
-   - Run installer as administrator
-   - Reboot system after installation
 
 3. **Clone Repository**
    ```batch
