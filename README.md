@@ -179,7 +179,7 @@ Set up alert keywords using Discord commands:
 4. **Install Dependencies**
    ```batch
    :: Install Node.js packages
-   npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js @discordjs/voice prism-media node-fetch@2 socket.io wavesurfer.js leaflet.heat csv-parser openai path http fs crypto
+   npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io wavesurfer.js leaflet.heat csv-parser openai path http fs crypto
 
    :: Install Python packages (might need administrative PowerShell)
    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
