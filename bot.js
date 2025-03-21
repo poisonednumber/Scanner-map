@@ -837,7 +837,7 @@ function sendTranscriptionMessage(
             .setStyle(ButtonStyle.Primary);
 
           const listenRecordingButton = new ButtonBuilder()
-            .setLabel('🔊 Listen to Recording')
+            .setLabel('Audio')
             .setStyle(ButtonStyle.Link)
             .setURL(audioUrl);
 
