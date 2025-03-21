@@ -30,7 +30,7 @@ const logger = winston.createLogger({
 const {
   GOOGLE_MAPS_API_KEY,
   OPENAI_API_KEY,
-  GEOCODING_STATE = 'MD',
+  GEOCODING_STATE = 'FL',
   GEOCODING_COUNTRY = 'US'
 } = process.env;
 
@@ -49,14 +49,43 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Define talk groups and their associated towns
+// Define talk groups and their associated counties
 const TALK_GROUPS = {
-  '6010': 'Silver Spring or any town in Montgomery County MD',
-  '4005': 'Silver Spring or any town in Montgomery County MD',
+  // Santa Rosa County talk groups
+  '5601': 'any town in Santa Rosa County FL',
+  '5602': 'any town in Santa Rosa County FL',
+  '5603': 'any town in Santa Rosa County FL',
+  
+  // Escambia County talk groups
+  '5267': 'any town in Escambia County FL',
+  '6789': 'any town in Escambia County FL',
+  '1': 'any town in Escambia County FL',
+  
+  // Test System - setting this to Escambia County based on the test cases
+  '5251': 'any town in Escambia County FL'
 };
 
 // Keep the TARGET_CITIES list for reference and backward compatibility
-const TARGET_CITIES = ["Ashton-Sandy Spring", "Aspen Hill", "Bethesda", "Brookmont", "Burnt Mills", "Burtonsville", "Cabin John", "Chevy Chase", "Clarksburg", "Cloverly", "Colesville", "Damascus", "Darnestown", "Derwood", "Fairland", "Flower Hill", "Forest Glen", "Four Corners", "Friendship Heights Village", "Germantown", "Glenmont", "Kemp Mill", "Layhill", "Montgomery Village", "North Bethesda", "North Kensington", "North Potomac", "Olney", "Potomac", "Redland", "Silver Spring", "South Kensington", "Spencerville", "Ten Mile Creek", "Wheaton", "White Oak", "Calverton", "Hillandale"];
+const TARGET_CITIES = [
+  // Santa Rosa County cities
+  "Bagdad", "Gulf Breeze", "Jay", "Milton", "Navarre",
+  // Escambia County cities
+  "Cantonment", "Century", "Mc David", "Molino", "Pensacola"
+];
+
+// County information for internal use
+const COUNTIES = {
+  'SANTA_ROSA': {
+    name: 'Santa Rosa County',
+    state: 'FL',
+    cities: ["Bagdad", "Gulf Breeze", "Jay", "Milton", "Navarre"]
+  },
+  'ESCAMBIA': {
+    name: 'Escambia County',
+    state: 'FL',
+    cities: ["Cantonment", "Century", "Mc David", "Molino", "Pensacola"]
+  }
+};
 
 /**
  * Helper Functions
@@ -72,12 +101,36 @@ function escapeRegExp(string) {
 }
 
 /**
+ * Determines which county a talk group belongs to.
+ * @param {string} talkGroupId - The talk group ID.
+ * @returns {Object} - The county info object with fallback to Santa Rosa County.
+ */
+function getCountyFromTalkGroup(talkGroupId) {
+  const talkGroup = TALK_GROUPS[talkGroupId];
+  if (!talkGroup) {
+    logger.warn(`Unknown talk group ID: ${talkGroupId}, defaulting to Santa Rosa County`);
+    return COUNTIES.SANTA_ROSA;
+  }
+  
+  if (talkGroup.includes('Santa Rosa')) {
+    return COUNTIES.SANTA_ROSA;
+  } else if (talkGroup.includes('Escambia')) {
+    return COUNTIES.ESCAMBIA;
+  }
+  
+  // Default to Santa Rosa County if there's ambiguity
+  logger.info(`Talk group ${talkGroupId} is ambiguous, defaulting to Santa Rosa County`);
+  return COUNTIES.SANTA_ROSA;
+}
+
+/**
  * Uses GPT-3.5 to extract and complete addresses from the full transcript.
  * @param {string} transcript - The full transcript text.
- * @param {string} town - The town associated with the transcript.
+ * @param {string} town - The town description associated with the transcript.
+ * @param {Object} county - The county object with name and state.
  * @returns {Promise<string|null>} - The extracted and completed address or null if not found.
  */
-async function extractAddressWithGPT(transcript, town) {
+async function extractAddressWithGPT(transcript, town, county) {
   try {
     const messages = [
       {
@@ -85,13 +138,14 @@ async function extractAddressWithGPT(transcript, town) {
         content: `You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
         Focus on extracting a single full address, block, or intersection. 
         If an address is incomplete, attempt to complete it based on the given town.
-        Only extract addresses for Montgomery County, MD.
+        Only extract addresses for ${county.name}, ${county.state}.
         If no valid address is found, return "No address found".
+		"Red Bay Court" will be "Redbay Ct" "Nango Street" will be"Mango St"
 		Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
-		Keep in mind unit's often start by saying their unit number and city sometimes the city is misspelled don't get it confused for an address,ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
-        Format full addresses as: "123 Main St, Town, MD".
-        Format blocks as: "100 block of Main St, Town, MD".
-        Format intersections as: "Main St & Oak Ave, Town, MD".`
+		Keep in mind unit's often start by saying their unit number and city sometimes the city is misspelled don't get it confused for an address, ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
+        Format full addresses as: "123 Main St, Town, ${county.state}".
+        Format blocks as: "100 block of Main St, Town, ${county.state}".
+        Format intersections as: "Main St & Oak Ave, Town, ${county.state}".`
       },
       {
         role: 'user',
@@ -129,12 +183,37 @@ async function extractAddressWithGPT(transcript, town) {
  * @returns {Promise<{ lat: number, lng: number, formatted_address: string } | null>} - Geocoded data or null.
  */
 async function geocodeAddress(address) {
+  // Check if address contains Pensacola or other Escambia cities
+  const escambiaCities = ["Pensacola", "Cantonment", "Century", "Mc David", "Molino"];
+  const escambiaMatch = escambiaCities.some(city => address.includes(city));
+  
+  // Get the county from the address or infer from city name
+  const countyMatch = address.match(/(Santa Rosa|Escambia)\s+County/i);
+  let countyObj = null;
+  
+  if (countyMatch) {
+    // Explicit county mentioned in address
+    if (countyMatch[1].toLowerCase() === 'escambia') {
+      countyObj = COUNTIES.ESCAMBIA;
+    } else {
+      countyObj = COUNTIES.SANTA_ROSA;
+    }
+  } else if (escambiaMatch) {
+    // City in Escambia County
+    countyObj = COUNTIES.ESCAMBIA;
+  } else {
+    // Default to Santa Rosa County if no specific indicator
+    countyObj = COUNTIES.SANTA_ROSA;
+  }
+  
+  logger.info(`Geocoding address "${address}" in ${countyObj.name}`);
+  
   const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
   
   const params = new URLSearchParams({
     address: address,
     key: GOOGLE_MAPS_API_KEY,
-    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}`
+    components: `country:${GEOCODING_COUNTRY}|administrative_area:${countyObj.state}`
   });
 
   try {
@@ -170,33 +249,24 @@ async function geocodeAddress(address) {
     const formatted_address = result.formatted_address;
     const resultTypes = result.types;
 
-    // Add this check to filter out the specific Silver Spring city result
-    if (formatted_address === "Silver Spring, MD 20910, USA") {
-      logger.info(`Skipping city-level result for Silver Spring: "${formatted_address}"`);
-      return null;
-    }
-
-    // **Enhanced Filtering Logic with Additional Specific Types Starts Here**
-
     // Skip only generic city-level results while keeping useful partial matches
     if (resultTypes.includes('locality') && resultTypes.length <= 3 && !formatted_address.includes('Caravan')) {
       logger.info(`Skipping city-level result: "${formatted_address}"`);
       return null;
     }
 
-    // **Enhanced Filtering Logic with Additional Specific Types Ends Here**
-
-    // Verify that the result is in Montgomery County
+    // Check both Santa Rosa and Escambia counties
     const countyComponent = result.address_components.find(component => 
       component.types.includes('administrative_area_level_2') && 
-      component.long_name === 'Montgomery County'
+      (component.long_name === COUNTIES.SANTA_ROSA.name || 
+       component.long_name === COUNTIES.ESCAMBIA.name)
     );
 
     if (countyComponent) {
-      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng})`);
+      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng}) in ${countyComponent.long_name}`);
       return { lat, lng, formatted_address };
     } else {
-      logger.warn(`Geocoded address "${formatted_address}" is not within Montgomery County.`);
+      logger.warn(`Geocoded address "${formatted_address}" is not within either county.`);
       return null;
     }
   } catch (error) {
@@ -204,7 +274,6 @@ async function geocodeAddress(address) {
     return null;
   }
 }
-
 
 /**
  * Hyperlinks an address within the transcript text.
@@ -230,18 +299,32 @@ function hyperlinkAddress(transcript, address) {
  * @returns {Promise<string|null>} - Extracted and completed addresses or null if none are found.
  */
 async function extractAddress(transcript, talkGroupId) {
+  // Look for Pensacola or other Escambia cities in the transcript
+  const escambiaCities = ["Pensacola", "Cantonment", "Century", "Mc David", "Molino"];
+  const escambiaMatch = escambiaCities.some(city => transcript.includes(city));
+  
+  let county = null;
+  if (escambiaMatch) {
+    county = COUNTIES.ESCAMBIA;
+    logger.info(`Detected Escambia County reference in transcript`);
+  } else {
+    // Default logic based on talk group
+    county = getCountyFromTalkGroup(talkGroupId);
+  }
+  
   const town = TALK_GROUPS[talkGroupId] || 'Unknown';
   if (town === 'Unknown') {
-    logger.warn(`Unknown talk group ID: ${talkGroupId}`);
-    return null;
+    logger.warn(`Unknown talk group ID: ${talkGroupId}, using detected or default county`);
   }
-
-  const extractedAddress = await extractAddressWithGPT(transcript, town);
+  
+  logger.info(`Processing transcript for talk group ${talkGroupId} in ${county.name}, ${county.state}`);
+  const extractedAddress = await extractAddressWithGPT(transcript, town, county);
   if (!extractedAddress || extractedAddress === "No address found") {
     logger.info('No address extracted by GPT-3.5.');
     return null;
   }
 
+  // Return just the address string to match original interface
   return extractedAddress;
 }
 
@@ -262,6 +345,7 @@ async function processTranscript(transcript, talkGroupId) {
   const geocodedResults = [];
 
   for (const address of addresses) {
+    logger.info(`Attempting to geocode address: "${address}"`);
     const geocodeResult = await geocodeAddress(address);
     if (geocodeResult) {
       geocodedResults.push(geocodeResult);
