@@ -396,13 +396,13 @@ body, html {
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    background-color: rgba(0, 0, 0, 0.7); /* Match control panel background */
+    background-color: rgba(0, 0, 0, 1); /* Match control panel background */
     color: var(--text-color);
     border: 1px solid var(--border-color);
     border-radius: 4px;
     font-family: 'Share Tech Mono', monospace;
     z-index: 1001;
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
     transition: opacity 0.3s ease-in-out, top 0.3s ease-in-out;
     padding: 10px 20px;
     font-size: 18px;
