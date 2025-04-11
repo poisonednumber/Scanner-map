@@ -88,17 +88,7 @@ Processing times:
    # Edit hashApiKey.js to set your desired API key
    node hashApiKey.js
    ```
-   The script will output a hashed version of your API key. Save both the original and hashed versions.
-
-2. Create the API keys file:
-   ```json
-   // data/apikeys.json
-   [
-     {
-       "key": "your_hashed_key_here",
-       "disabled": false
-     }
-   ]
+   The script will output a hashed version of your API key.
    ```
 
 ## Discord Integration
