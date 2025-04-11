@@ -185,6 +185,9 @@ Set up alert keywords using Discord commands:
    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
    pip install openai-whisper
    pip install whisper-timestamped
+   
+   :: Install FFmpeg
+   winget install "FFmpeg (Essentials Build)"
    ```
 
    Note: We specifically use node-fetch@2 because newer versions require ES modules.
