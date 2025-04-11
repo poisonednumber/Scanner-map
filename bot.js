@@ -22,14 +22,34 @@ const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp({
-      format: () => moment().tz('US/Central').format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: () => moment().tz('US/Eastern').format('MM/DD/YYYY HH:mm:ss.SSS')
     }),
-    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`)
+    winston.format.printf(({ timestamp, level, message }) => {
+      // Define patterns that should be yellow
+      if (message.includes('Talk Group') || 
+	      message.includes('Incoming Request ') || 
+          message.includes('Geocoded Address')) {
+        // ANSI yellow color code
+        return `${timestamp} \x1b[33m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      // Green color for other info messages
+      if (level === 'info') {
+        return `${timestamp} \x1b[37m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      // Default colors for other log levels (you can customize these)
+      const colors = {
+        error: '\x1b[31m', // red
+        warn: '\x1b[33m',  // yellow
+        debug: '\x1b[36m'  // cyan
+      };
+      const color = colors[level] || '\x1b[37m'; // default to white
+      return `${timestamp} ${color}[${level.toUpperCase()}] ${message}\x1b[0m`;
+    })
   ),
   transports: [
     new winston.transports.File({ filename: 'error.log', level: 'error' }),
     new winston.transports.File({ filename: 'combined.log' }),
-    new winston.transports.Console()
+    new winston.transports.Console()  // Remove the colorize format here
   ]
 });
 
@@ -103,7 +123,8 @@ let transcriptionQueue = [];
 let activeTranscriptions = 0;
 const MAX_CONCURRENT_TRANSCRIPTIONS = 3;
 let isBootComplete = false;
-
+const messageCache = new Map(); // Stores the latest message for each channel
+const MESSAGE_COOLDOWN = 15000; // 15 seconds in milliseconds
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -205,11 +226,12 @@ const generateCustomFilename = (fields, originalFilename) => {
     : 'Unknown_Talkgroup';
   const talkgroup = fields.talkgroup || 'Unknown';
   const source = fields.source || 'Unknown';
-  const extension = path.extname(originalFilename || '.mp3');
+  
+  // Force mp3 extension instead of using the original extension for PCM files
+  const extension = isIgnoredFileType(originalFilename) ? '.mp3' : path.extname(originalFilename || '.mp3');
 
   return `${dateStr}_${systemName}_${talkgroupInfo}_TO_${talkgroup}_FROM_${source}${extension}`;
 };
-
 // Express Middleware
 app.use(express.json());
 
@@ -220,6 +242,11 @@ app.use((req, res, next) => {
   logger.info(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
   next();
 });
+
+const isIgnoredFileType = (filename) => {
+  const extension = path.extname(filename).toLowerCase();
+  return extension === '.pcm'; // Add more extensions to ignore if needed
+};
 
 // Route: /api/call-upload
 app.post('/api/call-upload', (req, res) => {
@@ -236,6 +263,15 @@ app.post('/api/call-upload', (req, res) => {
 
   bb.on('file', (name, file, info) => {
     fileInfo = { originalFilename: info.filename };
+    
+    // Check if the file type should be ignored
+    if (isIgnoredFileType(info.filename)) {
+      logger.info(`Ignoring unsupported file type: ${info.filename}`);
+      // Skip collecting file data for ignored file types
+      file.resume();
+      return;
+    }
+    
     const chunks = [];
     file.on('data', (chunk) => {
       chunks.push(chunk);
@@ -261,6 +297,11 @@ app.post('/api/call-upload', (req, res) => {
     const apiKey = await validateApiKey(fields.key);
     if (!apiKey) {
       return res.status(401).send('Invalid or disabled API key.');
+    }
+
+    // Check if the file was ignored due to file type
+    if (fileInfo && isIgnoredFileType(fileInfo.originalFilename)) {
+      return res.status(200).send('File type not supported. Skipping processing.');
     }
 
     if (fileInfo && fileBuffer) {
@@ -327,6 +368,19 @@ function handleNewAudio(audioData) {
     talkGroupGroup,
   } = audioData;
 
+  // Double-check file extension before processing
+  if (isIgnoredFileType(filename)) {
+    logger.info(`Skipping processing of unsupported file: ${filename}`);
+    
+    // Delete the file to prevent it from taking up space
+    fs.unlink(tempPath, (err) => {
+      if (err) logger.error(`Error deleting unsupported file ${filename}:`, err);
+      else logger.info(`Deleted unsupported file ${filename}`);
+    });
+    
+    return;
+  }
+
   fs.readFile(tempPath, (err, fileBuffer) => {
     if (err) {
       logger.error('Error reading audio file:', err);
@@ -374,7 +428,6 @@ function handleNewAudio(audioData) {
     );
   });
 }
-
 // Helper function to validate individual fields
 function isValidField(name, value) {
   return typeof name === 'string' && name.trim() !== '' &&
@@ -547,8 +600,8 @@ async function handleNewTranscription(
   id,
   transcriptionText,
   talkGroupID,
-  talkGroupName,
   systemName,
+  talkGroupName,
   source,
   talkGroupGroup,
   audioFilePath
@@ -570,7 +623,55 @@ async function handleNewTranscription(
       logger.info(`Skipping address extraction for non-whitelisted talk group: ${talkGroupID}`);
     }
 
-    await processKeywordsAndSendMessages(id, transcriptionText, talkGroupID, talkGroupName, systemName, source, talkGroupGroup);
+    // Store the message URL
+    let messageUrl = null;
+    
+    // Update to capture the URL from the callback
+    // IMPORTANT: Pass the numeric ID for the audio URL, not talkGroupName
+    await new Promise((resolve) => {
+      sendTranscriptionMessage(
+        talkGroupID, 
+        talkGroupName, 
+        transcriptionText, 
+        systemName, 
+        source, 
+        id,  // This is the actual numeric ID that should be used for the audio URL
+        talkGroupGroup, 
+        (url) => {
+          messageUrl = url;
+          resolve();
+        }
+      );
+    });
+
+    // Check for keywords and send alert with the message URL
+    const matchedKeywords = await new Promise((resolve, reject) => {
+      checkForKeywords(talkGroupID, transcriptionText, (keywords) => {
+        if (keywords) resolve(keywords);
+        else reject(new Error('Error checking keywords'));
+      });
+    });
+
+    logger.info(`Matched keywords for ID ${id}: ${matchedKeywords.join(', ') || 'None'}`);
+
+    if (matchedKeywords.length > 0 && alertChannel) {
+      logger.info(`Sending alert message for ID ${id}`);
+      await sendAlertMessage(
+        talkGroupID,
+        talkGroupName,
+        transcriptionText,
+        systemName,
+        source,
+        id,  // Pass the numeric ID here too
+        matchedKeywords,
+        messageUrl
+      );
+    }
+
+    if (activeVoiceChannels.has(talkGroupID)) {
+      logger.info(`Playing audio for talk group ${talkGroupID}`);
+      playAudioForTalkGroup(talkGroupID, id);
+    }
 
     logger.info(`Finished handling transcription for ID ${id}`);
   } catch (error) {
@@ -578,6 +679,56 @@ async function handleNewTranscription(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Update sendAlertMessage to include both audio link and jump to message link
+function sendAlertMessage(
+  talkGroupID,
+  talkGroupName,
+  transcriptionText,
+  systemName,
+  source,
+  audioID,
+  matchedKeywords,
+  messageUrl,
+  callback
+) {
+  // Create a URL for the audio file
+  const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
+  
+  const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`🚨 Alert from ${talkGroupName}`)
+    .setDescription(`**Matched Keywords:** ${matchedKeywords.join(', ')}`)
+    .setTimestamp()
+    .setColor(0xff0000);
+
+  // Prepare the fields to be added
+  const fields = [
+    { name: 'Transcription', value: formattedTranscription },
+    { name: 'System', value: systemName || 'Unknown', inline: true },
+    { 
+      name: 'Links', 
+      value: `[🔊 Listen to Audio](${audioUrl})\n[↗️ Jump to Message](${messageUrl})`, 
+      inline: false
+    }
+  ];
+
+  // Validate and add the fields
+  validateAndAddFields(embed, fields);
+
+  // Send the embed message
+  alertChannel
+    .send({ embeds: [embed] })
+    .then(() => {
+      logger.info('Alert message sent successfully');
+      if (callback) callback();
+    })
+    .catch((err) => {
+      logger.error('Error sending alert message:', err);
+      if (callback) callback();
+    });
 }
 
 async function extractAndProcessAddress(id, transcriptionText, talkGroupID) {
@@ -684,16 +835,26 @@ async function processKeywordsAndSendMessages(id, transcriptionText, talkGroupID
 
     logger.info(`Matched keywords for ID ${id}: ${matchedKeywords.join(', ') || 'None'}`);
 
+    // Store the message URL
+    let messageUrl = null;
+
     logger.info(`Sending transcription message for ID ${id}`);
-    await sendTranscriptionMessage(
-      talkGroupID,
-      talkGroupName,
-      transcriptionText,
-      systemName,
-      source,
-      id,
-      talkGroupGroup
-    );
+    // Get the message URL from the sendTranscriptionMessage callback
+    await new Promise((resolve) => {
+      sendTranscriptionMessage(
+        talkGroupID,
+        talkGroupName,
+        transcriptionText,
+        systemName,
+        source,
+        id,
+        talkGroupGroup,
+        (url) => {
+          messageUrl = url;
+          resolve();
+        }
+      );
+    });
 
     if (matchedKeywords.length > 0 && alertChannel) {
       logger.info(`Sending alert message for ID ${id}`);
@@ -703,8 +864,10 @@ async function processKeywordsAndSendMessages(id, transcriptionText, talkGroupID
         transcriptionText,
         systemName,
         source,
-        id,
-        matchedKeywords
+        id,               // Pass the correct audioID
+        matchedKeywords,
+        messageUrl,       // Pass the message URL
+        null              // No callback needed
       );
     }
 
@@ -747,8 +910,16 @@ function sendAlertMessage(
   source,
   audioID,
   matchedKeywords,
+  messageUrl,
   callback
 ) {
+  // Create a URL for the audio file
+  const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
+  
+  // Log the audio URL and message URL for debugging
+  logger.info(`Alert - Audio ID: ${audioID}, URL: ${audioUrl}`);
+  logger.info(`Alert - Message URL: ${messageUrl}`);
+  
   const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
 
   const embed = new EmbedBuilder()
@@ -762,6 +933,15 @@ function sendAlertMessage(
     { name: 'Transcription', value: formattedTranscription },
     { name: 'System', value: systemName || 'Unknown', inline: true }
   ];
+
+  // Add the links field if we have valid URLs
+  if (audioUrl && audioID) {
+    fields.push({ 
+      name: 'Links', 
+      value: `[🔊 Listen to Audio](${audioUrl})${messageUrl ? `\n[↗️ Jump to Message](${messageUrl})` : ''}`, 
+      inline: false 
+    });
+  }
 
   // Validate and add the fields
   validateAndAddFields(embed, fields);
@@ -830,64 +1010,105 @@ function sendTranscriptionMessage(
 
           // Create a URL for the audio file using the domain from the environment variable
           const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
+          
+          // Log the audioID and URL for debugging
+          logger.info(`Audio ID: ${audioID}, URL: ${audioUrl}`);
 
-          const listenLiveButton = new ButtonBuilder()
-            .setCustomId(`listen_live_${talkGroupID}`)
-            .setLabel('🎧 Listen Live')
-            .setStyle(ButtonStyle.Primary);
+          // Generate the transcription line with ID and properly formatted audio link
+          const transcriptionLine = `**ID-${source}:** ${transcriptionText} [Audio](${audioUrl})`;
 
-          const listenRecordingButton = new ButtonBuilder()
-            .setLabel('Audio')
-            .setStyle(ButtonStyle.Link)
-            .setURL(audioUrl);
+          // Check if we have a recent message for this channel
+          const cacheKey = channel.id;
+          const cachedMessage = messageCache.get(cacheKey);
+          const currentTime = Date.now();
 
-          const row = new ActionRowBuilder().addComponents(listenLiveButton, listenRecordingButton);
+          if (cachedMessage && currentTime - cachedMessage.timestamp < MESSAGE_COOLDOWN) {
+            // Update existing message
+            // Add the new transcription to the existing content
+            const updatedTranscription = cachedMessage.transcriptions + '\n\n' + transcriptionLine;
+            
+            // Update the embed with the new combined transcriptions
+            const embed = cachedMessage.message.embeds[0];
+            const newEmbed = EmbedBuilder.from(embed)
+              .setDescription(updatedTranscription)
+              .setTimestamp(); // Update timestamp to current time
 
-          // Create the embed object
-          const embed = new EmbedBuilder()
-    .setTitle(fullTalkGroupName)
-    .setTimestamp()
-    .setColor(0x00ff00);
+            // Edit the message with the updated embed
+            cachedMessage.message.edit({ embeds: [newEmbed] })
+              .then((editedMsg) => {
+                // Update the cache with the new data
+                messageCache.set(cacheKey, {
+                  message: editedMsg,
+                  timestamp: currentTime,
+                  transcriptions: updatedTranscription,
+                  url: editedMsg.url  // Store the message URL
+                });
+                
+                if (callback) {
+                  callback(editedMsg.url);  // Pass back the message URL
+                }
+              })
+              .catch((err) => {
+                logger.error('Error editing message:', err);
+                if (callback) callback();
+              });
+          } else {
+            // Create a new message
+            const listenLiveButton = new ButtonBuilder()
+              .setCustomId(`listen_live_${talkGroupID}`)
+              .setLabel('🎧 Listen Live')
+              .setStyle(ButtonStyle.Primary);
 
-  // Prepare the fields with proper string values
-  const fields = [
-    { 
-      name: 'Radio', 
-      value: `ID-${String(source)}`, 
-      inline: true 
-    },
-    { 
-      name: 'Transcription', 
-      value: transcriptionText ? String(transcriptionText) : 'No transcription available.', 
-      inline: false 
-    }
-  ];
+            const row = new ActionRowBuilder().addComponents(listenLiveButton);
 
-  // Validate and add the fields
-  validateAndAddFields(embed, fields);
+            // Create the embed for a new message
+            const embed = new EmbedBuilder()
+              .setTitle(fullTalkGroupName)
+              .setDescription(transcriptionLine)
+              .setTimestamp()
+              .setColor(0x00ff00);
 
-
-          // Send the message with the embed and buttons
-          channel
-            .send({
+            // Send the new message
+            channel.send({
               embeds: [embed],
               components: [row],
             })
-            .then((msg) => {
-              if (callback) {
-                callback(msg.url);
-              }
-            })
-            .catch((err) => {
-              logger.error('Error sending transcription message:', err);
-              if (callback) callback();
-            });
+              .then((msg) => {
+                // Cache the new message
+                messageCache.set(cacheKey, {
+                  message: msg,
+                  timestamp: currentTime,
+                  transcriptions: transcriptionLine,
+                  url: msg.url  // Store the message URL
+                });
+                
+                if (callback) {
+                  callback(msg.url);  // Pass back the message URL
+                }
+              })
+              .catch((err) => {
+                logger.error('Error sending transcription message:', err);
+                if (callback) callback();
+              });
+          }
         });
       });
     }
   );
 }
+// Add a cleanup function to prevent memory leaks
+// You can call this periodically, e.g., every hour
+function cleanupMessageCache() {
+  const currentTime = Date.now();
+  for (const [key, value] of messageCache.entries()) {
+    if (currentTime - value.timestamp > MESSAGE_COOLDOWN * 2) {
+      messageCache.delete(key);
+    }
+  }
+}
 
+// Add this to your existing interval cleanups or create a new one
+setInterval(cleanupMessageCache, 3600000); // Clean up every hour
 
 function getChannelName(talkGroupName) {
   // Use the full Talk Group Name as the channel name, sanitized
