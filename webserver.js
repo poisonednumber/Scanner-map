@@ -284,7 +284,7 @@ app.get('/audio/:id', (req, res) => {
     
     if (row) {
       // Found by audio_id
-      console.log(`Found audio using direct ID match: ${requestedId}`);
+      //console.log(`Found audio using direct ID match: ${requestedId}`);
       res.set('Content-Type', 'audio/mpeg');
       return res.send(row.audio_data);
     }
@@ -298,7 +298,7 @@ app.get('/audio/:id', (req, res) => {
       
       if (row) {
         // Found by transcription_id
-        console.log(`Found audio using transcription_id: ${requestedId}`);
+        //console.log(`Found audio using transcription_id: ${requestedId}`);
         res.set('Content-Type', 'audio/mpeg');
         return res.send(row.audio_data);
       }
