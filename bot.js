@@ -847,42 +847,51 @@ function sendAlertMessage(
   messageUrl,
   callback
 ) {
-  // Create a URL for the audio file
-  const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${audioID}`;
-  
-  const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
-
-  const embed = new EmbedBuilder()
-    .setTitle(`🚨 Alert from ${talkGroupName}`)
-    .setDescription(`**Matched Keywords:** ${matchedKeywords.join(', ')}`)
-    .setTimestamp()
-    .setColor(0xff0000);
-
-  // Prepare the fields to be added
-  const fields = [
-    { name: 'Transcription', value: formattedTranscription },
-    { name: 'System', value: systemName || 'Unknown', inline: true },
-    { 
-      name: 'Links', 
-      value: `[🔊 Listen to Audio](${audioUrl})\n[↗️ Jump to Message](${messageUrl})`, 
-      inline: false
-    }
-  ];
-
-  // Validate and add the fields
-  validateAndAddFields(embed, fields);
-
-  // Send the embed message
-  alertChannel
-    .send({ embeds: [embed] })
-    .then(() => {
-      logger.info('Alert message sent successfully');
-      if (callback) callback();
-    })
-    .catch((err) => {
-      logger.error('Error sending alert message:', err);
-      if (callback) callback();
-    });
+  // Look up the audio_id from the database for this transcription
+  db.get('SELECT id FROM audio_files WHERE transcription_id = ?', [audioID], (err, row) => {
+    // Use transcription ID as fallback if audio ID not found
+    const actualAudioID = (err || !row) ? audioID : row.id;
+    
+    // Create a URL for the audio file
+    const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${actualAudioID}`;
+    
+    // Log the IDs for debugging
+    logger.info(`Alert - Transcription ID: ${audioID}, Audio ID: ${actualAudioID}, URL: ${audioUrl}`);
+    
+    const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`🚨 Alert from ${talkGroupName}`)
+      .setDescription(`**Matched Keywords:** ${matchedKeywords.join(', ')}`)
+      .setTimestamp()
+      .setColor(0xff0000);
+    
+    // Prepare the fields to be added
+    const fields = [
+      { name: 'Transcription', value: formattedTranscription },
+      { name: 'System', value: systemName || 'Unknown', inline: true },
+      { 
+        name: 'Links', 
+        value: `[🔊 Listen to Audio](${audioUrl})\n[↗️ Jump to Message](${messageUrl})`, 
+        inline: false
+      }
+    ];
+    
+    // Validate and add the fields
+    validateAndAddFields(embed, fields);
+    
+    // Send the embed message
+    alertChannel
+      .send({ embeds: [embed] })
+      .then(() => {
+        logger.info('Alert message sent successfully');
+        if (callback) callback();
+      })
+      .catch((err) => {
+        logger.error('Error sending alert message:', err);
+        if (callback) callback();
+      });
+  });
 }
 
 function sendTranscriptionMessage(
@@ -918,7 +927,7 @@ function sendTranscriptionMessage(
       // Determine the channel name (full talk group name)
       const channelName = getChannelName(fullTalkGroupName);
 
-// Get or create the category
+      // Get or create the category
       getOrCreateCategory(categoryName, (category) => {
         if (!category) {
           logger.error('Failed to get or create category.');
@@ -934,89 +943,95 @@ function sendTranscriptionMessage(
             return;
           }
 
-          // Create a URL for the audio file using the domain from the environment variable
-          const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${audioID}`;
-          
-          // Log the audioID and URL for debugging
-          logger.info(`Audio ID: ${audioID}, URL: ${audioUrl}`);
-
-          // Generate the transcription line with ID and properly formatted audio link
-          const transcriptionLine = `**ID-${source}:** ${transcriptionText} [Audio](${audioUrl})`;
-
-          // Check if we have a recent message for this channel
-          const cacheKey = channel.id;
-          const cachedMessage = messageCache.get(cacheKey);
-          const currentTime = Date.now();
-
-          if (cachedMessage && currentTime - cachedMessage.timestamp < MESSAGE_COOLDOWN) {
-            // Update existing message
-            // Add the new transcription to the existing content
-            const updatedTranscription = cachedMessage.transcriptions + '\n\n' + transcriptionLine;
+          // Look up the audio_id from the database for this transcription
+          db.get('SELECT id FROM audio_files WHERE transcription_id = ?', [audioID], (err, row) => {
+            // Use transcription ID as fallback if audio ID not found
+            const actualAudioID = (err || !row) ? audioID : row.id;
             
-            // Update the embed with the new combined transcriptions
-            const embed = cachedMessage.message.embeds[0];
-            const newEmbed = EmbedBuilder.from(embed)
-              .setDescription(updatedTranscription)
-              .setTimestamp(); // Update timestamp to current time
+            // Create a URL for the audio file using the domain from the environment variable
+            const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${actualAudioID}`;
+            
+            // Log the audioID and URL for debugging
+            logger.info(`Transcription ID: ${audioID}, Audio ID: ${actualAudioID}, URL: ${audioUrl}`);
 
-            // Edit the message with the updated embed
-            cachedMessage.message.edit({ embeds: [newEmbed] })
-              .then((editedMsg) => {
-                // Update the cache with the new data
-                messageCache.set(cacheKey, {
-                  message: editedMsg,
-                  timestamp: currentTime,
-                  transcriptions: updatedTranscription,
-                  url: editedMsg.url  // Store the message URL
+            // Generate the transcription line with ID and properly formatted audio link
+            const transcriptionLine = `**ID-${source}:** ${transcriptionText} [Audio](${audioUrl})`;
+
+            // Check if we have a recent message for this channel
+            const cacheKey = channel.id;
+            const cachedMessage = messageCache.get(cacheKey);
+            const currentTime = Date.now();
+
+            if (cachedMessage && currentTime - cachedMessage.timestamp < MESSAGE_COOLDOWN) {
+              // Update existing message
+              // Add the new transcription to the existing content
+              const updatedTranscription = cachedMessage.transcriptions + '\n\n' + transcriptionLine;
+              
+              // Update the embed with the new combined transcriptions
+              const embed = cachedMessage.message.embeds[0];
+              const newEmbed = EmbedBuilder.from(embed)
+                .setDescription(updatedTranscription)
+                .setTimestamp(); // Update timestamp to current time
+
+              // Edit the message with the updated embed
+              cachedMessage.message.edit({ embeds: [newEmbed] })
+                .then((editedMsg) => {
+                  // Update the cache with the new data
+                  messageCache.set(cacheKey, {
+                    message: editedMsg,
+                    timestamp: currentTime,
+                    transcriptions: updatedTranscription,
+                    url: editedMsg.url  // Store the message URL
+                  });
+                  
+                  if (callback) {
+                    callback(editedMsg.url);  // Pass back the message URL
+                  }
+                })
+                .catch((err) => {
+                  logger.error('Error editing message:', err);
+                  if (callback) callback();
                 });
-                
-                if (callback) {
-                  callback(editedMsg.url);  // Pass back the message URL
-                }
+            } else {
+              // Create a new message
+              const listenLiveButton = new ButtonBuilder()
+                .setCustomId(`listen_live_${talkGroupID}`)
+                .setLabel('🎧 Listen Live')
+                .setStyle(ButtonStyle.Primary);
+
+              const row = new ActionRowBuilder().addComponents(listenLiveButton);
+
+              // Create the embed for a new message
+              const embed = new EmbedBuilder()
+                .setTitle(fullTalkGroupName)
+                .setDescription(transcriptionLine)
+                .setTimestamp()
+                .setColor(0x00ff00);
+
+              // Send the new message
+              channel.send({
+                embeds: [embed],
+                components: [row],
               })
-              .catch((err) => {
-                logger.error('Error editing message:', err);
-                if (callback) callback();
-              });
-          } else {
-            // Create a new message
-            const listenLiveButton = new ButtonBuilder()
-              .setCustomId(`listen_live_${talkGroupID}`)
-              .setLabel('🎧 Listen Live')
-              .setStyle(ButtonStyle.Primary);
-
-            const row = new ActionRowBuilder().addComponents(listenLiveButton);
-
-            // Create the embed for a new message
-            const embed = new EmbedBuilder()
-              .setTitle(fullTalkGroupName)
-              .setDescription(transcriptionLine)
-              .setTimestamp()
-              .setColor(0x00ff00);
-
-            // Send the new message
-            channel.send({
-              embeds: [embed],
-              components: [row],
-            })
-              .then((msg) => {
-                // Cache the new message
-                messageCache.set(cacheKey, {
-                  message: msg,
-                  timestamp: currentTime,
-                  transcriptions: transcriptionLine,
-                  url: msg.url  // Store the message URL
+                .then((msg) => {
+                  // Cache the new message
+                  messageCache.set(cacheKey, {
+                    message: msg,
+                    timestamp: currentTime,
+                    transcriptions: transcriptionLine,
+                    url: msg.url  // Store the message URL
+                  });
+                  
+                  if (callback) {
+                    callback(msg.url);  // Pass back the message URL
+                  }
+                })
+                .catch((err) => {
+                  logger.error('Error sending transcription message:', err);
+                  if (callback) callback();
                 });
-                
-                if (callback) {
-                  callback(msg.url);  // Pass back the message URL
-                }
-              })
-              .catch((err) => {
-                logger.error('Error sending transcription message:', err);
-                if (callback) callback();
-              });
-          }
+            }
+          });
         });
       });
     }
