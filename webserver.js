@@ -1,3 +1,5 @@
+// webserver.js - Web interface for viewing and managing calls with optional authentication
+
 require('dotenv').config();
 
 const express = require('express');
@@ -7,20 +9,43 @@ const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
 
+// Environment variables
+const {
+  WEBSERVER_PORT,
+  WEBSERVER_PASSWORD,
+  PUBLIC_DOMAIN,
+  TIMEZONE,
+  ENABLE_AUTH, // New environment variable for toggling authentication
+  SESSION_DURATION_DAYS = "7", // Default 7 days if not specified
+  MAX_SESSIONS_PER_USER = "5" // Default 5 sessions if not specified
+} = process.env;
+
+// Validate required environment variables
+const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN'];
+const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
+  process.exit(1);
+}
+
+// Authentication is enabled if ENABLE_AUTH=true
+const authEnabled = ENABLE_AUTH?.toLowerCase() === 'true';
+
+// Session configuration (used only if auth is enabled)
+const SESSION_DURATION = parseInt(SESSION_DURATION_DAYS, 10) * 24 * 60 * 60 * 1000; // Convert days to milliseconds
+const MAX_SESSIONS = parseInt(MAX_SESSIONS_PER_USER, 10);
+const SESSION_CLEANUP_INTERVAL = 60 * 60 * 1000; // Cleanup every hour
+
 // Express app setup
 const app = express();
-const PORT = process.env.WEBSERVER_PORT || 3000;
+const PORT = parseInt(WEBSERVER_PORT, 10);
 
 app.use(express.json());
 
 // Create HTTP server and setup Socket.IO
 const server = http.createServer(app);
 const io = socketIo(server);
-
-// Session configuration
-const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-const MAX_SESSIONS_PER_USER = 5; // Maximum concurrent sessions per user
-const SESSION_CLEANUP_INTERVAL = 60 * 60 * 1000; // Cleanup every hour
 
 // Database setup
 const db = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) => {
@@ -31,36 +56,38 @@ const db = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) =>
   }
 });
 
-// Create necessary tables
-db.serialize(() => {
-  // Users table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      salt TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+// Create authentication tables if authentication is enabled
+if (authEnabled) {
+  db.serialize(() => {
+    // Users table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Sessions table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      token TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      expires_at DATETIME NOT NULL,
-      last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
-      ip_address TEXT,
-      user_agent TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-});
+    // Sessions table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL,
+        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ip_address TEXT,
+        user_agent TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+  });
+}
 
-// Helper Functions
+// Helper Functions for Authentication
 function hashPassword(password, salt) {
   return crypto
     .pbkdf2Sync(password, salt, 10000, 64, 'sha512')
@@ -106,20 +133,29 @@ async function validateSession(token) {
 }
 
 function cleanupExpiredSessions() {
-  db.run('DELETE FROM sessions WHERE expires_at <= datetime("now")', [], (err) => {
-    if (err) {
-      console.error('Error cleaning up expired sessions:', err);
-    } else {
-      console.log('Expired sessions cleaned up');
-    }
-  });
+  if (authEnabled) {
+    db.run('DELETE FROM sessions WHERE expires_at <= datetime("now")', [], (err) => {
+      if (err) {
+        console.error('Error cleaning up expired sessions:', err);
+      } else {
+        console.log('Expired sessions cleaned up');
+      }
+    });
+  }
 }
 
-// Start session cleanup interval
-setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL);
+// Start session cleanup interval if auth enabled
+if (authEnabled) {
+  setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL);
+}
 
-// Authentication Middleware
+// Authentication Middleware - only applied when authentication is enabled
 const basicAuth = async (req, res, next) => {
+  // Skip authentication if disabled in .env
+  if (!authEnabled) {
+    return next();
+  }
+
   try {
     const authHeader = req.headers['authorization'];
     if (!authHeader) {
@@ -166,7 +202,7 @@ const basicAuth = async (req, res, next) => {
               }
 
               // If at session limit, remove oldest session
-              if (sessions.length >= MAX_SESSIONS_PER_USER) {
+              if (sessions.length >= MAX_SESSIONS) {
                 db.run(
                   'DELETE FROM sessions WHERE id = ?',
                   [sessions[0].id],
@@ -214,6 +250,11 @@ const basicAuth = async (req, res, next) => {
 
 // Admin Authentication Middleware
 const adminAuth = (req, res, next) => {
+  // Skip authentication if disabled in .env
+  if (!authEnabled) {
+    return next();
+  }
+
   const authHeader = req.headers['authorization'];
   if (!authHeader) {
     return res.status(401).send('Admin authentication required.');
@@ -223,7 +264,7 @@ const adminAuth = (req, res, next) => {
   const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
   const [username, password] = credentials.split(':');
 
-  if (username === 'admin' && password === process.env.WEBSERVER_PASSWORD) {
+  if (username === 'admin' && password === WEBSERVER_PASSWORD) {
     next();
   } else {
     return res.status(401).send('Invalid admin credentials.');
@@ -257,21 +298,32 @@ app.get('/audio/:id', (req, res) => {
   );
 });
 
-// Apply authentication middleware to all subsequent routes
+// Apply authentication middleware to protected routes if auth is enabled
 app.use(basicAuth);
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Session Management Routes
+// Session Management Routes (Only relevant when auth is enabled)
 app.get('/api/sessions/current', (req, res) => {
-  res.json({
-    session: req.session,
-    user: req.user
-  });
+  if (authEnabled) {
+    res.json({
+      session: req.session || null,
+      user: req.user || null
+    });
+  } else {
+    res.json({
+      session: { token: 'anonymous-session' },
+      user: { username: 'anonymous' }
+    });
+  }
 });
 
 app.get('/api/sessions', adminAuth, (req, res) => {
+  if (!authEnabled) {
+    return res.json([]);
+  }
+
   const userId = req.query.userId;
   let query = `
     SELECT s.*, u.username, s.ip_address, s.user_agent
@@ -298,6 +350,10 @@ app.get('/api/sessions', adminAuth, (req, res) => {
 });
 
 app.delete('/api/sessions/:token', adminAuth, (req, res) => {
+  if (!authEnabled) {
+    return res.json({ message: 'Authentication is disabled' });
+  }
+
   db.run(
     'DELETE FROM sessions WHERE token = ?',
     [req.params.token],
@@ -312,6 +368,10 @@ app.delete('/api/sessions/:token', adminAuth, (req, res) => {
 });
 
 app.get('/api/sessions/me', (req, res) => {
+  if (!authEnabled) {
+    return res.json([]);
+  }
+
   db.all(
     `SELECT id, created_at, expires_at, ip_address, user_agent 
      FROM sessions 
@@ -328,8 +388,12 @@ app.get('/api/sessions/me', (req, res) => {
   );
 });
 
-// User Management Routes (Admin Only)
+// User Management Routes (Admin Only when auth is enabled)
 app.post('/api/users', adminAuth, async (req, res) => {
+  if (!authEnabled) {
+    return res.status(400).json({ error: 'Authentication is disabled' });
+  }
+
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -366,6 +430,10 @@ app.post('/api/users', adminAuth, async (req, res) => {
 });
 
 app.get('/api/users', adminAuth, (req, res) => {
+  if (!authEnabled) {
+    return res.json([]);
+  }
+
   db.all(
     `SELECT u.id, u.username, u.created_at,
             COUNT(s.id) as active_sessions
@@ -386,6 +454,10 @@ app.get('/api/users', adminAuth, (req, res) => {
 });
 
 app.delete('/api/users/:id', adminAuth, (req, res) => {
+  if (!authEnabled) {
+    return res.status(400).json({ error: 'Authentication is disabled' });
+  }
+
   const userId = parseInt(req.params.id, 10);
   
   if (isNaN(userId)) {
@@ -401,11 +473,7 @@ app.delete('/api/users/:id', adminAuth, (req, res) => {
   });
 });
 
-/**
- * 4. Protected API Routes
- */
-
-// Get calls within the specified hours
+// API Routes for call data
 app.get('/api/calls', (req, res) => {
   const hours = parseInt(req.query.hours) || 12;
   const sinceTimestamp = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
@@ -439,7 +507,6 @@ app.get('/api/calls', (req, res) => {
   );
 });
 
-// Delete a marker
 app.delete('/api/markers/:id', (req, res) => {
   const markerId = parseInt(req.params.id, 10);
 
@@ -462,7 +529,6 @@ app.delete('/api/markers/:id', (req, res) => {
   );
 });
 
-// Update marker location
 app.put('/api/markers/:id/location', (req, res) => {
   const markerId = parseInt(req.params.id, 10);
   
@@ -497,7 +563,6 @@ app.put('/api/markers/:id/location', (req, res) => {
   );
 });
 
-// Get additional transcriptions from the same talk group
 app.get('/api/additional-transcriptions/:callId', (req, res) => {
   const callId = parseInt(req.params.callId, 10);
   const skip = parseInt(req.query.skip, 10) || 0;
@@ -545,10 +610,7 @@ app.get('/api/additional-transcriptions/:callId', (req, res) => {
   );
 });
 
-/**
- * 5. Socket.IO Setup
- */
-
+// Socket.IO Setup
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
@@ -557,10 +619,7 @@ io.on('connection', (socket) => {
   });
 });
 
-/**
- * 6. Database Polling
- */
-
+// Database Polling for new calls
 let lastCallId = 0;
 
 function initializeLastCallId() {
@@ -577,7 +636,7 @@ function initializeLastCallId() {
 function checkForNewCalls() {
   db.all(
     `
-    SELECT t.*, a.id AS audio_id, a.audio_data, tg.alpha_tag AS talk_group_name
+    SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
     FROM transcriptions t
     LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
@@ -611,18 +670,23 @@ function checkForNewCalls() {
 initializeLastCallId();
 setInterval(checkForNewCalls, 2000);
 
-/**
- * 7. Server Startup and Shutdown
- */
-
+// Server Startup
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Session duration: ${SESSION_DURATION / (24 * 60 * 60 * 1000)} days`);
-  console.log(`Max sessions per user: ${MAX_SESSIONS_PER_USER}`);
+  console.log(`Web server running on port ${PORT}`);
+  console.log(`Audio URL base: http://${PUBLIC_DOMAIN}:${PORT}/audio/`);
+  
+  if (authEnabled) {
+    console.log('Authentication: ENABLED');
+    console.log(`Session duration: ${SESSION_DURATION / (24 * 60 * 60 * 1000)} days`);
+    console.log(`Max sessions per user: ${MAX_SESSIONS}`);
+  } else {
+    console.log('Authentication: DISABLED');
+  }
 });
 
+// Graceful Shutdown
 process.on('SIGINT', () => {
-  console.log('Shutting down gracefully...');
+  console.log('Shutting down web server gracefully...');
   server.close(() => {
     console.log('Express server closed.');
     db.close((err) => {

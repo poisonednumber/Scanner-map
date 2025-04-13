@@ -1,4 +1,4 @@
-// app.js
+// bot.js - Main Discord bot application
 
 require('dotenv').config();
 
@@ -14,29 +14,51 @@ const { Readable } = require('stream');
 const fetch = require('node-fetch');
 const winston = require('winston');
 const moment = require('moment-timezone');
-const MAPPED_TALK_GROUPS = process.env.MAPPED_TALK_GROUPS
-  ? process.env.MAPPED_TALK_GROUPS.split(',').map(id => id.trim())
+const TALK_GROUPS = {};
+
+// Get MAPPED_TALK_GROUPS as a string from environment variable
+const {
+  BOT_PORT: PORT,  
+  PUBLIC_DOMAIN,
+  DISCORD_TOKEN,
+  MAPPED_TALK_GROUPS: mappedTalkGroupsString, 
+  TIMEZONE,
+  API_KEY_FILE
+} = process.env;
+
+// Parse the string into an array
+const MAPPED_TALK_GROUPS = mappedTalkGroupsString
+  ? mappedTalkGroupsString.split(',').map(id => id.trim())
   : [];
 
+// Logger setup
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp({
-      format: () => moment().tz('US/Eastern').format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
     }),
     winston.format.printf(({ timestamp, level, message }) => {
       // Define patterns that should be yellow
       if (message.includes('Talk Group') || 
-	      message.includes('Incoming Request ') || 
-          message.includes('Geocoded Address')) {
+          message.includes('Incoming Request')) {
         // ANSI yellow color code
         return `${timestamp} \x1b[33m[${level.toUpperCase()}] ${message}\x1b[0m`;
       }
-      // Green color for other info messages
+      
+      // Define patterns that should be green
+      if (message.includes('Extracted Address') || 
+          message.includes('Geocoded Address')) {
+        // ANSI green color code
+        return `${timestamp} \x1b[32m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      
+      // White color for other info messages
       if (level === 'info') {
         return `${timestamp} \x1b[37m[${level.toUpperCase()}] ${message}\x1b[0m`;
       }
-      // Default colors for other log levels (you can customize these)
+      
+      // Default colors for other log levels
       const colors = {
         error: '\x1b[31m', // red
         warn: '\x1b[33m',  // yellow
@@ -49,7 +71,7 @@ const logger = winston.createLogger({
   transports: [
     new winston.transports.File({ filename: 'error.log', level: 'error' }),
     new winston.transports.File({ filename: 'combined.log' }),
-    new winston.transports.Console()  // Remove the colorize format here
+    new winston.transports.Console()
   ]
 });
 
@@ -85,7 +107,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType, // Add this line
+  ChannelType,
 } = require('discord.js');
 const {
   joinVoiceChannel,
@@ -99,11 +121,11 @@ const {
 const prism = require('prism-media');
 
 // Import the geocoding module
-const { extractAddress, geocodeAddress, hyperlinkAddress } = require('./geocoding');
+const { extractAddress, geocodeAddress, hyperlinkAddress, loadTalkGroups } = require('./geocoding');
 
 // Express app setup
 const app = express();
-const PORT = process.env.PORT || 80;
+const PORT_NUM = parseInt(PORT, 10);
 
 // Discord client setup
 const client = new Client({
@@ -118,13 +140,13 @@ const client = new Client({
 // Global variables
 let alertChannel;
 const UPLOAD_DIR = path.join(__dirname, 'audio');
-const API_KEY_FILE = process.env.API_KEY_FILE || './data/apikeys.json';
 let transcriptionQueue = [];
 let activeTranscriptions = 0;
 const MAX_CONCURRENT_TRANSCRIPTIONS = 3;
 let isBootComplete = false;
 const messageCache = new Map(); // Stores the latest message for each channel
 const MESSAGE_COOLDOWN = 15000; // 15 seconds in milliseconds
+
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -138,6 +160,12 @@ const db = new sqlite3.Database('./botdata.db', (err) => {
     logger.error('Error opening database:', err.message);
   } else {
     logger.info('Connected to SQLite database.');
+
+    // Initialize geocoding module with the database
+    loadTalkGroups(db).then(talkGroups => {
+  Object.assign(TALK_GROUPS, talkGroups);
+  logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups for geocoding`);
+});
   }
 });
 
@@ -188,9 +216,24 @@ db.serialize(() => {
 let apiKeys = [];
 const loadApiKeys = () => {
   try {
-    const data = fs.readFileSync(API_KEY_FILE, 'utf8');
-    apiKeys = JSON.parse(data);
-    logger.info(`Loaded ${apiKeys.length} API keys.`);
+    if (!fs.existsSync(path.dirname(API_KEY_FILE))) {
+      fs.mkdirSync(path.dirname(API_KEY_FILE), { recursive: true });
+    }
+    
+    if (!fs.existsSync(API_KEY_FILE)) {
+      // Create a default API key if none exists
+      const defaultKey = uuidv4();
+      const hashedKey = bcrypt.hashSync(defaultKey, 10);
+      apiKeys = [{ key: hashedKey, name: 'Default', disabled: false }];
+      fs.writeFileSync(API_KEY_FILE, JSON.stringify(apiKeys, null, 2));
+      
+      logger.info(`Created default API key: ${defaultKey}`);
+      logger.info(`Please save this key as it won't be shown again!`);
+    } else {
+      const data = fs.readFileSync(API_KEY_FILE, 'utf8');
+      apiKeys = JSON.parse(data);
+      logger.info(`Loaded ${apiKeys.length} API keys.`);
+    }
   } catch (err) {
     logger.error('Error loading API keys:', err);
     apiKeys = [];
@@ -232,6 +275,7 @@ const generateCustomFilename = (fields, originalFilename) => {
 
   return `${dateStr}_${systemName}_${talkgroupInfo}_TO_${talkgroup}_FROM_${source}${extension}`;
 };
+
 // Express Middleware
 app.use(express.json());
 
@@ -428,6 +472,7 @@ function handleNewAudio(audioData) {
     );
   });
 }
+
 // Helper function to validate individual fields
 function isValidField(name, value) {
   return typeof name === 'string' && name.trim() !== '' &&
@@ -681,56 +726,6 @@ async function handleNewTranscription(
   }
 }
 
-// Update sendAlertMessage to include both audio link and jump to message link
-function sendAlertMessage(
-  talkGroupID,
-  talkGroupName,
-  transcriptionText,
-  systemName,
-  source,
-  audioID,
-  matchedKeywords,
-  messageUrl,
-  callback
-) {
-  // Create a URL for the audio file
-  const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
-  
-  const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
-
-  const embed = new EmbedBuilder()
-    .setTitle(`🚨 Alert from ${talkGroupName}`)
-    .setDescription(`**Matched Keywords:** ${matchedKeywords.join(', ')}`)
-    .setTimestamp()
-    .setColor(0xff0000);
-
-  // Prepare the fields to be added
-  const fields = [
-    { name: 'Transcription', value: formattedTranscription },
-    { name: 'System', value: systemName || 'Unknown', inline: true },
-    { 
-      name: 'Links', 
-      value: `[🔊 Listen to Audio](${audioUrl})\n[↗️ Jump to Message](${messageUrl})`, 
-      inline: false
-    }
-  ];
-
-  // Validate and add the fields
-  validateAndAddFields(embed, fields);
-
-  // Send the embed message
-  alertChannel
-    .send({ embeds: [embed] })
-    .then(() => {
-      logger.info('Alert message sent successfully');
-      if (callback) callback();
-    })
-    .catch((err) => {
-      logger.error('Error sending alert message:', err);
-      if (callback) callback();
-    });
-}
-
 async function extractAndProcessAddress(id, transcriptionText, talkGroupID) {
   logger.info(`Starting address extraction for ID ${id}`);
   
@@ -768,7 +763,6 @@ async function extractAndProcessAddress(id, transcriptionText, talkGroupID) {
 }
 
 async function updateDatabaseWithCoordinates(id, geocodeResult) {
-  logger.info(`[${new Date().toISOString()}] Updating database with coordinates for ID ${id}`);
   return new Promise((resolve, reject) => {
     db.run(
       `UPDATE transcriptions SET lat = ?, lon = ?, address = ? WHERE id = ?`,
@@ -787,7 +781,6 @@ async function updateDatabaseWithCoordinates(id, geocodeResult) {
 }
 
 async function updateDatabaseWithNullCoordinates(id) {
-  logger.info(`[${new Date().toISOString()}] Updating database with null coordinates for ID ${id}`);
   return new Promise((resolve, reject) => {
     db.run(
       `UPDATE transcriptions SET address = NULL, lat = NULL, lon = NULL WHERE id = ?`,
@@ -823,65 +816,6 @@ async function updateTranscriptionWithLinkedText(id, linkedText) {
   });
 }
 
-async function processKeywordsAndSendMessages(id, transcriptionText, talkGroupID, talkGroupName, systemName, source, talkGroupGroup) {
-  logger.info(`Processing keywords and sending messages for ID ${id}`);
-  try {
-    const matchedKeywords = await new Promise((resolve, reject) => {
-      checkForKeywords(talkGroupID, transcriptionText, (keywords) => {
-        if (keywords) resolve(keywords);
-        else reject(new Error('Error checking keywords'));
-      });
-    });
-
-    logger.info(`Matched keywords for ID ${id}: ${matchedKeywords.join(', ') || 'None'}`);
-
-    // Store the message URL
-    let messageUrl = null;
-
-    logger.info(`Sending transcription message for ID ${id}`);
-    // Get the message URL from the sendTranscriptionMessage callback
-    await new Promise((resolve) => {
-      sendTranscriptionMessage(
-        talkGroupID,
-        talkGroupName,
-        transcriptionText,
-        systemName,
-        source,
-        id,
-        talkGroupGroup,
-        (url) => {
-          messageUrl = url;
-          resolve();
-        }
-      );
-    });
-
-    if (matchedKeywords.length > 0 && alertChannel) {
-      logger.info(`Sending alert message for ID ${id}`);
-      await sendAlertMessage(
-        talkGroupID,
-        talkGroupName,
-        transcriptionText,
-        systemName,
-        source,
-        id,               // Pass the correct audioID
-        matchedKeywords,
-        messageUrl,       // Pass the message URL
-        null              // No callback needed
-      );
-    }
-
-    if (activeVoiceChannels.has(talkGroupID)) {
-      logger.info(`Playing audio for talk group ${talkGroupID}`);
-      playAudioForTalkGroup(talkGroupID, id);
-    }
-
-    logger.info(`Finished processing keywords and sending messages for ID ${id}`);
-  } catch (error) {
-    logger.error(`Error in processing keywords or sending messages for ID ${id}: ${error.message}`, { stack: error.stack });
-  }
-}
-
 function checkForKeywords(talkGroupID, transcriptionText, callback) {
   db.all(
     `SELECT keyword FROM global_keywords WHERE talk_group_id = ? OR talk_group_id IS NULL`,
@@ -914,11 +848,7 @@ function sendAlertMessage(
   callback
 ) {
   // Create a URL for the audio file
-  const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
-  
-  // Log the audio URL and message URL for debugging
-  logger.info(`Alert - Audio ID: ${audioID}, URL: ${audioUrl}`);
-  logger.info(`Alert - Message URL: ${messageUrl}`);
+  const audioUrl = `http://${PUBLIC_DOMAIN}:${PORT_NUM}/audio/${audioID}`;
   
   const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
 
@@ -931,17 +861,13 @@ function sendAlertMessage(
   // Prepare the fields to be added
   const fields = [
     { name: 'Transcription', value: formattedTranscription },
-    { name: 'System', value: systemName || 'Unknown', inline: true }
-  ];
-
-  // Add the links field if we have valid URLs
-  if (audioUrl && audioID) {
-    fields.push({ 
+    { name: 'System', value: systemName || 'Unknown', inline: true },
+    { 
       name: 'Links', 
-      value: `[🔊 Listen to Audio](${audioUrl})${messageUrl ? `\n[↗️ Jump to Message](${messageUrl})` : ''}`, 
-      inline: false 
-    });
-  }
+      value: `[🔊 Listen to Audio](${audioUrl})\n[↗️ Jump to Message](${messageUrl})`, 
+      inline: false
+    }
+  ];
 
   // Validate and add the fields
   validateAndAddFields(embed, fields);
@@ -992,7 +918,7 @@ function sendTranscriptionMessage(
       // Determine the channel name (full talk group name)
       const channelName = getChannelName(fullTalkGroupName);
 
-      // Get or create the category
+// Get or create the category
       getOrCreateCategory(categoryName, (category) => {
         if (!category) {
           logger.error('Failed to get or create category.');
@@ -1009,7 +935,7 @@ function sendTranscriptionMessage(
           }
 
           // Create a URL for the audio file using the domain from the environment variable
-          const audioUrl = `http://${process.env.PUBLIC_DOMAIN}:${PORT}/audio/${audioID}`;
+          const audioUrl = `http://${PUBLIC_DOMAIN}:${PORT_NUM}/audio/${audioID}`;
           
           // Log the audioID and URL for debugging
           logger.info(`Audio ID: ${audioID}, URL: ${audioUrl}`);
@@ -1096,8 +1022,8 @@ function sendTranscriptionMessage(
     }
   );
 }
+
 // Add a cleanup function to prevent memory leaks
-// You can call this periodically, e.g., every hour
 function cleanupMessageCache() {
   const currentTime = Date.now();
   for (const [key, value] of messageCache.entries()) {
@@ -1107,7 +1033,7 @@ function cleanupMessageCache() {
   }
 }
 
-// Add this to your existing interval cleanups or create a new one
+// Add this to your existing interval cleanups
 setInterval(cleanupMessageCache, 3600000); // Clean up every hour
 
 function getChannelName(talkGroupName) {
@@ -1148,6 +1074,7 @@ function getOrCreateCategory(categoryName, callback) {
       });
   }
 }
+
 const channelCache = new Map();
 
 function getOrCreateChannel(channelName, categoryId, callback) {
@@ -1565,7 +1492,7 @@ client.commands = new Collection();
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}!`);
 
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
   try {
     logger.info('Started refreshing application (/) commands.');
@@ -1587,19 +1514,19 @@ client.once('ready', async () => {
       (channel) => channel.name === 'alerts' && channel.isTextBased()
     );
     if (!alertChannel) {
-  alertChannel = await guild.channels.create({
-    name: 'alerts',
-    type: ChannelType.GuildText,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        allow: ['ViewChannel', 'ReadMessageHistory'],
-        deny: ['SendMessages'],
-      },
-    ],
-  });
-  logger.info('Created alerts channel.');
-}
+      alertChannel = await guild.channels.create({
+        name: 'alerts',
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            allow: ['ViewChannel', 'ReadMessageHistory'],
+            deny: ['SendMessages'],
+          },
+        ],
+      });
+      logger.info('Created alerts channel.');
+    }
   } else {
     logger.error('Bot is not in any guilds.');
   }
@@ -1764,15 +1691,15 @@ app.use((err, req, res, next) => {
 });
 
 // Start the Express server and Discord bot
-const server = app.listen(PORT, () => {
-  logger.info(`Server is running on port ${PORT}`);
+const server = app.listen(PORT_NUM, () => {
+  logger.info(`Bot server is running on port ${PORT_NUM}`);
 
   // Ensure the audio directory exists
   if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   }
 
-  client.login(process.env.DISCORD_TOKEN);
+  client.login(DISCORD_TOKEN);
 });
 
 // Handle process termination
@@ -1792,9 +1719,3 @@ process.on('SIGINT', () => {
     });
   });
 });
-
-// Function to lookup geo (Not used since we're using geocoding.js)
-function lookup_geo(metadata, transcript, geocoder = null) {
-  // This function is no longer necessary as geocoding is handled in handleNewTranscription
-  return null;
-}

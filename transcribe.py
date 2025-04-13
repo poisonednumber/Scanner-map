@@ -1,4 +1,4 @@
-# transcribe.py
+# transcribe.py - Whisper transcription module
 
 import sys
 import io
@@ -8,6 +8,23 @@ import warnings
 import os
 import json
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
+
+# Get environment variables - strict loading, no defaults
+WHISPER_MODEL = os.getenv('WHISPER_MODEL')
+TRANSCRIPTION_DEVICE = os.getenv('TRANSCRIPTION_DEVICE')
+
+# Validate required environment variables
+required_vars = ['WHISPER_MODEL', 'TRANSCRIPTION_DEVICE']
+missing_vars = [var for var in required_vars if os.getenv(var) is None]
+
+if missing_vars:
+    error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
+    print(error_msg, file=sys.stderr)
+    sys.exit(1)
 
 # Configure logging to send INFO and above to stderr
 logging.basicConfig(
@@ -36,18 +53,18 @@ def main():
         print(json.dumps(error_response))
         sys.exit(1)
 
-    # Ensure CUDA is available
-    if not torch.cuda.is_available():
-        error_response = {"error": "CUDA is not available. Please ensure a compatible GPU is installed and CUDA drivers are properly configured."}
-        print(json.dumps(error_response), file=sys.stderr)
-        sys.exit(1)
-
-    device = "cuda"
+    # Check device availability
+    device = TRANSCRIPTION_DEVICE
+    if device == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested but not available. Falling back to CPU.")
+        device = "cpu"
+        
     logger.info(f"Using device: {device}")  # Log to stderr
 
-    # Load the Whisper model on GPU
+    # Load the Whisper model
     try:
-        model = whisper.load_model("large-v3-turbo", device=device)  # Ensure the model is loaded on CUDA
+        model = whisper.load_model(WHISPER_MODEL, device=device)
+        logger.info(f"Loaded model: {WHISPER_MODEL}")
     except Exception as e:
         error_response = {"error": f"Error loading model: {str(e)}"}
         print(json.dumps(error_response), file=sys.stderr)
@@ -55,7 +72,6 @@ def main():
 
     # Transcribe the audio with English as the specified language
     try:
-        # Remove the 'device' parameter from transcribe
         result = model.transcribe(audio_file_path, language='en')
         transcription = result["text"].strip()
         success_response = {"transcription": transcription}

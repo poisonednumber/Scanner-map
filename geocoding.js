@@ -1,19 +1,70 @@
-// geocoding.js
+// geocoding.js - Address extraction and geocoding module
 
 require('dotenv').config();
 const fetch = require('node-fetch');
 const winston = require('winston');
 const moment = require('moment-timezone');
-const OpenAI = require('openai');
+const fs = require('fs');
+const path = require('path');
+
+// Environment variables - strict loading from .env only
+const {
+  GOOGLE_MAPS_API_KEY,
+  GEOCODING_STATE,
+  GEOCODING_COUNTRY,
+  GEOCODING_TARGET_COUNTY,
+  GEOCODING_CITY,
+  TIMEZONE,
+  OLLAMA_URL,
+  OLLAMA_MODEL,
+  TARGET_CITIES_LIST
+} = process.env;
+
+// Validate required environment variables
+const requiredVars = ['GOOGLE_MAPS_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTY'];
+const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
+  process.exit(1);
+}
 
 // Logger setup
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp({
-      format: () => moment().tz('America/Chicago').format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
     }),
-    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`)
+    winston.format.printf(({ timestamp, level, message }) => {
+      // Define patterns that should be yellow
+      if (message.includes('Talk Group') || 
+          message.includes('Incoming Request')) {
+        // ANSI yellow color code
+        return `${timestamp} \x1b[33m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      
+      // Define patterns that should be green
+      if (message.includes('Extracted Address') || 
+          message.includes('Geocoded Address')) {
+        // ANSI green color code
+        return `${timestamp} \x1b[32m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      
+      // White color for other info messages
+      if (level === 'info') {
+        return `${timestamp} \x1b[37m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      
+      // Default colors for other log levels
+      const colors = {
+        error: '\x1b[31m', // red
+        warn: '\x1b[33m',  // yellow
+        debug: '\x1b[36m'  // cyan
+      };
+      const color = colors[level] || '\x1b[37m'; // default to white
+      return `${timestamp} ${color}[${level.toUpperCase()}] ${message}\x1b[0m`;
+    })
   ),
   transports: [
     new winston.transports.File({ filename: 'error.log', level: 'error' }),
@@ -22,70 +73,32 @@ const logger = winston.createLogger({
   ]
 });
 
-/**
- * Configuration and Constants
- */
-
-// Load environment variables
-const {
-  GOOGLE_MAPS_API_KEY,
-  OPENAI_API_KEY,
-  GEOCODING_STATE = 'FL',
-  GEOCODING_COUNTRY = 'US'
-} = process.env;
-
-if (!GOOGLE_MAPS_API_KEY) {
-  logger.error('GOOGLE_MAPS_API_KEY is not set in the environment variables.');
-  process.exit(1);
-}
-
-if (!OPENAI_API_KEY) {
-  logger.error('OPENAI_API_KEY is not set in the environment variables.');
-  process.exit(1);
-}
-
-// Initialize OpenAI API with v4 SDK
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
+// Build TALK_GROUPS from environment variables
+const TALK_GROUPS = {};
+Object.keys(process.env).forEach(key => {
+  if (key.startsWith('TALK_GROUP_')) {
+    const talkGroupId = key.replace('TALK_GROUP_', '');
+    TALK_GROUPS[talkGroupId] = process.env[key];
+  }
 });
 
-// Define talk groups and their associated counties
-const TALK_GROUPS = {
-  // Santa Rosa County talk groups
-  '5601': 'any town in Santa Rosa County FL',
-  '5602': 'any town in Santa Rosa County FL',
-  '5603': 'any town in Santa Rosa County FL',
-  
-  // Escambia County talk groups
-  '5267': 'any town in Escambia County FL',
-  '6789': 'any town in Escambia County FL',
-  '1': 'any town in Escambia County FL',
-  
-  // Test System - setting this to Escambia County based on the test cases
-  '5251': 'any town in Escambia County FL'
-};
+// Log the loaded talk groups
+logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups from environment variables`);
 
 // Keep the TARGET_CITIES list for reference and backward compatibility
-const TARGET_CITIES = [
-  // Santa Rosa County cities
-  "Bagdad", "Gulf Breeze", "Jay", "Milton", "Navarre",
-  // Escambia County cities
-  "Cantonment", "Century", "Mc David", "Molino", "Pensacola"
-];
+const TARGET_CITIES = TARGET_CITIES_LIST ? TARGET_CITIES_LIST.split(',').map(city => city.trim()) : 
+  ["Ashton-Sandy Spring", "Aspen Hill", "Bethesda", "Brookmont", "Burnt Mills", "Burtonsville", 
+   "Cabin John", "Chevy Chase", "Clarksburg", "Cloverly", "Colesville", "Damascus", "Darnestown", 
+   "Derwood", "Fairland", "Flower Hill", "Forest Glen", "Four Corners", "Friendship Heights Village", 
+   "Germantown", "Glenmont", "Kemp Mill", "Layhill", "Montgomery Village", "North Bethesda", 
+   "North Kensington", "North Potomac", "Olney", "Potomac", "Redland", "Silver Spring", 
+   "South Kensington", "Spencerville", "Ten Mile Creek", "Wheaton", "White Oak", "Calverton", "Hillandale"];
 
-// County information for internal use
-const COUNTIES = {
-  'SANTA_ROSA': {
-    name: 'Santa Rosa County',
-    state: 'FL',
-    cities: ["Bagdad", "Gulf Breeze", "Jay", "Milton", "Navarre"]
-  },
-  'ESCAMBIA': {
-    name: 'Escambia County',
-    state: 'FL',
-    cities: ["Cantonment", "Century", "Mc David", "Molino", "Pensacola"]
-  }
-};
+// Function to load talk groups from env vars
+function loadTalkGroups(db) {
+  logger.info(`Using talk groups from environment variables. Found ${Object.keys(TALK_GROUPS).length} talk groups`);
+  return Promise.resolve(TALK_GROUPS);
+}
 
 /**
  * Helper Functions
@@ -101,78 +114,56 @@ function escapeRegExp(string) {
 }
 
 /**
- * Determines which county a talk group belongs to.
- * @param {string} talkGroupId - The talk group ID.
- * @returns {Object} - The county info object with fallback to Santa Rosa County.
- */
-function getCountyFromTalkGroup(talkGroupId) {
-  const talkGroup = TALK_GROUPS[talkGroupId];
-  if (!talkGroup) {
-    logger.warn(`Unknown talk group ID: ${talkGroupId}, defaulting to Santa Rosa County`);
-    return COUNTIES.SANTA_ROSA;
-  }
-  
-  if (talkGroup.includes('Santa Rosa')) {
-    return COUNTIES.SANTA_ROSA;
-  } else if (talkGroup.includes('Escambia')) {
-    return COUNTIES.ESCAMBIA;
-  }
-  
-  // Default to Santa Rosa County if there's ambiguity
-  logger.info(`Talk group ${talkGroupId} is ambiguous, defaulting to Santa Rosa County`);
-  return COUNTIES.SANTA_ROSA;
-}
-
-/**
- * Uses GPT-3.5 to extract and complete addresses from the full transcript.
+ * Uses local LLM to extract and complete addresses from the full transcript.
  * @param {string} transcript - The full transcript text.
- * @param {string} town - The town description associated with the transcript.
- * @param {Object} county - The county object with name and state.
+ * @param {string} town - The town associated with the transcript.
  * @returns {Promise<string|null>} - The extracted and completed address or null if not found.
  */
-async function extractAddressWithGPT(transcript, town, county) {
+async function extractAddressWithLLM(transcript, town) {
   try {
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
-        Focus on extracting a single full address, block, or intersection. 
-        If an address is incomplete, attempt to complete it based on the given town.
-        Only extract addresses for ${county.name}, ${county.state}.
-        If no valid address is found, return "No address found".
-		"Red Bay Court" will be "Redbay Ct" "Nango Street" will be"Mango St"
-		Be sure to read full transcript and determine if an address/intersection or place etc is being talked about before trying to extract an address or place or intersection.
-		Keep in mind unit's often start by saying their unit number and city sometimes the city is misspelled don't get it confused for an address, ignore stuff like this "Texas Sam Tom John 4318" thats just a license plate.
-        Format full addresses as: "123 Main St, Town, ${county.state}".
-        Format blocks as: "100 block of Main St, Town, ${county.state}".
-        Format intersections as: "Main St & Oak Ave, Town, ${county.state}".`
-      },
-      {
-        role: 'user',
-        content: `From ${town}:\n"${transcript}"\n\nExtracted Address:`
-      }
-    ];
+    const prompt = `
+You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
+Focus on extracting a single full address, block, or intersection from the transcript provided below.
+If an address is incomplete, attempt to complete it based on the given town.
+Only extract addresses for ${town}.
+If no valid address is found, respond with "No address found".
+Be sure to read the full transcript and determine if an address/intersection or place is being talked about before extracting.
+Keep in mind units often start by saying their unit number and city. Sometimes the city is misspelled - don't confuse this for an address.
+Ignore things like "Texas Sam Tom John 4318" - that's just a license plate.
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: messages,
-      max_tokens: 50,
-      temperature: 0,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0
+Format full addresses as: "123 Main St, Town, ${GEOCODING_STATE}".
+Format blocks as: "100 block of Main St, Town, ${GEOCODING_STATE}" into "100 Main St, Town, ${GEOCODING_STATE}".
+Format intersections as: "Main St & Oak Ave, Town, ${GEOCODING_STATE}".
+
+From ${town}:
+"${transcript}"
+
+Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.
+
+Extracted Address:`;
+
+    // Call the Ollama API
+    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false
+      })
     });
 
-    const extractedAddress = response.choices[0].message.content.trim();
-    logger.info(`GPT-3.5 Extracted Address: "${extractedAddress}"`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const extractedAddress = result.response.trim();
+    
+    logger.info(`LLM Extracted Address: "${extractedAddress}"`);
     return extractedAddress === "No address found" ? null : extractedAddress;
   } catch (error) {
-    if (error instanceof OpenAI.APIError) {
-      logger.error(`OpenAI API Error extracting address: ${error.message}`);
-      logger.error(`Status: ${error.status}, Code: ${error.code}, Type: ${error.type}`);
-    } else {
-      logger.error(`Error extracting address with GPT-3.5: ${error.message}`);
-    }
+    logger.error(`Error extracting address with LLM: ${error.message}`);
     return null;
   }
 }
@@ -183,37 +174,14 @@ async function extractAddressWithGPT(transcript, town, county) {
  * @returns {Promise<{ lat: number, lng: number, formatted_address: string } | null>} - Geocoded data or null.
  */
 async function geocodeAddress(address) {
-  // Check if address contains Pensacola or other Escambia cities
-  const escambiaCities = ["Pensacola", "Cantonment", "Century", "Mc David", "Molino"];
-  const escambiaMatch = escambiaCities.some(city => address.includes(city));
-  
-  // Get the county from the address or infer from city name
-  const countyMatch = address.match(/(Santa Rosa|Escambia)\s+County/i);
-  let countyObj = null;
-  
-  if (countyMatch) {
-    // Explicit county mentioned in address
-    if (countyMatch[1].toLowerCase() === 'escambia') {
-      countyObj = COUNTIES.ESCAMBIA;
-    } else {
-      countyObj = COUNTIES.SANTA_ROSA;
-    }
-  } else if (escambiaMatch) {
-    // City in Escambia County
-    countyObj = COUNTIES.ESCAMBIA;
-  } else {
-    // Default to Santa Rosa County if no specific indicator
-    countyObj = COUNTIES.SANTA_ROSA;
-  }
-  
-  logger.info(`Geocoding address "${address}" in ${countyObj.name}`);
+  if (!address) return null;
   
   const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
   
   const params = new URLSearchParams({
     address: address,
     key: GOOGLE_MAPS_API_KEY,
-    components: `country:${GEOCODING_COUNTRY}|administrative_area:${countyObj.state}`
+    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}`
   });
 
   try {
@@ -249,24 +217,36 @@ async function geocodeAddress(address) {
     const formatted_address = result.formatted_address;
     const resultTypes = result.types;
 
+    // Skip generic city-level results
+    if (formatted_address.match(new RegExp(`^${GEOCODING_CITY}, ${GEOCODING_STATE} \\d{5}, USA$`))) {
+      logger.info(`Skipping city-level result for ${GEOCODING_CITY}: "${formatted_address}"`);
+      return null;
+    }
+
     // Skip only generic city-level results while keeping useful partial matches
     if (resultTypes.includes('locality') && resultTypes.length <= 3 && !formatted_address.includes('Caravan')) {
       logger.info(`Skipping city-level result: "${formatted_address}"`);
       return null;
     }
+    
+    // Check for county-level results
+    if (formatted_address === `${GEOCODING_TARGET_COUNTY}, ${GEOCODING_STATE}, USA` || 
+        (resultTypes.includes('administrative_area_level_2') && resultTypes.length <= 3)) {
+      logger.info(`Skipping county-level result: "${formatted_address}"`);
+      return null;
+    }
 
-    // Check both Santa Rosa and Escambia counties
+    // Verify that the result is in the target county
     const countyComponent = result.address_components.find(component => 
       component.types.includes('administrative_area_level_2') && 
-      (component.long_name === COUNTIES.SANTA_ROSA.name || 
-       component.long_name === COUNTIES.ESCAMBIA.name)
+      component.long_name === GEOCODING_TARGET_COUNTY
     );
 
     if (countyComponent) {
-      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng}) in ${countyComponent.long_name}`);
+      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng})`);
       return { lat, lng, formatted_address };
     } else {
-      logger.warn(`Geocoded address "${formatted_address}" is not within either county.`);
+      logger.warn(`Geocoded address "${formatted_address}" is not within ${GEOCODING_TARGET_COUNTY}.`);
       return null;
     }
   } catch (error) {
@@ -293,38 +273,23 @@ function hyperlinkAddress(transcript, address) {
 }
 
 /**
- * Extracts potential addresses from a transcript using GPT-3.5.
+ * Extracts potential addresses from a transcript using local LLM.
  * @param {string} transcript - The transcript text.
  * @param {string} talkGroupId - The talk group ID associated with the transcript.
  * @returns {Promise<string|null>} - Extracted and completed addresses or null if none are found.
  */
 async function extractAddress(transcript, talkGroupId) {
-  // Look for Pensacola or other Escambia cities in the transcript
-  const escambiaCities = ["Pensacola", "Cantonment", "Century", "Mc David", "Molino"];
-  const escambiaMatch = escambiaCities.some(city => transcript.includes(city));
+  // Use loaded talk groups, or fall back to a generic area
+  const town = TALK_GROUPS[talkGroupId] || `${GEOCODING_TARGET_COUNTY}, ${GEOCODING_STATE}`;
   
-  let county = null;
-  if (escambiaMatch) {
-    county = COUNTIES.ESCAMBIA;
-    logger.info(`Detected Escambia County reference in transcript`);
-  } else {
-    // Default logic based on talk group
-    county = getCountyFromTalkGroup(talkGroupId);
-  }
+  logger.info(`Extracting address for talk group ID: ${talkGroupId} (${town})`);
   
-  const town = TALK_GROUPS[talkGroupId] || 'Unknown';
-  if (town === 'Unknown') {
-    logger.warn(`Unknown talk group ID: ${talkGroupId}, using detected or default county`);
-  }
-  
-  logger.info(`Processing transcript for talk group ${talkGroupId} in ${county.name}, ${county.state}`);
-  const extractedAddress = await extractAddressWithGPT(transcript, town, county);
+  const extractedAddress = await extractAddressWithLLM(transcript, town);
   if (!extractedAddress || extractedAddress === "No address found") {
-    logger.info('No address extracted by GPT-3.5.');
+    logger.info('No address extracted by LLM.');
     return null;
   }
 
-  // Return just the address string to match original interface
   return extractedAddress;
 }
 
@@ -335,6 +300,18 @@ async function extractAddress(transcript, talkGroupId) {
  * @returns {Promise<Array<{ lat: number, lng: number, formatted_address: string }> | null>} - Array of geocoded data or null.
  */
 async function processTranscript(transcript, talkGroupId) {
+  // Verify that Ollama is running before proceeding
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/version`);
+    if (!response.ok) {
+      logger.error('Ollama server is not responding properly');
+      return null;
+    }
+  } catch (error) {
+    logger.error(`Ollama server connection error: ${error.message}. Make sure Ollama is running at ${OLLAMA_URL}`);
+    return null;
+  }
+  
   const extractedAddresses = await extractAddress(transcript, talkGroupId);
   if (!extractedAddresses) {
     logger.info('No valid addresses extracted from transcript.');
@@ -345,7 +322,6 @@ async function processTranscript(transcript, talkGroupId) {
   const geocodedResults = [];
 
   for (const address of addresses) {
-    logger.info(`Attempting to geocode address: "${address}"`);
     const geocodeResult = await geocodeAddress(address);
     if (geocodeResult) {
       geocodedResults.push(geocodeResult);
@@ -364,5 +340,6 @@ module.exports = {
   extractAddress,
   geocodeAddress,
   hyperlinkAddress,
-  processTranscript
+  processTranscript,
+  loadTalkGroups
 };
