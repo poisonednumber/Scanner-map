@@ -273,29 +273,50 @@ const adminAuth = (req, res, next) => {
 
 // Public Routes (No Auth Required)
 app.get('/audio/:id', (req, res) => {
-  const audioId = parseInt(req.params.id, 10);
+  const audioIdOrTranscriptionId = req.params.id;
+  
+  // First try to parse as an integer (bot-style ID)
+  const audioId = parseInt(audioIdOrTranscriptionId, 10);
 
-  if (isNaN(audioId)) {
-    return res.status(400).send('Invalid audio ID.');
+  if (!isNaN(audioId)) {
+    // This is a numeric ID, likely from the bot
+    db.get(
+      'SELECT audio_data FROM audio_files WHERE transcription_id = ?',
+      [audioId],
+      (err, row) => {
+        if (err) {
+          console.error('Error fetching audio data:', err);
+          return res.status(500).send('Internal Server Error.');
+        }
+
+        if (!row) {
+          return res.status(404).send('Audio file not found.');
+        }
+
+        res.set('Content-Type', 'audio/mpeg');
+        res.send(row.audio_data);
+      }
+    );
+  } else {
+    // This is not a numeric ID, handle it as before
+    db.get(
+      'SELECT audio_data FROM audio_files WHERE id = ?',
+      [audioIdOrTranscriptionId],
+      (err, row) => {
+        if (err) {
+          console.error('Error fetching audio data:', err);
+          return res.status(500).send('Internal Server Error.');
+        }
+
+        if (!row) {
+          return res.status(404).send('Audio file not found.');
+        }
+
+        res.set('Content-Type', 'audio/mpeg');
+        res.send(row.audio_data);
+      }
+    );
   }
-
-  db.get(
-    'SELECT audio_data FROM audio_files WHERE id = ?',
-    [audioId],
-    (err, row) => {
-      if (err) {
-        console.error('Error fetching audio data:', err);
-        return res.status(500).send('Internal Server Error.');
-      }
-
-      if (!row) {
-        return res.status(404).send('Audio file not found.');
-      }
-
-      res.set('Content-Type', 'audio/mpeg');
-      res.send(row.audio_data);
-    }
-  );
 });
 
 // Apply authentication middleware to protected routes if auth is enabled

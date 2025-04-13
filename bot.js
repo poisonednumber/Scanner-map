@@ -848,7 +848,7 @@ function sendAlertMessage(
   callback
 ) {
   // Create a URL for the audio file
-  const audioUrl = `http://${PUBLIC_DOMAIN}:${PORT_NUM}/audio/${audioID}`;
+  const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${audioID}`;
   
   const formattedTranscription = `**User-${source}**\n${transcriptionText}`;
 
@@ -935,7 +935,7 @@ function sendTranscriptionMessage(
           }
 
           // Create a URL for the audio file using the domain from the environment variable
-          const audioUrl = `http://${PUBLIC_DOMAIN}:${PORT_NUM}/audio/${audioID}`;
+          const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${audioID}`;
           
           // Log the audioID and URL for debugging
           logger.info(`Audio ID: ${audioID}, URL: ${audioUrl}`);
