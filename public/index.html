@@ -272,29 +272,30 @@
     </div>
 
     <!-- Session Management Modal -->
-<div id="sessions-modal" class="modal">
-    <div class="modal-content">
-        <h2>Active Sessions</h2>
-        <!-- User Selection Dropdown -->
-        <div class="user-selection">
-            <label for="user-dropdown">Select User:</label>
-            <select id="user-dropdown" class="styled-select">
-                <!-- Options will be populated dynamically -->
-            </select>
-        </div>
-        <div id="sessions-list" class="sessions-list">
-            <!-- Sessions will be populated here dynamically -->
-        </div>
-        <div class="modal-buttons">
-            <button class="cancel-btn">Close</button>
+    <div id="sessions-modal" class="modal">
+        <div class="modal-content">
+            <h2>Active Sessions</h2>
+            <!-- User Selection Dropdown -->
+            <div class="user-selection">
+                <label for="user-dropdown">Select User:</label>
+                <select id="user-dropdown" class="styled-select">
+                    <!-- Options will be populated dynamically -->
+                </select>
+            </div>
+            <div id="sessions-list" class="sessions-list">
+                <!-- Sessions will be populated here dynamically -->
+            </div>
+            <div class="modal-buttons">
+                <button class="cancel-btn">Close</button>
+            </div>
         </div>
     </div>
-</div>
 
     <!-- Audio Container -->
     <div id="audio-container" style="display: none;"></div>
 
-    <!-- Custom JavaScript -->
+    <!-- Load config.js first, then app.js -->
+    <script src="config.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

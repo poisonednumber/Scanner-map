@@ -4,7 +4,7 @@
 let map, markerGroups;
 const markers = {};
 const allMarkers = {}; // Store all markers for filtering
-let timeRangeHours = 12; // Default time range
+let timeRangeHours; // Time range from config
 let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
 let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
 let socket; // Socket.IO
@@ -13,7 +13,7 @@ let currentSearchTerm = ''; // Current search term
 const wavesurfers = {}; // Store WaveSurfer instances
 let audioContext;
 let heatmapLayer; // Heatmap layer
-let heatmapIntensity = 5; // Default intensity for heatmap
+let heatmapIntensity; // Intensity for heatmap
 let toggleModeButton; // Button to toggle map modes
 let liveAudioStream = null;
 let isLiveStreamPlaying = false;
@@ -23,51 +23,31 @@ let currentSessionToken = null;
 // Animation Queue Variables
 const animationQueue = [];
 let isAnimating = false;
-const houseIcon = L.icon({
-    iconUrl: 'house.png',  // Make sure this image exists on your server
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -32]
-});
-// Custom icons
-const pdIcon = L.icon({
-    iconUrl: 'pd.png',
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -32]
-});
 
-const fireIcon = L.icon({
-    iconUrl: 'fire.png',
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -32]
-});
+// Create icon objects from config
+function createIconsFromConfig() {
+    const icons = {};
+    
+    // Create L.icon objects for each icon in config
+    Object.keys(appConfig.icons).forEach(iconKey => {
+        icons[iconKey] = L.icon(appConfig.icons[iconKey]);
+    });
+    
+    return icons;
+}
 
-const defaultIcon = L.icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
-});
+// Store icons globally
+const customIcons = {};
+
 function addPermanentHouseMarkers() {
-    // Array of house locations - just coordinates
-    const houseLocations = [
-        { lat: 30.741622, lng: -87.402731 },
-        // Add more locations as needed
-        // { lat: 38.9907, lng: -87.402731 },
-    ];
-
     // Create a separate layer group for permanent markers
     const houseMarkersGroup = L.layerGroup();
 
     // Add each house to the map
-    houseLocations.forEach(location => {
+    appConfig.permanentLocations.houses.forEach(location => {
         // Create marker
         const marker = L.marker([location.lat, location.lng], { 
-            icon: houseIcon,
+            icon: customIcons.house,
             zIndexOffset: 1000,  // Ensure houses appear above other markers
             interactive: false   // This makes the marker non-interactive (no click events)
         });
@@ -82,6 +62,7 @@ function addPermanentHouseMarkers() {
     // Store the layer group in a global variable to avoid it being garbage collected
     window.houseMarkersGroup = houseMarkersGroup;
 }
+
 function setupTimeFilter() {
     const timeFilterSelect = document.getElementById('time-filter');
     timeFilterSelect.addEventListener('change', handleTimeFilterChange);
@@ -106,7 +87,7 @@ function showCustomTimeModal() {
 function setupLiveStreamButton() {
     const liveStreamButton = document.createElement('button');
     liveStreamButton.id = 'live-stream-button';
-    liveStreamButton.textContent = 'Listen Live';
+    liveStreamButton.textContent = appConfig.ui.liveStreamButtonText;
     liveStreamButton.className = 'cyberpunk-button';
     
     // Insert the button after the toggle mode button
@@ -115,7 +96,7 @@ function setupLiveStreamButton() {
         toggleModeButton.parentNode.insertBefore(liveStreamButton, toggleModeButton.nextSibling);
     }
     
-    // Create hidden audio container
+    // We don't need the audio container anymore, but keeping it for compatibility
     audioContainer = document.createElement('div');
     audioContainer.id = 'audio-container';
     audioContainer.style.display = 'none';
@@ -125,114 +106,22 @@ function setupLiveStreamButton() {
 }
 
 function toggleLiveStream() {
-    const button = document.getElementById('live-stream-button');
-    
-    if (!isLiveStreamPlaying) {
-        // Start playing
-        audioContainer.innerHTML = `
-            <audio id="live-stream-audio" autoplay>
-                <source src="http://audiostream.com:1234" type="audio/mp3">
-                <source src="http://audiostream.com:1234" type="audio/mpeg">
-                <source src="http://audiostream.com:1234" type="application/x-mpegURL">
-            </audio>
-        `;
-        
-        const audioElement = document.getElementById('live-stream-audio');
-        
-        audioElement.addEventListener('playing', () => {
-            isLiveStreamPlaying = true;
-            button.textContent = 'Stop Live';
-            button.classList.add('playing');
-        });
-        
-        audioElement.addEventListener('error', (e) => {
-            console.error('Error playing live stream:', e);
-            createStreamIframe();
-        });
-        
-    } else {
-        stopStream();
-    }
+    // Open the radio website in a new tab
+    window.open(appConfig.audio.liveStreamUrl, '_blank');
 }
 
+// These functions are no longer used, but keeping empty stubs for compatibility
+// in case they're called from elsewhere in the code
 function createStreamIframe() {
-    // Remove any existing audio elements
-    audioContainer.innerHTML = '';
-    
-    // Create iframe for audio stream
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = 'about:blank';
-    audioContainer.appendChild(iframe);
-    
-    // Write audio player directly into iframe
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-    iframeDoc.open();
-    iframeDoc.write(`
-        <!DOCTYPE html>
-        <html>
-        <body>
-            <audio autoplay controls>
-                <source src="http://alex11226.ddns.net:666" type="audio/mp3">
-                <source src="http://alex11226.ddns.net:666" type="audio/mpeg">
-                <source src="http://alex11226.ddns.net:666" type="application/x-mpegURL">
-            </audio>
-            <script>
-                const audio = document.querySelector('audio');
-                audio.addEventListener('playing', () => {
-                    window.parent.postMessage('playing', '*');
-                });
-                audio.addEventListener('error', () => {
-                    window.parent.postMessage('error', '*');
-                });
-            </script>
-        </body>
-        </html>
-    `);
-    iframeDoc.close();
-    
-    // Listen for messages from iframe
-    window.addEventListener('message', (event) => {
-        const button = document.getElementById('live-stream-button');
-        if (event.data === 'playing') {
-            isLiveStreamPlaying = true;
-            button.textContent = 'Stop Live';
-            button.classList.add('playing');
-        } else if (event.data === 'error') {
-            console.error('Error playing stream in iframe');
-            stopStream();
-            showStreamError();
-        }
-    });
+    // Function no longer needed
 }
 
 function stopStream() {
-    const button = document.getElementById('live-stream-button');
-    audioContainer.innerHTML = ''; // Remove all audio elements
-    isLiveStreamPlaying = false;
-    button.textContent = 'Listen Live';
-    button.classList.remove('playing');
+    // Function no longer needed
 }
 
 function showStreamError() {
-    const errorModal = document.createElement('div');
-    errorModal.className = 'stream-warning-modal modal';
-    errorModal.innerHTML = `
-        <div class="modal-content">
-            <h2>Stream Error</h2>
-            <p>Unable to play the live stream. This may be due to browser security settings blocking non-HTTPS content.</p>
-            <div class="modal-buttons">
-                <button id="close-error">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(errorModal);
-    
-    document.getElementById('close-error').addEventListener('click', () => {
-        errorModal.remove();
-    });
-    
-    errorModal.style.display = 'block';
+    // Function no longer needed
 }
 
 function applyCustomTimeFilter() {
@@ -299,19 +188,20 @@ function attemptAutoplay() {
 
 // Initialize map
 function initMap() {
+    // Initialize the map with the configuration center and zoom level
     map = L.map('map', {
-        center: [30.741622, -87.402731], // Longview, TX coordinates
-        zoom: 13,
-        maxZoom: 18,
-        minZoom: 9,
+        center: appConfig.map.defaultCenter,
+        zoom: appConfig.map.defaultZoom,
+        maxZoom: appConfig.map.maxZoom,
+        minZoom: appConfig.map.minZoom,
         zoomControl: !isMobile(),
-        tap: false
+        tap: true
     });
 
     // Day layer using OpenStreetMap
-    dayLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V1.5',
-        maxZoom: 18,
+    dayLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+        attribution: appConfig.map.attribution,
+        maxZoom: appConfig.map.maxZoom,
         crossOrigin: true
     });
 
@@ -337,23 +227,23 @@ function initMap() {
     document.head.appendChild(style);
 
     // Night layer using filtered OpenStreetMap
-    nightLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V1.5',
-        maxZoom: 18,
+    nightLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+        attribution: appConfig.map.attribution,
+        maxZoom: appConfig.map.maxZoom,
         crossOrigin: true,
         className: 'dark-mode-tiles'
     });
 
     // Satellite view using two layers combined
-    const satelliteBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
         attribution: 'Imagery &copy; Esri &copy; Scanner Map V1.5',
-        maxZoom: 18,
+        maxZoom: appConfig.map.maxZoom,
         crossOrigin: true
     });
 
-    const satelliteLabels = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+    const satelliteLabels = L.tileLayer(appConfig.mapStyles.satelliteLabelsLayer, {
         attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 18,
+        maxZoom: appConfig.map.maxZoom,
         crossOrigin: true
     });
 
@@ -398,7 +288,7 @@ function initMap() {
 
     map.on('zoomend', function() {
         console.log('Current zoom level:', map.getZoom());
-	addPermanentHouseMarkers();	
+        addPermanentHouseMarkers();
     });
 }
 
@@ -407,7 +297,7 @@ function setupEventListeners() {
     toggleModeButton = document.getElementById('toggle-mode');
     if (toggleModeButton) {
         toggleModeButton.addEventListener('click', toggleMapMode);
-        toggleModeButton.textContent = 'Switch to Night Mode'; // Assuming starting in day mode
+        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.day; // Assuming starting in day mode
     } else {
         console.error('Toggle mode button not found');
     }
@@ -428,17 +318,17 @@ function toggleMapMode() {
         map.removeLayer(dayLayer);
         nightLayer.addTo(map);
         currentMapMode = 'night';
-        toggleModeButton.textContent = 'Switch to Satellite Mode';
+        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.night;
     } else if (currentMapMode === 'night') {
         map.removeLayer(nightLayer);
         satelliteLayer.addTo(map);
         currentMapMode = 'satellite';
-        toggleModeButton.textContent = 'Switch to Day Mode';
+        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.satellite;
     } else if (currentMapMode === 'satellite') {
         map.removeLayer(satelliteLayer);
         dayLayer.addTo(map);
         currentMapMode = 'day';
-        toggleModeButton.textContent = 'Switch to Night Mode';
+        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.day;
     }
 }
 
@@ -951,6 +841,544 @@ function startMarkerRelocation(callId, originalMarker, modal) {
   });
 }
 
+// Get Marker Icon Based on Call Data
+function getMarkerIcon(talkGroupName, talkGroupId, audioFilePath) {
+    console.log('getMarkerIcon input:', { talkGroupName, talkGroupId, audioFilePath });
+
+    talkGroupName = talkGroupName || '';
+    audioFilePath = audioFilePath || '';
+
+    // Check audio path classifications first
+    if (audioFilePath) {
+        // Check for police audio paths
+        for (const pattern of appConfig.markerClassification.audioPaths.police) {
+            if (audioFilePath.includes(pattern)) {
+                return customIcons.pd;
+            }
+        }
+        
+        // Check for fire audio paths
+        for (const pattern of appConfig.markerClassification.audioPaths.fire) {
+            if (audioFilePath.includes(pattern)) {
+                return customIcons.fire;
+            }
+        }
+    }
+
+    // Check talk group name classifications
+    if (talkGroupName) {
+        // Check for police talk groups
+        for (const pattern of appConfig.markerClassification.police) {
+            if (talkGroupName === pattern || talkGroupName.includes(pattern)) {
+                return customIcons.pd;
+            }
+        }
+        
+        // Check for fire talk groups
+        for (const pattern of appConfig.markerClassification.fire) {
+            if (talkGroupName === pattern || talkGroupName.includes(pattern)) {
+                return customIcons.fire;
+            }
+        }
+    }
+
+    // Default icon if no matches
+    return customIcons.default;
+}
+
+// Smoothly Pan and Zoom to Marker with Animation Queue
+function smoothFlyToNewMarker(marker, callback) {
+    const maxZoom = map.getMaxZoom();
+    const minZoom = map.getMinZoom();
+    const targetZoom = Math.min(appConfig.animation.targetZoom, maxZoom);
+
+    // Disable map interactions during animation
+    map.dragging.disable();
+    map.scrollWheelZoom.disable();
+    map.doubleClickZoom.disable();
+    map.boxZoom.disable();
+    map.keyboard.disable();
+    if (map.tap) map.tap.disable();
+
+    // Step 1: Always zoom out to configured level (or minZoom if it's higher)
+    const zoomOutLevel = Math.max(appConfig.animation.zoomOutLevel, minZoom);
+    map.flyTo(map.getCenter(), zoomOutLevel, { duration: appConfig.animation.duration });
+
+    map.once('moveend', function() {
+        // Step 2: Fly to the marker's location at zoom out level
+        map.flyTo(marker.getLatLng(), zoomOutLevel, { duration: appConfig.animation.duration });
+
+        map.once('moveend', function() {
+            // Step 3: Zoom in to the target zoom level
+            map.flyTo(marker.getLatLng(), targetZoom, { duration: appConfig.animation.duration });
+
+            map.once('moveend', function() {
+                callback();
+
+                // Re-enable map interactions
+                map.dragging.enable();
+                map.scrollWheelZoom.enable();
+                map.doubleClickZoom.enable();
+                map.boxZoom.enable();
+                map.keyboard.enable();
+                if (map.tap) map.tap.enable();
+            });
+        });
+    });
+}
+
+function handleMarkerVisibility(marker) {
+    const visibleParent = markerGroups.getVisibleParent(marker);
+
+    if (visibleParent === marker) {
+        // Marker is visible, open popup
+        openMarkerPopup(marker);
+        playAudioForMarker(marker);
+    } else if (visibleParent instanceof L.MarkerCluster) {
+        // Marker is in a cluster
+        visibleParent.spiderfy();
+        
+        // Wait for spiderfy animation to complete
+        setTimeout(() => {
+            openMarkerPopup(marker);
+            playAudioForMarker(marker);
+        }, 300);
+    } else {
+        console.error('Unexpected state: marker is neither visible nor in a cluster');
+    }
+}
+
+function playAudioForMarker(marker) {
+    if (!isNewCallAudioMuted) {
+        const callId = getCallIdFromMarker(marker);
+        if (callId && wavesurfers[callId]) {
+            wavesurfers[callId].play();
+            const playPauseButton = document.querySelector(`.play-pause[data-call-id="${callId}"]`);
+            if (playPauseButton) {
+                playPauseButton.textContent = 'Pause';
+            }
+        }
+    }
+}
+
+function openMarkerPopup(marker) {
+    // Prevent recursive calls
+    if (marker.isPopupOpen()) {
+        return;
+    }
+
+    // Check if the marker is visible and not clustered
+    const visibleParent = markerGroups.getVisibleParent(marker);
+
+    if (visibleParent === marker) {
+        // Marker is already visible and not clustered; open the popup
+        marker.openPopup();
+    } else {
+        // Marker is clustered or not visible; attempt to zoom to show it
+        // Ensure we don't exceed max zoom levels
+        const currentZoom = map.getZoom();
+        const maxZoom = map.getMaxZoom();
+
+        // If we're already at max zoom, spiderfy the cluster
+        if (currentZoom >= maxZoom) {
+            // Spiderfy the cluster to show individual markers
+            visibleParent.spiderfy();
+            // Optionally, open the popup after spiderfying
+            marker.openPopup();
+        } else {
+            // Attempt to zoom in to show the marker
+            markerGroups.zoomToShowLayer(marker, function() {
+                marker.openPopup();
+            });
+        }
+    }
+}
+
+function processNextAnimation() {
+    if (animationQueue.length === 0) {
+        isAnimating = false;
+        return;
+    }
+
+    isAnimating = true;
+    const { marker, callback } = animationQueue.shift();
+    smoothFlyToNewMarker(marker, () => {
+        callback();
+        processNextAnimation();
+    });
+}
+
+function enqueueAnimation(marker, callback) {
+    animationQueue.push({ marker, callback });
+    if (!isAnimating) {
+        processNextAnimation();
+    }
+}
+
+function setupMuteButton() {
+    const muteButton = document.getElementById('mute-new-calls');
+    if (muteButton) {
+        muteButton.addEventListener('click', toggleNewCallAudioMute);
+    } else {
+        console.error('Mute button not found');
+    }
+}
+
+function toggleNewCallAudioMute() {
+    isNewCallAudioMuted = !isNewCallAudioMuted;
+    const muteButton = document.getElementById('mute-new-calls');
+    muteButton.textContent = isNewCallAudioMuted ? 'Unmute New Calls' : 'Mute New Calls';
+    console.log(`New call audio muted: ${isNewCallAudioMuted}`);
+}
+
+function playNewCallSound() {
+    const audio = new Audio(appConfig.audio.notificationSound);
+    audio.play().catch(error => console.error('Error playing notification sound:', error));
+}
+
+function playAudio(audioId) {
+    if (!isNewCallAudioMuted && wavesurfers[audioId]) {
+        wavesurfers[audioId].play();
+    } else {
+        console.log('New call audio is muted or WaveSurfer not initialized. Audio not played:', audioId);
+    }
+}
+
+function getAdditionalTranscriptions(callId, skip, container, button) {
+    fetch(`/api/additional-transcriptions/${callId}?skip=${skip}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.length === 0) {
+                button.style.display = 'none';
+                if (skip === 0) {
+                    container.innerHTML = '<p>No additional calls from this talk group.</p>';
+                }
+            } else {
+                const newContent = data.map(trans => `
+                    <div class="additional-transcription">
+                        <small>${formatTimestamp(trans.timestamp)}</small><br>
+                        <p>${trans.transcription}</p>
+                        <div id="waveform-${trans.id}" class="waveform"></div>
+                        <div class="audio-controls">
+                            <button class="play-pause" data-call-id="${trans.id}" aria-label="Play audio for call ${trans.id}">Play</button>
+                            <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${trans.id}" aria-label="Volume control for call ${trans.id}">
+                        </div>
+                    </div>
+                `).join('');
+                
+                container.innerHTML += newContent;
+                button.setAttribute('data-skip', skip + data.length);
+
+                // Initialize WaveSurfer for each new transcription
+                data.forEach(trans => {
+                    initWaveSurfer(trans.id, `/audio/${trans.audio_id}`);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching additional transcriptions:', error);
+            container.innerHTML += '<p>Error fetching additional information.</p>';
+        });
+}
+
+function clearMarkers() {
+    markerGroups.clearLayers();
+    Object.keys(markers).forEach(key => delete markers[key]);
+
+    // Clear heatmap data
+    if (heatmapLayer) {
+        heatmapLayer.setLatLngs([]);
+    }
+}
+
+function loadCalls(hours) {
+    console.log(`Requesting calls for the last ${hours} hours`);
+    fetch(`/api/calls?hours=${hours}`)
+        .then(response => response.json())
+        .then(calls => {
+            console.log(`Received ${calls.length} calls from server`);
+            if (calls.length > 0) {
+                console.log(`Oldest call received: ${calls[calls.length - 1].timestamp}`);
+                console.log(`Newest call received: ${calls[0].timestamp}`);
+            }
+            clearMarkers();
+            const validCalls = calls.filter(isValidCall);
+            console.log(`${validCalls.length} valid calls`);
+            validCalls.forEach(call => addMarker(call));
+            applyFilters();
+            if (document.getElementById('enable-heatmap').checked) {
+                updateHeatmap();
+            }
+            fitMapToMarkers();
+        })
+        .catch(error => {
+            console.error('Error loading calls:', error);
+        });
+}
+
+function fitMapToMarkers() {
+    const markerArray = Object.values(allMarkers)
+        .filter(obj => obj.visible)
+        .map(obj => obj.marker);
+    if (markerArray.length > 0) {
+        const group = L.featureGroup(markerArray);
+        map.fitBounds(group.getBounds().pad(0.1));
+    } else {
+        console.log('No markers to fit');
+    }
+}
+
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    // Format the simple timestamp in the configured time zone
+    const options = { 
+        timeZone: appConfig.map.timeZone,
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true
+    };
+    const simpleTimestamp = date.toLocaleString('en-US', options);
+    let relativeTime;
+    if (diffDays === 0) {
+        if (diffHours === 0) {
+            relativeTime = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+        } else {
+            relativeTime = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+        }
+        return `Today, ${relativeTime} (${simpleTimestamp})`;
+    } else if (diffDays === 1) {
+        return `Yesterday, ${simpleTimestamp}`;
+    } else {
+        const fullOptions = { 
+            timeZone: appConfig.map.timeZone,
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric', 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: true
+        };
+        return date.toLocaleString('en-US', fullOptions);
+    }
+}
+
+function setupSearch() {
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', function(event) {
+            currentSearchTerm = event.target.value.trim().toLowerCase();
+            applyFilters();
+        });
+    } else {
+        console.error('Search input element not found');
+    }
+}
+
+function applyFilters() {
+    let visibleMarkers = 0;
+    let lastVisibleMarker = null;
+
+    const now = new Date();
+    const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
+
+    console.log(`Filtering calls since: ${filterTime.toISOString()}`);
+    console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
+
+    Object.keys(allMarkers).forEach(callId => {
+        const { marker, transcription, timestamp } = allMarkers[callId];
+        const callTime = new Date(timestamp);
+        const isWithinTimeRange = callTime >= filterTime;
+        const matchesSearch = transcription.toLowerCase().includes(currentSearchTerm.toLowerCase());
+        const shouldDisplay = isWithinTimeRange && matchesSearch;
+
+        if (shouldDisplay) {
+            markerGroups.addLayer(marker);
+            allMarkers[callId].visible = true;
+            visibleMarkers++;
+            lastVisibleMarker = marker;
+        } else {
+            markerGroups.removeLayer(marker);
+            allMarkers[callId].visible = false;
+        }
+    });
+
+    console.log(`Visible markers after filtering: ${visibleMarkers}`);
+
+    // Update heatmap if active
+    if (document.getElementById('enable-heatmap').checked) {
+        updateHeatmap();
+    }
+
+    fitMapToMarkers();
+
+    if (visibleMarkers === 1 && lastVisibleMarker) {
+        openMarkerPopup(lastVisibleMarker);
+    }
+}
+
+function isMarkerWithinTimeRange(timestamp) {
+    const callTimestamp = new Date(timestamp);
+    const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
+    return callTimestamp >= sinceTimestamp;
+}
+
+function getCallIdFromMarker(marker) {
+    for (const [callId, data] of Object.entries(allMarkers)) {
+        if (data.marker === marker) {
+            console.log(`Found callId: ${callId} for marker.`);
+            return callId;
+        }
+    }
+    console.error('Could not find call ID for marker:', marker);
+    return null;
+}
+
+function setupHeatmapControls() {
+    const heatmapCheckbox = document.getElementById('enable-heatmap');
+    const intensitySliderContainer = document.getElementById('heatmap-intensity-container');
+
+    if (heatmapCheckbox) {
+        heatmapCheckbox.addEventListener('change', handleHeatmapToggle);
+
+        // Set initial visibility of intensity slider
+        if (heatmapCheckbox.checked) {
+            intensitySliderContainer.style.display = 'flex';
+        } else {
+            intensitySliderContainer.style.display = 'none';
+        }
+    } else {
+        console.error('Heatmap checkbox not found');
+    }
+
+    const intensitySlider = document.getElementById('heatmap-intensity');
+    if (intensitySlider) {
+        intensitySlider.addEventListener('input', handleIntensityChange);
+    } else {
+        console.error('Heatmap intensity slider not found');
+    }
+}
+
+function handleHeatmapToggle(event) {
+    const intensitySliderContainer = document.getElementById('heatmap-intensity-container');
+    if (event.target.checked) {
+        intensitySliderContainer.style.display = 'flex';
+        showHeatmap();
+    } else {
+        intensitySliderContainer.style.display = 'none';
+        hideHeatmap();
+    }
+}
+
+function handleIntensityChange(event) {
+    heatmapIntensity = parseInt(event.target.value, 10);
+    if (document.getElementById('enable-heatmap').checked) {
+        updateHeatmap();
+    }
+}
+
+function showHeatmap() {
+    // Collect data points from visible markers
+    const heatData = [];
+
+    Object.values(allMarkers).forEach(data => {
+        if (data.visible) {
+            const latlng = data.marker.getLatLng();
+            heatData.push([latlng.lat, latlng.lng, heatmapIntensity]); // Use intensity value
+        }
+    });
+
+    if (heatmapLayer) {
+        map.removeLayer(heatmapLayer);
+    }
+
+    heatmapLayer = L.heatLayer(heatData, { 
+        radius: appConfig.heatmap.radius, 
+        blur: appConfig.heatmap.blur, 
+        maxZoom: appConfig.heatmap.maxZoom 
+    });
+    heatmapLayer.addTo(map);
+}
+
+function hideHeatmap() {
+    if (heatmapLayer) {
+        map.removeLayer(heatmapLayer);
+        heatmapLayer = null;
+    }
+}
+
+function updateHeatmap() {
+    if (!heatmapLayer) {
+        showHeatmap();
+        return;
+    }
+
+    const heatData = [];
+
+    Object.values(allMarkers).forEach(data => {
+        if (data.visible) {
+            const latlng = data.marker.getLatLng();
+            heatData.push([latlng.lat, latlng.lng, heatmapIntensity]); // Use intensity value
+        }
+    });
+
+    heatmapLayer.setLatLngs(heatData);
+}
+
+function isMobile() {
+    return window.innerWidth <= 768;
+}
+
+function disableMobileMapInteractions() {
+    // Keep all touch-based interactions enabled
+    map.dragging.enable();
+    map.touchZoom.enable();
+    map.doubleClickZoom.enable();  // Keep double tap zoom enabled
+    
+    // Only disable non-touch interactions
+    map.boxZoom.disable();
+    map.keyboard.disable();
+}
+
+function enableMobileMapInteractions() {
+    map.dragging.enable();
+    map.touchZoom.enable();
+    map.doubleClickZoom.enable();
+    map.scrollWheelZoom.enable();
+    map.boxZoom.enable();
+    map.keyboard.enable();
+}
+
+function handleWindowResize() {
+    if (isMobile()) {
+        disableMobileMapInteractions();
+    } else {
+        enableMobileMapInteractions();
+    }
+}
+
+function isValidCall(call) {
+    const lat = parseFloat(call.lat);
+    const lon = parseFloat(call.lon);
+    const isValid = (
+        call &&
+        !isNaN(lat) &&
+        !isNaN(lon) &&
+        lat >= -90 && lat <= 90 &&
+        lon >= -180 && lon <= 180 &&
+        call.audio_file_path &&
+        call.transcription
+    );
+    if (!isValid) {
+        console.log('Invalid call:', call);
+    }
+    return isValid;
+}
+
 // Initialize WaveSurfer
 function initWaveSurfer(callId, audioUrl, onReadyCallback) {
     if (wavesurfers[callId]) {
@@ -1030,7 +1458,6 @@ function playWaveSurferAudio(callId, marker) {
     }
 }
 
-// Handle "Get More Info" Button Click
 function handleGetMoreInfo(event) {
     // Prevent default behavior if necessary
     event.preventDefault();
@@ -1042,7 +1469,6 @@ function handleGetMoreInfo(event) {
     getAdditionalTranscriptions(callId, skip, additionalInfoDiv, button);
 }
 
-// Utility Functions
 function showNotification(message, type = 'success') {
   const notification = document.createElement('div');
   notification.className = 'notification';
@@ -1081,564 +1507,7 @@ function showNotification(message, type = 'success') {
     }, 300);
   }, 3000);
 }
-// Check if device is mobile
-function isMobile() {
-    return window.innerWidth <= 768;
-}
 
-// Disable map interactions on mobile
-function disableMobileMapInteractions() {
-    // Keep all touch-based interactions enabled
-    map.dragging.enable();
-    map.touchZoom.enable();
-    map.doubleClickZoom.enable();  // Keep double tap zoom enabled
-    
-    // Only disable non-touch interactions
-    map.boxZoom.disable();
-    map.keyboard.disable();
-}
-
-// Enable map interactions on desktop
-function enableMobileMapInteractions() {
-    map.dragging.enable();
-    map.touchZoom.enable();
-    map.doubleClickZoom.enable();
-    map.scrollWheelZoom.enable();
-    map.boxZoom.enable();
-    map.keyboard.enable();
-}
-
-// Handle window resize
-function handleWindowResize() {
-    if (isMobile()) {
-        disableMobileMapInteractions();
-    } else {
-        enableMobileMapInteractions();
-    }
-}
-
-// Validate Call Data
-function isValidCall(call) {
-    const lat = parseFloat(call.lat);
-    const lon = parseFloat(call.lon);
-    const isValid = (
-        call &&
-        !isNaN(lat) &&
-        !isNaN(lon) &&
-        lat >= -90 && lat <= 90 &&
-        lon >= -180 && lon <= 180 &&
-        call.audio_file_path &&
-        call.transcription
-    );
-    if (!isValid) {
-        console.log('Invalid call:', call);
-    }
-    return isValid;
-}
-
-// Get Marker Icon Based on Call Data
-function getMarkerIcon(talkGroupName, talkGroupId, audioFilePath) {
-    console.log('getMarkerIcon input:', { talkGroupName, talkGroupId, audioFilePath });
-
-    talkGroupName = talkGroupName || '';
-    audioFilePath = audioFilePath || '';
-
-    if (audioFilePath.includes('Gladewater_Fire')) {
-        return fireIcon;
-    }
-
-    if (audioFilePath.includes('Gladewater_PD')) {
-        return pdIcon;
-    }
-
-    if (talkGroupName === 'TXDPS Tyler 1' ||
-        talkGroupName.includes('MCPD') || 
-        talkGroupName.includes('Police') || 
-        talkGroupName === 'Gregg SO Disp 1' ||
-		talkGroupName === 'Gregg SO Disp 2' ||
-        talkGroupName.includes('TXDPS')) {
-        return pdIcon;
-    }
-
-    if (talkGroupName.includes('MCFR') || talkGroupName.includes('Fire')) {
-        return fireIcon;
-    }
-
-    return defaultIcon;
-}
-
-// Smoothly Pan and Zoom to Marker with Animation Queue
-/**
- * Smoothly zooms out the map, then flies into the new marker's location.
- * @param {L.Marker} marker - The Leaflet marker to fly to.
- * @param {Function} callback - Function to execute after flying into the marker.
- */
-function smoothFlyToNewMarker(marker, callback) {
-    const maxZoom = map.getMaxZoom();
-    const minZoom = map.getMinZoom();
-    const targetZoom = Math.min(17, maxZoom);
-
-    // Disable map interactions during animation
-    map.dragging.disable();
-    map.scrollWheelZoom.disable();
-    map.doubleClickZoom.disable();
-    map.boxZoom.disable();
-    map.keyboard.disable();
-    if (map.tap) map.tap.disable();
-
-    // Step 1: Always zoom out to 13 (or minZoom if it's higher)
-    const zoomOutLevel = Math.max(13, minZoom);
-    map.flyTo(map.getCenter(), zoomOutLevel, { duration: 1 });
-
-    map.once('moveend', function() {
-        // Step 2: Fly to the marker's location at zoom level 13
-        map.flyTo(marker.getLatLng(), zoomOutLevel, { duration: 1 });
-
-        map.once('moveend', function() {
-            // Step 3: Zoom in to the target zoom level (17 or maxZoom)
-            map.flyTo(marker.getLatLng(), targetZoom, { duration: 1 });
-
-            map.once('moveend', function() {
-                callback();
-
-                // Re-enable map interactions
-                map.dragging.enable();
-                map.scrollWheelZoom.enable();
-                map.doubleClickZoom.enable();
-                map.boxZoom.enable();
-                map.keyboard.enable();
-                if (map.tap) map.tap.enable();
-            });
-        });
-    });
-}
-
-function handleMarkerVisibility(marker) {
-    const visibleParent = markerGroups.getVisibleParent(marker);
-
-    if (visibleParent === marker) {
-        // Marker is visible, open popup
-        openMarkerPopup(marker);
-        playAudioForMarker(marker);
-    } else if (visibleParent instanceof L.MarkerCluster) {
-        // Marker is in a cluster
-        visibleParent.spiderfy();
-        
-        // Wait for spiderfy animation to complete
-        setTimeout(() => {
-            openMarkerPopup(marker);
-            playAudioForMarker(marker);
-        }, 300);
-    } else {
-        console.error('Unexpected state: marker is neither visible nor in a cluster');
-    }
-}
-
-function playAudioForMarker(marker) {
-    if (!isNewCallAudioMuted) {
-        const callId = getCallIdFromMarker(marker);
-        if (callId && wavesurfers[callId]) {
-            wavesurfers[callId].play();
-            const playPauseButton = document.querySelector(`.play-pause[data-call-id="${callId}"]`);
-            if (playPauseButton) {
-                playPauseButton.textContent = 'Pause';
-            }
-        }
-    }
-}
-
-/**
- * Opens the popup for the given marker and plays audio.
- * Ensures the marker is visible (unclustered) before opening the popup.
- * @param {L.Marker} marker - The Leaflet marker whose popup should be opened.
- */
-function openMarkerPopup(marker) {
-    // Prevent recursive calls
-    if (marker.isPopupOpen()) {
-        return;
-    }
-
-    // Check if the marker is visible and not clustered
-    const visibleParent = markerGroups.getVisibleParent(marker);
-
-    if (visibleParent === marker) {
-        // Marker is already visible and not clustered; open the popup
-        marker.openPopup();
-    } else {
-        // Marker is clustered or not visible; attempt to zoom to show it
-        // Ensure we don't exceed max zoom levels
-        const currentZoom = map.getZoom();
-        const maxZoom = map.getMaxZoom();
-
-        // If we're already at max zoom, spiderfy the cluster
-        if (currentZoom >= maxZoom) {
-            // Spiderfy the cluster to show individual markers
-            visibleParent.spiderfy();
-            // Optionally, open the popup after spiderfying
-            marker.openPopup();
-        } else {
-            // Attempt to zoom in to show the marker
-            markerGroups.zoomToShowLayer(marker, function() {
-                marker.openPopup();
-            });
-        }
-    }
-}
-
-/**
- * Processes the next animation in the queue.
- */
-function processNextAnimation() {
-    if (animationQueue.length === 0) {
-        isAnimating = false;
-        return;
-    }
-
-    isAnimating = true;
-    const { marker, callback } = animationQueue.shift();
-    smoothFlyToNewMarker(marker, () => {
-        callback();
-        processNextAnimation();
-    });
-}
-
-/**
- * Enqueues a new animation request.
- * @param {L.Marker} marker - The Leaflet marker to animate to.
- * @param {Function} callback - Function to execute after animation.
- */
-function enqueueAnimation(marker, callback) {
-    animationQueue.push({ marker, callback });
-    if (!isAnimating) {
-        processNextAnimation();
-    }
-}
-
-// Setup Mute Button
-function setupMuteButton() {
-    const muteButton = document.getElementById('mute-new-calls');
-    if (muteButton) {
-        muteButton.addEventListener('click', toggleNewCallAudioMute);
-    } else {
-        console.error('Mute button not found');
-    }
-}
-
-// Toggle Mute State for New Call Audio
-function toggleNewCallAudioMute() {
-    isNewCallAudioMuted = !isNewCallAudioMuted;
-    const muteButton = document.getElementById('mute-new-calls');
-    muteButton.textContent = isNewCallAudioMuted ? 'Unmute New Calls' : 'Mute New Calls';
-    console.log(`New call audio muted: ${isNewCallAudioMuted}`);
-}
-
-// Play Notification Sound for New Call
-function playNewCallSound() {
-    const audio = new Audio('/notification-sound.mp3');
-    audio.play().catch(error => console.error('Error playing notification sound:', error));
-}
-
-// Play Audio for a Given Call ID
-function playAudio(audioId) {
-    if (!isNewCallAudioMuted && wavesurfers[audioId]) {
-        wavesurfers[audioId].play();
-    } else {
-        console.log('New call audio is muted or WaveSurfer not initialized. Audio not played:', audioId);
-    }
-}
-
-// Fetch and Display Additional Transcriptions
-function getAdditionalTranscriptions(callId, skip, container, button) {
-    fetch(`/api/additional-transcriptions/${callId}?skip=${skip}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.length === 0) {
-                button.style.display = 'none';
-                if (skip === 0) {
-                    container.innerHTML = '<p>No additional calls from this talk group.</p>';
-                }
-            } else {
-                const newContent = data.map(trans => `
-                    <div class="additional-transcription">
-                        <small>${formatTimestamp(trans.timestamp)}</small><br>
-                        <p>${trans.transcription}</p>
-                        <div id="waveform-${trans.id}" class="waveform"></div>
-                        <div class="audio-controls">
-                            <button class="play-pause" data-call-id="${trans.id}" aria-label="Play audio for call ${trans.id}">Play</button>
-                            <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${trans.id}" aria-label="Volume control for call ${trans.id}">
-                        </div>
-                    </div>
-                `).join('');
-                
-                container.innerHTML += newContent;
-                button.setAttribute('data-skip', skip + data.length);
-
-                // Initialize WaveSurfer for each new transcription
-                data.forEach(trans => {
-                    initWaveSurfer(trans.id, `/audio/${trans.audio_id}`);
-                });
-            }
-        })
-        .catch(error => {
-            console.error('Error fetching additional transcriptions:', error);
-            container.innerHTML += '<p>Error fetching additional information.</p>';
-        });
-}
-
-// Clear All Markers from Map
-function clearMarkers() {
-    markerGroups.clearLayers();
-    Object.keys(markers).forEach(key => delete markers[key]);
-
-    // Clear heatmap data
-    if (heatmapLayer) {
-        heatmapLayer.setLatLngs([]);
-    }
-}
-
-// Load Calls from API
-function loadCalls(hours) {
-    console.log(`Requesting calls for the last ${hours} hours`);
-    fetch(`/api/calls?hours=${hours}`)
-        .then(response => response.json())
-        .then(calls => {
-            console.log(`Received ${calls.length} calls from server`);
-            console.log(`Oldest call received: ${calls[calls.length - 1].timestamp}`);
-            console.log(`Newest call received: ${calls[0].timestamp}`);
-            clearMarkers();
-            const validCalls = calls.filter(isValidCall);
-            console.log(`${validCalls.length} valid calls`);
-            validCalls.forEach(call => addMarker(call));
-            applyFilters();
-            if (document.getElementById('enable-heatmap').checked) {
-                updateHeatmap();
-            }
-            fitMapToMarkers();
-        })
-        .catch(error => {
-            console.error('Error loading calls:', error);
-        });
-}
-
-// Fit Map to Visible Markers
-function fitMapToMarkers() {
-    const markerArray = Object.values(allMarkers)
-        .filter(obj => obj.visible)
-        .map(obj => obj.marker);
-    if (markerArray.length > 0) {
-        const group = L.featureGroup(markerArray);
-        map.fitBounds(group.getBounds().pad(0.1));
-    } else {
-        console.log('No markers to fit');
-    }
-}
-
-// Format Timestamp for Display
-function formatTimestamp(timestamp) {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    // Format the simple timestamp in US Central Time
-    const options = { 
-        timeZone: 'America/Chicago',
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: true
-    };
-    const simpleTimestamp = date.toLocaleString('en-US', options);
-
-    let relativeTime;
-    if (diffDays === 0) {
-        if (diffHours === 0) {
-            relativeTime = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-        } else {
-            relativeTime = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-        }
-        return `Today, ${relativeTime} (${simpleTimestamp})`;
-    } else if (diffDays === 1) {
-        return `Yesterday, ${simpleTimestamp}`;
-    } else {
-        const fullOptions = { 
-            timeZone: 'America/Chicago',
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric', 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: true
-        };
-        return date.toLocaleString('en-US', fullOptions);
-    }
-}
-
-// Search Functionality
-
-function setupSearch() {
-    const searchInput = document.getElementById('search-input');
-    if (searchInput) {
-        searchInput.addEventListener('input', function(event) {
-            currentSearchTerm = event.target.value.trim().toLowerCase();
-            applyFilters();
-        });
-    } else {
-        console.error('Search input element not found');
-    }
-}
-
-function applyFilters() {
-    let visibleMarkers = 0;
-    let lastVisibleMarker = null;
-
-    const now = new Date();
-    const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
-
-    console.log(`Filtering calls since: ${filterTime.toISOString()}`);
-    console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
-
-    Object.keys(allMarkers).forEach(callId => {
-        const { marker, transcription, timestamp } = allMarkers[callId];
-        const callTime = new Date(timestamp);
-        const isWithinTimeRange = callTime >= filterTime;
-        const matchesSearch = transcription.toLowerCase().includes(currentSearchTerm.toLowerCase());
-        const shouldDisplay = isWithinTimeRange && matchesSearch;
-
-        if (shouldDisplay) {
-            markerGroups.addLayer(marker);
-            allMarkers[callId].visible = true;
-            visibleMarkers++;
-            lastVisibleMarker = marker;
-        } else {
-            markerGroups.removeLayer(marker);
-            allMarkers[callId].visible = false;
-        }
-    });
-
-    console.log(`Visible markers after filtering: ${visibleMarkers}`);
-
-    // Update heatmap if active
-    if (document.getElementById('enable-heatmap').checked) {
-        updateHeatmap();
-    }
-
-    fitMapToMarkers();
-
-    if (visibleMarkers === 1 && lastVisibleMarker) {
-        openMarkerPopup(lastVisibleMarker);
-    }
-}
-
-function isMarkerWithinTimeRange(timestamp) {
-    const callTimestamp = new Date(timestamp);
-    const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
-    return callTimestamp >= sinceTimestamp;
-}
-
-// Retrieve Call ID from Marker
-function getCallIdFromMarker(marker) {
-    for (const [callId, data] of Object.entries(allMarkers)) {
-        if (data.marker === marker) {
-            console.log(`Found callId: ${callId} for marker.`);
-            return callId;
-        }
-    }
-    console.error('Could not find call ID for marker:', marker);
-    return null;
-}
-
-// Heatmap Functionality
-
-function setupHeatmapControls() {
-    const heatmapCheckbox = document.getElementById('enable-heatmap');
-    const intensitySliderContainer = document.getElementById('heatmap-intensity-container');
-
-    if (heatmapCheckbox) {
-        heatmapCheckbox.addEventListener('change', handleHeatmapToggle);
-
-        // Set initial visibility of intensity slider
-        if (heatmapCheckbox.checked) {
-            intensitySliderContainer.style.display = 'flex';
-        } else {
-            intensitySliderContainer.style.display = 'none';
-        }
-    } else {
-        console.error('Heatmap checkbox not found');
-    }
-
-    const intensitySlider = document.getElementById('heatmap-intensity');
-    if (intensitySlider) {
-        intensitySlider.addEventListener('input', handleIntensityChange);
-    } else {
-        console.error('Heatmap intensity slider not found');
-    }
-}
-
-function handleHeatmapToggle(event) {
-    const intensitySliderContainer = document.getElementById('heatmap-intensity-container');
-    if (event.target.checked) {
-        intensitySliderContainer.style.display = 'flex';
-        showHeatmap();
-    } else {
-        intensitySliderContainer.style.display = 'none';
-        hideHeatmap();
-    }
-}
-
-function handleIntensityChange(event) {
-    heatmapIntensity = parseInt(event.target.value, 10);
-    if (document.getElementById('enable-heatmap').checked) {
-        updateHeatmap();
-    }
-}
-
-function showHeatmap() {
-    // Collect data points from visible markers
-    const heatData = [];
-
-    Object.values(allMarkers).forEach(data => {
-        if (data.visible) {
-            const latlng = data.marker.getLatLng();
-            heatData.push([latlng.lat, latlng.lng, heatmapIntensity]); // Use intensity value
-        }
-    });
-
-    if (heatmapLayer) {
-        map.removeLayer(heatmapLayer);
-    }
-
-    heatmapLayer = L.heatLayer(heatData, { radius: 25, blur: 19, maxZoom: 17 });
-    heatmapLayer.addTo(map);
-}
-
-function hideHeatmap() {
-    if (heatmapLayer) {
-        map.removeLayer(heatmapLayer);
-        heatmapLayer = null;
-    }
-}
-
-function updateHeatmap() {
-    if (!heatmapLayer) {
-        showHeatmap();
-        return;
-    }
-
-    const heatData = [];
-
-    Object.values(allMarkers).forEach(data => {
-        if (data.visible) {
-            const latlng = data.marker.getLatLng();
-            heatData.push([latlng.lat, latlng.lng, heatmapIntensity]); // Use intensity value
-        }
-    });
-
-    heatmapLayer.setLatLngs(heatData);
-}
-
-// User Management Functions
 function setupUserManagement() {
     const userMenuBtn = document.getElementById('user-menu-btn');
     const dropdownContent = document.getElementById('user-menu-content');
@@ -1646,29 +1515,37 @@ function setupUserManagement() {
     const viewUsersBtn = document.getElementById('view-users-btn');
     
     // Toggle dropdown
-    userMenuBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        dropdownContent.classList.toggle('show');
-    });
+    if (userMenuBtn) {
+        userMenuBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            dropdownContent.classList.toggle('show');
+        });
+    }
     
     // Close dropdown when clicking outside
     window.addEventListener('click', function(e) {
         if (!e.target.matches('#user-menu-btn')) {
-            dropdownContent.classList.remove('show');
+            if (dropdownContent && dropdownContent.classList.contains('show')) {
+                dropdownContent.classList.remove('show');
+            }
         }
     });
     
     // Add User button click
-    addUserBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        showAddUserModal();
-    });
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showAddUserModal();
+        });
+    }
     
     // View Users button click
-    viewUsersBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        showViewUsersModal();
-    });
+    if (viewUsersBtn) {
+        viewUsersBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showViewUsersModal();
+        });
+    }
     
     // Setup modal forms
     setupAddUserForm();
@@ -1677,78 +1554,86 @@ function setupUserManagement() {
 
 function showAddUserModal() {
     const modal = document.getElementById('add-user-modal');
-    modal.style.display = 'block';
+    if (modal) {
+        modal.style.display = 'block';
+    }
 }
 
 function showViewUsersModal() {
     const modal = document.getElementById('view-users-modal');
-    loadUsersList();
-    modal.style.display = 'block';
+    if (modal) {
+        loadUsersList();
+        modal.style.display = 'block';
+    }
 }
 
 function setupAddUserForm() {
     const form = document.getElementById('add-user-form');
-    form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        const username = document.getElementById('new-username').value;
-        const password = document.getElementById('new-password').value;
-        
-        fetch('/api/users', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ username, password })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                showNotification(data.error, 'error');
-            } else {
-                showNotification('User added successfully', 'success');
-                document.getElementById('add-user-modal').style.display = 'none';
-                form.reset();
-            }
-        })
-        .catch(error => {
-            showNotification('Error adding user', 'error');
-            console.error('Error:', error);
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('new-username').value;
+            const password = document.getElementById('new-password').value;
+            
+            fetch('/api/users', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showNotification(data.error, 'error');
+                } else {
+                    showNotification('User added successfully', 'success');
+                    document.getElementById('add-user-modal').style.display = 'none';
+                    form.reset();
+                }
+            })
+            .catch(error => {
+                showNotification('Error adding user', 'error');
+                console.error('Error:', error);
+            });
         });
-    });
+    }
 }
 
 function loadUsersList() {
     const usersList = document.getElementById('users-list');
-    usersList.innerHTML = 'Loading users...';
-    
-    fetch('/api/users')
-        .then(response => response.json())
-        .then(users => {
-            usersList.innerHTML = users.map(user => `
-                <div class="user-item">
-                    <div class="user-info">
-                        <strong>${user.username}</strong><br>
-                        <small>Created: ${new Date(user.created_at).toLocaleString()}</small>
+    if (usersList) {
+        usersList.innerHTML = 'Loading users...';
+        
+        fetch('/api/users')
+            .then(response => response.json())
+            .then(users => {
+                usersList.innerHTML = users.map(user => `
+                    <div class="user-item">
+                        <div class="user-info">
+                            <strong>${user.username}</strong><br>
+                            <small>Created: ${new Date(user.created_at).toLocaleString()}</small>
+                        </div>
+                        <div class="user-actions">
+                            <button class="delete-user-btn" data-user-id="${user.id}">Delete</button>
+                        </div>
                     </div>
-                    <div class="user-actions">
-                        <button class="delete-user-btn" data-user-id="${user.id}">Delete</button>
-                    </div>
-                </div>
-            `).join('');
-            
-            // Add event listeners for delete buttons
-            document.querySelectorAll('.delete-user-btn').forEach(button => {
-                button.addEventListener('click', function() {
-                    const userId = this.getAttribute('data-user-id');
-                    deleteUser(userId);
+                `).join('');
+                
+                // Add event listeners for delete buttons
+                document.querySelectorAll('.delete-user-btn').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const userId = this.getAttribute('data-user-id');
+                        deleteUser(userId);
+                    });
                 });
+            })
+            .catch(error => {
+                usersList.innerHTML = 'Error loading users.';
+                console.error('Error:', error);
             });
-        })
-        .catch(error => {
-            usersList.innerHTML = 'Error loading users.';
-            console.error('Error:', error);
-        });
+    }
 }
 
 function deleteUser(userId) {
@@ -1780,7 +1665,6 @@ function setupModalCancelButtons() {
     });
 }
 
-// Session Management Functions
 function setupSessionManagement() {
     // Get the existing "Manage Sessions" button by its ID
     const manageSessionsBtn = document.getElementById('manage-sessions-btn');
@@ -1798,13 +1682,17 @@ function setupSessionManagement() {
 
 function showSessionsModal() {
     const modal = document.getElementById('sessions-modal');
-    loadUsersForDropdown(); // Load users into the dropdown
-    loadSessionsList(); // Load sessions for the default or selected user
-    modal.style.display = 'block';
+    if (modal) {
+        loadUsersForDropdown(); // Load users into the dropdown
+        loadSessionsList(); // Load sessions for the default or selected user
+        modal.style.display = 'block';
+    }
 }
 
 function loadUsersForDropdown() {
     const userDropdown = document.getElementById('user-dropdown');
+    if (!userDropdown) return;
+    
     fetch('/api/users')
         .then(response => response.json())
         .then(users => {
@@ -1836,8 +1724,10 @@ function loadUsersForDropdown() {
 
 function loadSessionsList() {
     const sessionsList = document.getElementById('sessions-list');
+    if (!sessionsList) return;
+    
     const userDropdown = document.getElementById('user-dropdown');
-    const selectedUserId = userDropdown.value;
+    const selectedUserId = userDropdown ? userDropdown.value : 'all';
 
     sessionsList.innerHTML = '<div class="loading">Loading sessions...</div>';
 
@@ -1850,7 +1740,7 @@ function loadSessionsList() {
     fetch(url)
         .then(response => response.json())
         .then(sessions => {
-            sessionsList.innerHTML = sessions.map((session) => `
+            sessionsList.innerHTML = sessions.length ? sessions.map((session) => `
                 <div class="session-item ${session.token === currentSessionToken ? 'current-session' : ''}">
                     <div class="session-info">
                         <div class="session-details">
@@ -1873,7 +1763,7 @@ function loadSessionsList() {
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `).join('') : '<div class="no-sessions">No active sessions found</div>';
         })
         .catch(error => {
             console.error('Error loading sessions:', error);
@@ -1898,9 +1788,18 @@ function terminateSession(token) {
     }
 }
 
+// User and Session Management functions remain the same
+
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
+    // Initialize configuration variables from the config
+    timeRangeHours = appConfig.time.defaultTimeRangeHours;
+    heatmapIntensity = appConfig.heatmap.defaultIntensity;
+    
+    // Initialize custom icons from config
+    Object.assign(customIcons, createIconsFromConfig());
+    
     initAudioContext();
     attemptAutoplay();
     initMap();
@@ -1911,13 +1810,13 @@ function initializeApp() {
     setupHeatmapControls();
     setupLiveStreamButton();
     loadCalls(timeRangeHours);
-    setupUserManagement(); // Call this first
+    setupUserManagement();
     
     fetch('/api/sessions/current')
         .then(response => response.json())
         .then(data => {
             currentSessionToken = data.session.token;
-            setupSessionManagement(); // Now this only adds the event listener
+            setupSessionManagement();
         })
         .catch(error => {
             console.error('Error getting current session:', error);
