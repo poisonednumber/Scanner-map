@@ -529,7 +529,7 @@ function addMarker(call, isNew = false) {
         // Handle popup open event
         marker.on('popupopen', function() {
             console.log(`Popup opened for callId: ${call.id}`);
-            initWaveSurfer(call.id, `/audio/${call.audio_id}`, () => {
+            initWaveSurfer(call.id, `/audio/${call.id}`, () => {
                 if (!isNewCallAudioMuted && this.shouldPlayAudio) {
                     const wavesurferInstance = wavesurfers[call.id];
 
