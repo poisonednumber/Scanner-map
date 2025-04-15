@@ -396,7 +396,8 @@ body, html {
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    background-color: rgba(0, 0, 0, 1); /* Match control panel background */
+    top: 800px; /* Increased from 250px to push it lower */
+    background-color: rgba(0, 0, 0, 1);
     color: var(--text-color);
     border: 1px solid var(--border-color);
     border-radius: 4px;
@@ -1322,5 +1323,266 @@ input[type="range"]:focus::-ms-fill-lower {
 
 input[type="range"]:focus::-ms-fill-upper {
     background: var(--primary-color);
+}
+
+#category-sidebar {
+  position: absolute;
+  left: 0px;
+  top: 80px; /* Position below the control panel */
+  width: 180px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+  z-index: 999;
+  font-family: 'Share Tech Mono', monospace;
+  padding: 10px;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+}
+
+.category-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 5px;
+  border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.category-item:hover {
+  background-color: var(--hover-color);
+}
+
+.category-item.active {
+  background-color: rgba(0, 50, 0, 0.8);
+  border-left: 3px solid var(--primary-color);
+  box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3);
+}
+
+.category-name {
+  font-size: 18px;
+}
+
+.category-count {
+  background-color: var(--hover-color);
+  color: var(--text-color);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 18px;
+  min-width: 25px;
+  text-align: center;
+}
+
+/* Responsive design for mobile */
+@media screen and (max-width: 768px) {
+  #category-sidebar {
+    top: 0px;
+    bottom: auto; /* Positioned higher above control panel */
+    left: 0px;
+    width: 130px; /* Increased width */
+    max-height: calc(100vh - 350px);
+	box-shadow: 0 0 15px rgba(0, 255, 0, 0.6);
+    font-size: 14px; /* Larger font */
+    z-index: 998; /* Ensure it's below zoom controls but above map */
+    background-color: rgba(0, 0, 0, 0.9); /* Darker background for better contrast */
+    border: 2px solid var(--border-color); /* More prominent border */
+  }
+  
+  .category-header {
+    font-size: 18px; /* Larger header font */
+    padding: 10px 0;
+  }
+  
+  .category-item {
+    padding: 10px 8px; /* More padding for easier tapping */
+    margin-bottom: 2px;
+  }
+  
+  .category-name {
+    font-size: 14px; /* Larger text */
+  }
+  
+  .category-count {
+    font-size: 16px;
+    min-width: 25px;
+    padding: 2px 8px;
+    font-weight: bold;
+  }
+
+  /* Make sure the bottom controls don't overlap with the sidebar */
+  #control-panel {
+    z-index: 997;
+  }
+}
+.category-badge {
+  background-color: var(--hover-color);
+  color: #00ccff;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  margin-left: 5px;
+  display: inline-block;
+}
+/* Add this to styles.css to move the zoom controls to the right side */
+.leaflet-control-zoom {
+  position: absolute;
+  right: 10px;
+  left: auto !important;
+  top: 80px !important; /* Keep it below the control panel */
+}
+
+@media screen and (max-width: 768px) {
+  .leaflet-control-zoom {
+    display: none !important;
+  }
+}
+/* Summary Bar Styles */
+#summary-bar {
+  position: absolute;
+  top: 65px; /* Position it just below the control panel */
+  left: 222px;
+  right: 222px;
+  height: 40px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+  z-index: 999;
+  overflow: hidden;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.ticker-wrap {
+  width: 100%;
+  height: 115%;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ticker {
+  display: inline-flex;
+  white-space: nowrap;
+  padding-right: 100%;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  animation-name: ticker;
+  animation-duration: 30s; /* Adjust speed here */
+}
+
+/* Make sure we duplicate content for seamless loop */
+.ticker-item {
+  display: inline-block;
+  padding: 0 20px;
+  color: var(--text-color);
+  font-size: 21px;
+  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+}
+
+.summary-highlight {
+  color: #00ccff;
+  font-weight: bold;
+}
+
+@keyframes ticker {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+  #summary-bar {
+    top: 0px;
+    left: 10px;
+    right: 10px;
+    height: 50px;
+  }
+  
+  .ticker-item {
+    font-size: 18px;
+  }
+  
+  #category-sidebar {
+    top: 110px;
+  }
+  
+  #map {
+    height: calc(100vh - 170px);
+  }
+}
+/* Make the attribution stay at the bottom but go under the control panel */
+@media screen and (max-width: 768px) {
+    .leaflet-control-attribution {
+        display: none !important;
+    }
+    
+    /* Make sure control panel stays above the attribution */
+    #control-panel {
+        z-index: 997; /* This is already set in your code but making sure it's higher */
+    }
+}
+
+/* For the call banner position */
+#new-call-banner {
+    top: 120px !important;
+}
+/* Hide map scale on mobile */
+@media screen and (max-width: 768px) {
+    .leaflet-control-scale {
+        display: none !important;
+    }
+}
+
+/* Style zoom buttons to match theme */
+.leaflet-control-zoom {
+    border: none !important;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5) !important;
+}
+
+.leaflet-control-zoom a {
+    background-color: #000000 !important; /* Black background */
+    color: #00ff00 !important; /* Green text */
+    border: 1px solid #00ff00 !important; /* Green border */
+    font-family: 'Share Tech Mono', monospace !important;
+    transition: all 0.3s !important;
+}
+
+.leaflet-control-zoom a:hover {
+    background-color: #00ff00 !important; /* Green background on hover */
+    color: #000000 !important; /* Black text on hover */
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.7) !important;
+}
+
+/* Style the zoom in button */
+.leaflet-control-zoom-in {
+    border-bottom: 1px solid #00ff00 !important;
+}
+
+/* Hide attribution on mobile */
+@media screen and (max-width: 768px) {
+    .leaflet-control-attribution {
+        display: none !important;
+    }
+}
+.leaflet-control-scale {
+        display: none !important;
+}
+.leaflet-control-attribution {
+        z-index: 996 !important; /* Lower z-index than control panel */
+        background-color: rgba(0, 0, 0, 0.7) !important;
+        color: var(--text-color) !important;
+        border: 1px solid var(--border-color);
+        font-size: 10px !important;
+        padding: 2px 5px !important;
+        border-radius: 3px !important;
 }
 /* End of CSS file */

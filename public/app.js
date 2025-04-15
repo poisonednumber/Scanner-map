@@ -19,6 +19,22 @@ let liveAudioStream = null;
 let isLiveStreamPlaying = false;
 let audioContainer = null;
 let currentSessionToken = null;
+let categoryCounts = {
+  'MEDICAL': 0,
+  'FIRE': 0,
+  'TRAFFIC': 0,
+  'THEFT': 0,
+  'SUSPICIOUS': 0,
+  'DOMESTIC': 0,
+  'ASSAULT': 0,
+  'ALARM': 0,
+  'WELFARE': 0,
+  'ANIMAL': 0,
+  'OTHER': 0
+};
+let selectedCategory = null;
+let timestampUpdateInterval = null;
+
 
 // Animation Queue Variables
 const animationQueue = [];
@@ -104,6 +120,157 @@ function setupLiveStreamButton() {
     
     liveStreamButton.addEventListener('click', toggleLiveStream);
 }
+
+// Initialize the category sidebar
+function initCategorySidebar() {
+  const categoryList = document.getElementById('category-list');
+  categoryList.innerHTML = '';
+  
+  // Check if we're on mobile and adjust styling accordingly
+  if (isMobile()) {
+    document.getElementById('category-sidebar').style.maxHeight = 
+      `${window.innerHeight - 350}px`;
+  }
+  
+  Object.keys(categoryCounts).forEach(category => {
+    const categoryItem = document.createElement('div');
+    categoryItem.className = 'category-item';
+    categoryItem.dataset.category = category;
+    categoryItem.innerHTML = `
+      <div class="category-name">${category}</div>
+      <div class="category-count">${categoryCounts[category]}</div>
+    `;
+    
+    categoryItem.addEventListener('click', () => {
+      toggleCategoryFilter(category);
+    });
+    
+    categoryList.appendChild(categoryItem);
+  });
+  
+  // Add "All" category
+  const allCategory = document.createElement('div');
+  allCategory.className = 'category-item active';
+  allCategory.dataset.category = 'ALL';
+  allCategory.innerHTML = `
+    <div class="category-name">ALL</div>
+    <div class="category-count">${Object.values(categoryCounts).reduce((a, b) => a + b, 0)}</div>
+  `;
+  
+  allCategory.addEventListener('click', () => {
+    toggleCategoryFilter('ALL');
+  });
+  
+  categoryList.prepend(allCategory);
+  
+  // Add resize handler for mobile
+  window.addEventListener('resize', () => {
+    if (isMobile()) {
+      document.getElementById('category-sidebar').style.maxHeight = 
+        `${window.innerHeight - 350}px`;
+    }
+  });
+}
+
+// Toggle category filter
+function toggleCategoryFilter(category) {
+  // Reset active state for all categories
+  document.querySelectorAll('.category-item').forEach(item => {
+    item.classList.remove('active');
+  });
+  
+  // Set active state for selected category
+  const categoryElement = document.querySelector(`.category-item[data-category="${category}"]`);
+  if (categoryElement) {
+    categoryElement.classList.add('active');
+  }
+  
+  selectedCategory = category === 'ALL' ? null : category;
+  applyFilters();
+}
+
+// Update category counts
+function updateCategoryCounts() {
+  // Reset all counts
+  Object.keys(categoryCounts).forEach(category => {
+    categoryCounts[category] = 0;
+  });
+  
+  // Count visible markers by category
+  Object.values(allMarkers).forEach(data => {
+    if (data.visible && data.category) {
+      const category = data.category;
+      if (categoryCounts.hasOwnProperty(category)) {
+        categoryCounts[category]++;
+      } else {
+        categoryCounts['OTHER']++;
+      }
+    }
+  });
+  
+  // Update the UI
+  Object.keys(categoryCounts).forEach(category => {
+    const countElement = document.querySelector(`.category-item[data-category="${category}"] .category-count`);
+    if (countElement) {
+      countElement.textContent = categoryCounts[category];
+    }
+  });
+  
+  // Update ALL category count
+  const allCountElement = document.querySelector(`.category-item[data-category="ALL"] .category-count`);
+  if (allCountElement) {
+    allCountElement.textContent = Object.values(categoryCounts).reduce((a, b) => a + b, 0);
+  }
+}
+
+// Start timestamp update interval
+function startTimestampUpdates() {
+  // Clear any existing interval
+  if (timestampUpdateInterval) {
+    clearInterval(timestampUpdateInterval);
+  }
+  
+  // Update timestamps every minute
+  timestampUpdateInterval = setInterval(() => {
+    updatePopupTimestamps();
+    removeExpiredMarkers();
+  }, 60000); // every minute
+}
+
+// Update timestamps in open popups
+function updatePopupTimestamps() {
+  Object.keys(markers).forEach(callId => {
+    const marker = markers[callId];
+    if (marker && marker.isPopupOpen()) {
+      const timestampContainer = marker.getPopup().getContent().querySelector('.popup-timestamp');
+      if (timestampContainer) {
+        const callTimestamp = allMarkers[callId].timestamp;
+        timestampContainer.innerHTML = `<small>${formatTimestamp(callTimestamp)}</small>`;
+      }
+    }
+  });
+}
+
+// Remove markers that no longer match the time filter
+function removeExpiredMarkers() {
+  const now = new Date();
+  const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
+  
+  Object.keys(allMarkers).forEach(callId => {
+    const callTime = new Date(allMarkers[callId].timestamp);
+    if (callTime < filterTime) {
+      // Remove from map if it's currently visible
+      if (allMarkers[callId].visible) {
+        markerGroups.removeLayer(markers[callId]);
+        allMarkers[callId].visible = false;
+      }
+    }
+  });
+  
+  // Update category counts after removing markers
+  updateCategoryCounts();
+}
+
 
 function toggleLiveStream() {
     // Open the radio website in a new tab
@@ -236,7 +403,7 @@ function initMap() {
 
     // Satellite view using two layers combined
     const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
-        attribution: 'Imagery &copy; Esri &copy; Scanner Map V1.5',
+        attribution: appConfig.map.attribution,
         maxZoom: appConfig.map.maxZoom,
         crossOrigin: true
     });
@@ -279,8 +446,10 @@ function initMap() {
     map.addLayer(markerGroups);
 
     if (isMobile()) {
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-    }
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+} else {
+    L.control.zoom({ position: 'topright' }).addTo(map);
+}
 
     setupEventListeners();
     L.control.scale().addTo(map);
@@ -371,47 +540,68 @@ function handleReconnect() {
 
 // Handle New Call Event
 function handleNewCall(call) {
-    console.log('Received newCall event:', call);
+  console.log('Received newCall event:', call);
 
-    if (markers[call.id]) {
-        console.log(`Call ID ${call.id} already exists. Skipping.`);
-        return;
-    }
+  if (markers[call.id]) {
+    console.log(`Call ID ${call.id} already exists. Skipping.`);
+    return;
+  }
 
-    if (isValidCall(call)) {
-        const callTimestamp = new Date(call.timestamp);
-        const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
+  if (isValidCall(call)) {
+    const callTimestamp = new Date(call.timestamp);
+    const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
 
-        if (callTimestamp >= sinceTimestamp) {
-            const added = addMarker(call, true);
-            if (added) {
-                console.log('New marker added for call:', call.id);
-                const marker = markers[call.id];
-                if (marker) {
-                    showNewCallBanner(call.talk_group_name || 'Unknown Talk Group');
-                    enqueueAnimation(marker, () => {
-                        handleMarkerVisibility(marker);
-                    });
-                    playNewCallSound();
-                }
-            }
+    if (callTimestamp >= sinceTimestamp) {
+      const added = addMarker(call, true);
+      if (added) {
+        console.log('New marker added for call:', call.id);
+        const marker = markers[call.id];
+        if (marker) {
+          showNewCallBanner(call.talk_group_name || 'Unknown Talk Group', call.category || 'OTHER');
+          enqueueAnimation(marker, () => {
+            handleMarkerVisibility(marker);
+          });
+          playNewCallSound();
+          
+          // Update category counts after adding a new marker
+          updateCategoryCounts();
         }
-    } else {
-        console.warn('Invalid call data received:', call);
+      }
     }
+  } else {
+    console.warn('Invalid call data received:', call);
+  }
 }
 
+
 // Function to show the new call banner
-function showNewCallBanner(talkGroup) {
-    const banner = document.getElementById('new-call-banner');
-    const talkGroupSpan = document.getElementById('talkgroup-name');
-    
-    talkGroupSpan.textContent = talkGroup;
-    banner.classList.remove('hidden');
-    
-    setTimeout(() => {
-        banner.classList.add('hidden');
-    }, 4000);
+function showNewCallBanner(talkGroup, category) {
+  const banner = document.getElementById('new-call-banner');
+  const talkGroupSpan = document.getElementById('talkgroup-name');
+  
+  talkGroupSpan.textContent = `${talkGroup} `;
+  
+  // Add category badge if available
+  if (category) {
+    const categoryBadge = document.createElement('span');
+    categoryBadge.className = 'category-badge';
+    categoryBadge.textContent = category;
+    categoryBadge.style.cssText = `
+      background-color: var(--hover-color);
+      color: #00ccff;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 12px;
+      margin-left: 5px;
+    `;
+    talkGroupSpan.appendChild(categoryBadge);
+  }
+  
+  banner.classList.remove('hidden');
+  
+  setTimeout(() => {
+    banner.classList.add('hidden');
+  }, 4000);
 }
 
 // Add Marker to Map
@@ -503,11 +693,22 @@ function addMarker(call, isNew = false) {
         // Add the top container to the popup content
         popupContent.appendChild(topContainer);
 
-        // Add the main content
+        // Add the main content with talk group name and category on separate lines
         const contentWrapper = document.createElement('div');
-        contentWrapper.innerHTML = `
-            <b>${call.talk_group_name || 'Unknown Talk Group'}</b><br>
-            ${call.transcription || 'No transcription available.'}<br>
+        
+        // Create talk group and category HTML with enhanced styling
+        let mainContentHTML = '';
+        
+        // Add talk group name
+        mainContentHTML += `<b>${call.talk_group_name || 'Unknown Talk Group'}</b>`;
+        
+        // Add category with blue theme styling if it exists
+        if (call.category) {
+            mainContentHTML += `<span style="display: inline-block; margin-left: 10px; color: #00ccff; font-weight: bold; font-style: italic; text-shadow: 0 0 3px #003366; font-size: 1.1em; letter-spacing: 0.2px;">${call.category}</span>`;
+        }
+        
+        // Add transcription and other elements
+        mainContentHTML += `<br>${call.transcription || 'No transcription available.'}<br>
             <div id="waveform-${call.id}" class="waveform"></div>
             <div class="audio-controls">
                 <button class="play-pause" data-call-id="${call.id}" aria-label="Play audio for call ${call.id}">Play</button>
@@ -516,11 +717,14 @@ function addMarker(call, isNew = false) {
             </div>
             <div class="additional-info"></div>
         `;
+        
+        contentWrapper.innerHTML = mainContentHTML;
         popupContent.appendChild(contentWrapper);
 
         // Bind popup with content
         marker.bindPopup(popupContent);
         
+        // Rest of your function remains unchanged
         if (isNew) {
             marker.shouldPlayAudio = true;
             console.log(`Marker for callId ${call.id} flagged to play audio on popup open.`);
@@ -571,6 +775,7 @@ function addMarker(call, isNew = false) {
         allMarkers[call.id] = { 
             marker: marker, 
             transcription: call.transcription.toLowerCase(), 
+			category: call.category ? call.category.toUpperCase() : 'OTHER', // Ensure uppercase for category matching
             timestamp: call.timestamp,
             visible: true
         };
@@ -1180,45 +1385,56 @@ function setupSearch() {
 }
 
 function applyFilters() {
-    let visibleMarkers = 0;
-    let lastVisibleMarker = null;
+  let visibleMarkers = 0;
+  let lastVisibleMarker = null;
 
-    const now = new Date();
-    const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
+  const now = new Date();
+  const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
 
-    console.log(`Filtering calls since: ${filterTime.toISOString()}`);
-    console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
+  console.log(`Filtering calls since: ${filterTime.toISOString()}`);
+  console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
 
-    Object.keys(allMarkers).forEach(callId => {
-        const { marker, transcription, timestamp } = allMarkers[callId];
-        const callTime = new Date(timestamp);
-        const isWithinTimeRange = callTime >= filterTime;
-        const matchesSearch = transcription.toLowerCase().includes(currentSearchTerm.toLowerCase());
-        const shouldDisplay = isWithinTimeRange && matchesSearch;
+  Object.keys(allMarkers).forEach(callId => {
+    const { marker, transcription, category, timestamp } = allMarkers[callId];
+    const callTime = new Date(timestamp);
+    const isWithinTimeRange = callTime >= filterTime;
+    
+    // Check if search term matches either transcription or category
+    const matchesSearch = 
+      transcription.toLowerCase().includes(currentSearchTerm.toLowerCase()) || 
+      (category && category.toLowerCase().includes(currentSearchTerm.toLowerCase()));
+    
+    // Check if category filter matches
+    const matchesCategory = !selectedCategory || category === selectedCategory;
+        
+    const shouldDisplay = isWithinTimeRange && matchesSearch && matchesCategory;
 
-        if (shouldDisplay) {
-            markerGroups.addLayer(marker);
-            allMarkers[callId].visible = true;
-            visibleMarkers++;
-            lastVisibleMarker = marker;
-        } else {
-            markerGroups.removeLayer(marker);
-            allMarkers[callId].visible = false;
-        }
-    });
-
-    console.log(`Visible markers after filtering: ${visibleMarkers}`);
-
-    // Update heatmap if active
-    if (document.getElementById('enable-heatmap').checked) {
-        updateHeatmap();
+    if (shouldDisplay) {
+      markerGroups.addLayer(marker);
+      allMarkers[callId].visible = true;
+      visibleMarkers++;
+      lastVisibleMarker = marker;
+    } else {
+      markerGroups.removeLayer(marker);
+      allMarkers[callId].visible = false;
     }
+  });
 
-    fitMapToMarkers();
+  console.log(`Visible markers after filtering: ${visibleMarkers}`);
+  
+  // Update category counts after filtering
+  updateCategoryCounts();
 
-    if (visibleMarkers === 1 && lastVisibleMarker) {
-        openMarkerPopup(lastVisibleMarker);
-    }
+  // Update heatmap if active
+  if (document.getElementById('enable-heatmap').checked) {
+    updateHeatmap();
+  }
+
+  fitMapToMarkers();
+
+  if (visibleMarkers === 1 && lastVisibleMarker) {
+    openMarkerPopup(lastVisibleMarker);
+  }
 }
 
 function isMarkerWithinTimeRange(timestamp) {
@@ -1793,36 +2009,103 @@ function terminateSession(token) {
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
-    // Initialize configuration variables from the config
-    timeRangeHours = appConfig.time.defaultTimeRangeHours;
-    heatmapIntensity = appConfig.heatmap.defaultIntensity;
-    
-    // Initialize custom icons from config
-    Object.assign(customIcons, createIconsFromConfig());
-    
-    initAudioContext();
-    attemptAutoplay();
-    initMap();
-    setupCallsAndUpdates();
-    setupSearch();
-    setupMuteButton();
-    setupTimeFilter();
-    setupHeatmapControls();
-    setupLiveStreamButton();
-    loadCalls(timeRangeHours);
-    setupUserManagement();
-    
-    fetch('/api/sessions/current')
-        .then(response => response.json())
-        .then(data => {
-            currentSessionToken = data.session.token;
-            setupSessionManagement();
-        })
-        .catch(error => {
-            console.error('Error getting current session:', error);
-        });
+  // Initialize configuration variables from the config
+  timeRangeHours = appConfig.time.defaultTimeRangeHours;
+  heatmapIntensity = appConfig.heatmap.defaultIntensity;
+  
+  // Initialize custom icons from config
+  Object.assign(customIcons, createIconsFromConfig());
+  
+  initAudioContext();
+  attemptAutoplay();
+  initMap();
+  setupCallsAndUpdates();
+  setupSearch();
+  setupMuteButton();
+  setupTimeFilter();
+  setupHeatmapControls();
+  setupLiveStreamButton();
+  loadCalls(timeRangeHours);
+  setupUserManagement();
+  
+  // Initialize the category sidebar
+  initCategorySidebar();
+  
+  // Start timestamp updates
+  startTimestampUpdates();
+  
+  fetch('/api/sessions/current')
+    .then(response => response.json())
+    .then(data => {
+      currentSessionToken = data.session.token;
+      setupSessionManagement();
+    })
+    .catch(error => {
+      console.error('Error getting current session:', error);
+    });
 }
+// Function to load and display summary
+function loadSummary() {
+  fetch('/summary.json')
+    .then(response => response.json())
+    .then(data => {
+      const ticker = document.querySelector('.ticker');
+      
+      // Create content with main summary and highlights
+      let content = `${data.summary} | `;
+      
+      // Add highlights if available
+      if (data.highlights && data.highlights.length > 0) {
+        data.highlights.forEach(highlight => {
+          content += `<span class="summary-highlight">${highlight.talk_group}</span>: ${highlight.description} (${highlight.time}) | `;
+        });
+      }
+      
+      // Add update time
+      content += `Updated: ${new Date(data.updated).toLocaleTimeString()} | `;
+      
+      // Clear ticker
+      ticker.innerHTML = '';
+      
+      // Create multiple copies of the content for seamless looping
+      for (let i = 0; i < 3; i++) {
+        const item = document.createElement('div');
+        item.className = 'ticker-item';
+        item.innerHTML = content;
+        ticker.appendChild(item);
+      }
+      
+      // Reset animation to start from the beginning
+      ticker.style.animationName = 'none';
+      
+      // Force a reflow
+      void ticker.offsetWidth;
+      
+      // Restart animation
+      ticker.style.animationName = 'ticker';
+      
+      // Calculate proper duration based on content length
+      const tickerWidth = ticker.scrollWidth;
+      const viewportWidth = document.querySelector('.ticker-wrap').offsetWidth;
+      const ratio = tickerWidth / viewportWidth;
+      
+      // Adjust duration: higher = slower, lower = faster
+      const baseDuration = 30; // seconds
+      ticker.style.animationDuration = `${baseDuration * (ratio / 3)}s`;
+      
+      console.log(`Ticker animation set with duration: ${ticker.style.animationDuration}`);
+    })
+    .catch(error => {
+      console.error('Error loading summary:', error);
+      const ticker = document.querySelector('.ticker');
+      ticker.innerHTML = '<div class="ticker-item">Summary information unavailable</div>';
+    });
+}
+// Load summary immediately
+loadSummary();
 
+// Set up summary refresh interval (every 2 minutes)
+setInterval(loadSummary, 120000);
 // Update volume slider style
 document.addEventListener('input', function(e) {
     if (e.target.classList.contains('volume')) {
