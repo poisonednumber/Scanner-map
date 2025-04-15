@@ -1,469 +1,356 @@
-# Scanner Map (made with lots of ai code)
+# Scanner Map
 
-A real-time scanner mapping system that integrates with SDRTrunk, providing live audio streaming, transcription, and geographic visualization of radio communications. This system processes radio transmissions, extracts location data, and displays them on an interactive map with various visualization options.
-
-## Overview
-
-The Scanner Map system consists of:
-- A Node.js backend that processes SDRTrunk streams
-- A Python-based transcription service using Whisper AI
-- A web interface with interactive mapping
-- A Discord bot for notifications and audio streaming
-- A configurable geocoding system for location extraction
-
-## Real-Time Features
-
-### Live Call Tracking and Auto-Play
-
-The system provides real-time tracking and automatic playback of new calls as they come in:
-
-1. **Real-Time Mapping**
-   - New calls appear on map within ~10 seconds (varies with GPU processing power)
-   - Map automatically centers on new calls
-   - Smooth animation transitions between markers
-   - Clustering of nearby markers for better performance
-
-2. **Automatic Audio Playback**
-   - Auto-plays new call audio when enabled
-   - Can be toggled with "Mute New Calls" button
-   - Queues multiple calls if they arrive simultaneously
-   - Transcription appears with audio playback
-
-3. **Performance Factors**
-   - Processing delay typically 8-15 seconds from transmission
-   - Factors affecting delay:
-     - GPU processing power (main factor)
-     - Network speed
-     - Server load
-     - Number of simultaneous calls
-   - NVIDIA GPU recommended for optimal performance
-
-4. **Visual Indicators**
-   - New call banner shows talk group information
-   - Marker pulses when new
-   - Audio waveform visualization
-   - Heat map option for call density
-
-5. **Controls**
-   - Toggle auto-play with mute button
-   - Adjust audio volume per call
-   - Manual marker navigation
-   - Time range filtering
-   - Search functionality
-
-### System Impact
-
-For optimal real-time performance:
-- Recommended: NVIDIA GPU with 4GB+ VRAM
-- Minimum 16GB system RAM
-- SSD storage for audio processing
-- Broadband internet connection
-- Processor: i5/Ryzen 5 or better
-
-Processing times:
-- High-end GPU (RTX 3070+): ~5-8 seconds
-- Mid-range GPU (GTX 1660+): ~8-12 seconds
-- Lower-end GPU: 12-20 seconds
+A real-time mapping system that pulls radio calls from SDRTrunk and TrunkRecorder via a RdioScanner endpoint. This system processes radio transmissions, extracts location data, and displays them on an interactive map with audio playback and transcription.
 
 ## Features
 
-- Real-time mapping of radio communications with location data
-- Live audio streaming from SDRTrunk
-- Audio transcription using Whisper large-v3-turbo model
-- Interactive map with day/night/satellite views
-- Marker clustering for better performance
-- Heatmap visualization
-- Search functionality
-- Custom time range filtering
-- Live audio streaming support
-- User management system
-- Session management
-- Secure authentication
-- Mobile-responsive design
+-   Real-time mapping of radio communications with automatic location extraction
+-   Audio transcription using faster-whisper AI model
+-   Interactive map with day/night/satellite views and heatmap
+-   Discord integration for notifications and voice channel playback
+-   User authentication and management system
+-   Categorized view of call types (medical, fire, police, etc.)
+-   Uses local Ollama model for address extractions and call summery/categories
 
-## API Key Generation
+## Windows Installation Guide
 
-1. Generate and hash your API key:
-   ```bash
-   # Edit hashApiKey.js to set your desired API key
-   node hashApiKey.js
-   ```
-   The script will output a hashed version of your API key.
-   ```
+### Prerequisites
 
-## Discord Integration
+-   Windows 10 or 11
+-   SDRTrunk or TrunkRecorder already configured
+-   Google geocoding api access create one free https://cloud.google.com/
 
-### Features
-- Automatic channel creation for each talk group
-- Real-time alerts for keyword matches
-- Audio playback in voice channels
-- Interactive buttons for live listening
-- Channel categorization by jurisdiction
-- Embedded messages with transcription and audio
+### Step 1: Install Required Software
 
-### Discord Bot Setup
-1. Create a Discord application at https://discord.com/developers/applications
-2. Create a bot and get your bot token
-3. Enable required Gateway Intents:
-   - Server Members
-   - Message Content
-   - Voice States
-4. Add bot to your server with required permissions:
-   - Manage Channels
-   - Send Messages
-   - Connect to Voice
-   - Speak in Voice Channels
-   - Embed Links
-   - Attach Files
+1.  **Install Node.js (LTS version)**
+    
+    -   Open PowerShell as Administrator and run:
+    
+    ```
+    winget install OpenJS.NodeJS.LTS
+    ```
+    
+    -   Or download from nodejs.org
+2.  **Install Python 3.9 or higher**
+    
+    ```
+    winget install Python.Python.3.10
+    ```
+    
+    -   Make sure to check "Add Python to PATH" during installation
+3.  **Install Git**
+    
+    ```
+    winget install Git.Git
+    ```
+    
+4.  **Install Visual Studio Build Tools (for native dependencies)**
+    
+    ```
+    winget install Microsoft.VisualStudio.2022.BuildTools
+    ```
+    
+5.  **Install FFmpeg**
+    
+    ```
+    winget install Gyan.FFmpeg
+    ```
+    
+    -   Verify installation by running:
+    
+    ```
+    ffmpeg -version
+    ```
+    
+6.  **Install NVIDIA CUDA Toolkit**
+    -   For faster-whisper, you need:
+        -   CUDA 12
+        -   cuBLAS for CUDA 12
+        -   cuDNN 9 for CUDA 12
+    -   Download and install from [NVIDIA website](https://developer.nvidia.com/cuda-downloads)
+7.  **Install Ollama** (for AI-based location extraction)
+    
+    -   Download from [ollama.ai](https://ollama.ai/download)
+    -   After installation, pull the required model (may need smaller one if your gpu has less then 8gb vram) :
+    
+    ```
+    ollama pull llama3.1:8b
+    ```
+    
 
-### Discord Channel Structure
-- Each talk group gets its own text channel
-- Channels are organized by jurisdiction categories
-- Special #alerts channel for keyword matches
-- Voice channels created dynamically for live listening
+### Step 2: Clone Repository
 
-### Alert Keywords
-Set up alert keywords using Discord commands:
+1.  **Create project directory**
+    
+    ```
+    mkdir C:\scanner-map
+    cd C:\scanner-map
+    ```
+    
+2.  **Clone the repository**
+    
+    ```
+    git clone https://github.com/yourusername/scanner-map.git .
+    ```
+    
+    Alternatively, download the zip file and extract it to C:\scanner-map
+
+### Step 3: Install Dependencies
+
+1.  **Install Node.js packages**
+    
+    ```
+    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser
+    ```
+    
+2.  **Install Python packages**
+    
+    ```
+    # Open a new PowerShell window as Administrator
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    pip install faster-whisper
+    pip install python-dotenv
+    ```
+    
+    If you have CUDA 11, use:
+    
+    ```
+    pip install --force-reinstall ctranslate2==3.24.0
+    ```
+    
+    If you have CUDA 12 with cuDNN 8, use:
+    
+    ```
+    pip install --force-reinstall ctranslate2==4.4.0
+    ```
+    
+3.  **Create necessary directories**
+    
+    ```
+    mkdir audio
+    mkdir data
+    ```
+    
+
+### Step 4: Configure Environment
+
+1.  **Create an .env file**
+    
+    ```
+    copy NUL .env
+    notepad .env
+    ```
+    
+2.  **Add the following configuration to the .env file:**
+    
+    ```
+    # Discord Bot Configuration
+    DISCORD_TOKEN=your_discord_token
+    CLIENT_ID=your_discord_client_id
+    
+    # Server Ports
+    BOT_PORT=3306                      # Used by the bot to talk to sdrtrunk
+    API_KEY_FILE=data/apikeys.json     # API key storage location
+    WEBSERVER_PORT=80                  # Used by the web server
+    PUBLIC_DOMAIN=your.domain.or.ip    # Public domain or IP for audio links
+    
+    # Geocoding Configuration
+    GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+    GEOCODING_CITY=YourCity            # Default city
+    GEOCODING_STATE=YourState          # Default state abbreviation (e.g., TX)
+    GEOCODING_COUNTRY=US               # Default country
+    GEOCODING_TARGET_COUNTIES=Your County  # Target counties for validation
+    
+    # Transcription Configuration
+    WHISPER_MODEL=large-v3         # Model for transcription (try smaller if u ran out of vram)
+    TRANSCRIPTION_DEVICE=cuda      # Use 'cuda' for GPU or 'cpu' for CPU
+    
+    # Local LLM Configuration
+    OLLAMA_URL=http://localhost:11434  # Ollama API URL
+    OLLAMA_MODEL=llama3.1:8b             # Model for address extraction (try smaller if u ran out of vram)
+    SUMMARY_LOOKBACK_HOURS=1    # Number of hours to look back for the summary
+    
+    # Web Server
+    ENABLE_AUTH=false     # Set to 'true' to enable authentication
+    WEBSERVER_PASSWORD=changeme  # Web interface password when auth is enabled
+    
+    # Talk Groups mapping (format: ID=Location)
+    TALK_GROUP_6010=Your City or any town in Your County
+    TALK_GROUP_4005=Your City or any town in Your County
+    
+    # Talk Groups to process for address extraction
+    MAPPED_TALK_GROUPS=6010,4005,6000,6005
+    
+    # Timezone
+    TIMEZONE=US/Eastern
+    ```
+    
+
+### Step 5: Create API Key for SDRTrunk/TrunkRecorder
+
+1.  **Edit the GenApiKey.js file**
+    
+    ```
+    notepad GenApiKey.js
+    ```
+    
+    Change the `apiKey` variable to your desired key:
+    
+    javascript
+    
+    ```javascript
+    const apiKey = 'your-secret-api-key'; // Replace with your desired key this also goes in sdrtrunk/trunkrecorder
+    ```
+    
+2.  **Generate the hashed API key**
+    
+    ```
+    node GenApiKey.js
+    ```
+    
+    This will output a hashed version of your API key.
+3.  **Create the apikeys.json file**
+    
+    ```
+    echo [{"key":"YOUR_HASHED_KEY_HERE","disabled":false}] > data\apikeys.json
+    ```
+    
+    Replace YOUR_HASHED_KEY_HERE with the hash from the previous step.
+
+### Step 6: Import Talk Group Data
+
+1.  **Prepare your talk group data**
+    -   Export your talk groups from RadioReference as CSV
+    -   Save the file as `talkgroups.csv` in the project root directory
+2.  **Prepare frequency data** (optional)
+    -   Export frequencies from RadioReference as CSV
+    -   Save as `frequencies.csv` in the project root directory
+3.  **Run the import script**
+    
+    ```
+    node import_csv.js
+    ```
+    
+
+### Step 7: Initialize Admin User
+
 ```
-/alert add <keyword> [talkgroup]
-/alert remove <keyword> [talkgroup]
-/alert list
+node init-admin.js
 ```
 
-### Live Audio Features
-- Click "Listen Live" button to join voice channel
-- Voice channels auto-delete when inactive
-- Multiple simultaneous streams supported
-- Audio quality settings configurable
+This will create an admin user with the password specified in your .env file.
 
-## Prerequisites
+### Step 8: Start the Application
 
-- Node.js (v14 or higher)
-- Python 3.8 or higher (for transcription)
-- CUDA-capable GPU (for Whisper transcription)
-- SQLite3
-- SDRTrunk setup with streaming enabled
-
-## Installation
-
-## Windows Installation Steps
-
-1. **Install Required Software**
-   ```batch
-   :: Download and install prerequisites (use administrative PowerShell)
-   winget install Python.Python.3.8
-   winget install OpenJS.NodeJS.LTS
-   winget install Git.Git
-   winget install Microsoft.VisualStudio.2022.BuildTools
-   ```
-
-3. **Clone Repository**
-   ```batch
-   :: Open Command Prompt as administrator
-   cd C:\
-   mkdir scanner-map
-   cd scanner-map
-   git clone [repository-url] .
-   ```
-
-4. **Install Dependencies**
-   ```batch
-   :: Install Node.js packages
-   npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io wavesurfer.js leaflet.heat csv-parser openai path http fs crypto
-
-   :: Install Python packages (might need administrative PowerShell)
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-   pip install openai-whisper
-   pip install whisper-timestamped
-   
-   :: Install FFmpeg
-   winget install "FFmpeg (Essentials Build)"
-   ```
-
-   Note: We specifically use node-fetch@2 because newer versions require ES modules.
-
-5. **Create Directory Structure**
-   ```batch
-   mkdir audio
-   mkdir data
-   mkdir config
-   ```
-
-6. **Configure Environment**
-   ```batch
-   :: Create .env file (use Notepad or preferred editor)
-   copy nul .env
-   notepad .env
-   ```
-
-   Add the following to `.env`:
-   ```env
-   DISCORD_TOKEN=your_discord_token
-   CLIENT_ID=your_client_id
-   PORT=3306
-   WEBSERVER_PORT=80
-   PUBLIC_DOMAIN=your_public_ip_or_domain
-   GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-   GEOCODING_CITY=YourCity
-   GEOCODING_STATE=YourState
-   GEOCODING_COUNTRY=YourCountry
-   OPENAI_API_KEY=your_openai_api_key
-   MAPPED_TALK_GROUPS=group1,group2,group3
-   WEBSERVER_PASSWORD=your_admin_password
-   ```
-
-7. **Setup API Keys**
-   ```batch
-   :: Generate API key hash
-   node hashApiKey.js
-   
-   :: Create apikeys.json
-   echo [{"key":"your_hashed_key","disabled":false}] > data\apikeys.json
-   ```
-
-8. **Initialize Database**
-   ```batch
-   :: Initialize admin user
-   node init-admin.js
-   ```
-
-9. **Import Radio Reference Data**
-   - Export your talk groups from Radio Reference as CSV
-   - Save as `talkgroups.csv` in root directory
-   - Export frequencies as `frequencies.csv`
-   ```batch
-   node import_csv.js
-   ```
-
-10. **Start Services**
-    ```batch
-    :: Start main server (in one Command Prompt)
+1.  **Start the main service** (in one PowerShell window)
+    
+    ```
     node bot.js
-
-    :: Start web server (in another Command Prompt)
+    ```
+    
+2.  **Start the web server** (in a second PowerShell window)
+    
+    ```
     node webserver.js
     ```
+    
+3.  **Access the web interface**
+    -   Open your browser: `http://localhost` (or the IP/domain you configured)
+    -   Login with username: `admin` and the password from your .env file
 
-11. **Verify Installation**
-    - Open browser: `http://localhost:80`
-    - Check Discord bot presence
-    - Monitor logs:
-    ```batch
-    type error.log
-    type combined.log
-    ```
+## Configuring SDRTrunk/TrunkRecorder
 
-1. Create `.env` file:
-```env
-DISCORD_TOKEN=your_discord_token
-CLIENT_ID=your_client_id
-PORT=3306
-WEBSERVER_PORT=80
-PUBLIC_DOMAIN=your_public_ip_or_domain
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-GEOCODING_CITY=YourCity
-GEOCODING_STATE=YourState
-GEOCODING_COUNTRY=YourCountry
-OPENAI_API_KEY=your_openai_api_key
-MAPPED_TALK_GROUPS=group1,group2,group3
-WEBSERVER_PASSWORD=your_admin_password
+### RdioScanner Setup
+
+Configure your SDRTrunk or TrunkRecorder to stream calls to your Scanner Map:
+
+#### For SDRTrunk:
+
+1.  Go to SDRTrunk **Settings** > **Streaming**
+2.  Select **RdioScanner streaming**
+3.  Configure the following:
+    -   URL: `http://localhost:3306/api/call-upload` (or your server's address)
+    -   Add your API key to the configuration
+    -   Enable streaming for the talkgroups you want to map
+
+#### For TrunkRecorder:
+
+Edit your config.json file:
+
+json
+
+```json
+"uploadServer": {
+  "type": "rdioscanner",
+  "server": "http://localhost:3306/api/call-upload",
+  "key": "your-api-key"
+}
 ```
 
-2. Generate API key:
-```bash
-# Edit hashApiKey.js first
-node hashApiKey.js
-```
+## System Requirements
 
-3. Create API keys file:
-```bash
-mkdir data
-echo '[{"key":"your_hashed_key","disabled":false}]' > data/apikeys.json
-```
-
-4. Copy geocoding config:
-```bash
-cp config/geocoding-config.example.js config/geocoding-config.js
-# Edit config/geocoding-config.js with your settings
-```
-
-5. Import Radio Reference Data:
-
-   a. Export your talk groups from Radio Reference as CSV and save as `txwarn_talkgroups.csv`
-   b. Export your frequencies from Radio Reference as CSV and save as `frequencies.csv`
-   c. Run the import script:
-   ```bash
-   node import_csv.js
-   ```
-
-6. Initialize the admin user:
-```bash
-node init-admin.js
-```
-
-## SDRTrunk Configuration
-
-1. Set up SDRTrunk with HTTP POST streaming enabled
-2. Configure the streaming URL to point to `http://your_server:3306/api/call-upload`
-3. Set the API key in SDRTrunk's streaming configuration
-
-## Running the Application
-
-### 1. Database Initialization
-```bash
-# Initialize admin user
-node init-admin.js
-
-# Import Radio Reference data
-node import_csv.js
-```
-
-### 2. Start Services
-```bash
-# Start main application server
-node bot.js
-
-# Start web interface server
-node webserver.js
-```
-
-### 3. Access Points
-- Web Interface: `http://your_domain:80`
-- API Endpoint: `http://your_domain:3306/api/call-upload`
-- Discord Bot: Will appear in your Discord server
-
-### 4. Verify Operation
-1. Check the logs:
-   ```bash
-   tail -f error.log
-   tail -f combined.log
-   ```
-
-2. Monitor Discord channels:
-   - Check if bot is online
-   - Verify channel creation
-   - Test alert keywords
-
-3. Verify SDRTrunk connection:
-   - Send test transmission
-   - Check audio processing
-   - Verify transcription
-
-## Project Structure
-
-### Core Files
-```
-├── bot.js              # Main application server
-├── webserver.js        # Web interface server
-├── geocoding.js        # Location processing
-├── transcribe.py       # Audio transcription
-├── import_csv.js       # Radio Reference data import
-├── hashApiKey.js       # API key generation
-└── init-admin.js       # Admin initialization
-
-├── config/
-│   ├── geocoding-config.js    # Geocoding rules
-│   └── geocoding-config.example.js
-│
-├── data/
-│   └── apikeys.json    # API key storage
-│
-├── public/             # Static web files
-│   ├── app.js         # Frontend application
-│   ├── styles.css     # Styling
-│   └── index.html     # Main page
-│
-└── audio/             # Temporary audio storage
-```
-
-### Configuration Files
-```
-├── .env               # Environment variables
-├── botdata.db         # SQLite database
-├── error.log          # Error logging
-└── combined.log       # General logging
-```
-
-## Feature Details
-
-### Audio Processing
-- Receives audio streams from SDRTrunk
-- Transcribes audio using Whisper large-v3-turbo model
-- Supports MP3 format
-
-### Mapping
-- Uses OpenStreetMap with multiple view options
-- Supports marker clustering
-- Real-time heatmap visualization
-- Location correction capabilities
-
-### Search and Filtering
-- Full-text search of transcriptions
-- Time-based filtering
-- Talk group filtering
-
-### User Management
-- Multi-user support
-- Session management
-- Role-based access control
-
-### Location Processing
-- Address extraction from transcriptions
-- Geocoding using Google Maps API
-- Geographic fence configuration
+-   **GPU:** NVIDIA GPU with at least 8GB VRAM recommended
+-   **RAM:** 16GB minimum
+-   **Storage:** SSD with at least 20GB free space
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. Transcription not working:
-   - Verify CUDA installation
-   - Check Python dependencies
-   - Ensure Whisper model is properly installed
+1.  **"Node module not found" errors**
+    -   Make sure you've installed all required Node.js packages
+    -   Try running `npm install` in the project directory
+2.  **Python/Whisper errors**
+    -   Verify CUDA installation with `nvidia-smi`
+    -   Check CUDA toolkit installation with `nvcc --version`
+    -   Ensure Python path is correctly set
+    -   Try reinstalling faster-whisper: `pip install --force-reinstall faster-whisper`
+3.  **Audio transmission not showing up**
+    -   Check your .env configuration, especially ports and API keys
+    -   Verify SDRTrunk/TrunkRecorder is properly configured
+    -   Check firewall settings for the configured ports
+4.  **Ollama connection errors**
+    -   Verify Ollama is running: `ollama ps`
+    -   Make sure the model is downloaded: `ollama pull llama3.1:8b`
+    -   Check OLLAMA_URL in your .env file
+5.  **"Error opening database" message**
+    -   Ensure you have write permissions to the project directory
+    -   Try running the command prompt/PowerShell as administrator
+6.  **Web interface not loading**
+    -   Check if webserver.js is running without errors
+    -   Verify your configured web port isn't in use by another application
+    -   Make sure your firewall allows the configured port
 
-2. Audio streaming issues:
-   - Verify SDRTrunk configuration
-   - Check network connectivity
-   - Validate API key configuration
-
-3. Map not loading:
-   - Verify Google Maps API key
-   - Check browser console for errors
-   - Validate network connectivity
-
-### Error Logs
+### Logs to Check
 
 Log files are located in the root directory:
-- `error.log` - Error messages
-- `combined.log` - All application logs
 
-## Security Considerations
+-   `error.log` - Error messages
+-   `combined.log` - All application logs
 
-- Keep your `.env` file secure and never commit it to version control
-- Regularly update the admin password
-- Monitor active sessions
-- Use HTTPS in production
-- Regularly update dependencies
+## Discord Bot Setup
 
-## Contributing
+1.  Create a Discord application at [Discord Developer Portal](https://discord.com/developers/applications)
+2.  Create a bot and enable:
+    -   Server Members Intent
+    -   Message Content Intent
+    -   Voice States Intent
+3.  Invite the bot to your server with permissions:
+    -   Manage Channels
+    -   Send Messages
+    -   Embed Links
+    -   Attach Files
+    -   Connect and Speak in Voice Channels
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+### Discord Commands
 
-## License
+-   `/alert add <keyword> [talkgroup]` - Add alert keyword
+-   `/alert remove <keyword> [talkgroup]` - Remove alert keyword
+-   `/alert list` - List all alert keywords
+-   `/summary refresh` - Refresh the AI-generated summary
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Need Help?
 
-## Acknowledgments
-
-- SDRTrunk developers
-- OpenStreetMap contributors
-- Whisper by OpenAI
-- Discord.js team
-
-## Support
-
-For support, please open an issue in the GitHub repository or contact the development team.
+-   Check the log files for specific error messages
+-   Open an issue on the GitHub repository
+-   Contact me on discord poisonednumber
