@@ -12,7 +12,7 @@ const {
   GOOGLE_MAPS_API_KEY,
   GEOCODING_STATE,
   GEOCODING_COUNTRY,
-  GEOCODING_TARGET_COUNTY,
+  GEOCODING_TARGET_COUNTIES,
   GEOCODING_CITY,
   TIMEZONE,
   OLLAMA_URL,
@@ -21,13 +21,16 @@ const {
 } = process.env;
 
 // Validate required environment variables
-const requiredVars = ['GOOGLE_MAPS_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTY'];
+const requiredVars = ['GOOGLE_MAPS_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
   console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
   process.exit(1);
 }
+
+// Parse target counties into array
+const TARGET_COUNTIES = GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
 
 // Logger setup
 const logger = winston.createLogger({
@@ -86,13 +89,7 @@ Object.keys(process.env).forEach(key => {
 logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups from environment variables`);
 
 // Keep the TARGET_CITIES list for reference and backward compatibility
-const TARGET_CITIES = TARGET_CITIES_LIST ? TARGET_CITIES_LIST.split(',').map(city => city.trim()) : 
-  ["Ashton-Sandy Spring", "Aspen Hill", "Bethesda", "Brookmont", "Burnt Mills", "Burtonsville", 
-   "Cabin John", "Chevy Chase", "Clarksburg", "Cloverly", "Colesville", "Damascus", "Darnestown", 
-   "Derwood", "Fairland", "Flower Hill", "Forest Glen", "Four Corners", "Friendship Heights Village", 
-   "Germantown", "Glenmont", "Kemp Mill", "Layhill", "Montgomery Village", "North Bethesda", 
-   "North Kensington", "North Potomac", "Olney", "Potomac", "Redland", "Silver Spring", 
-   "South Kensington", "Spencerville", "Ten Mile Creek", "Wheaton", "White Oak", "Calverton", "Hillandale"];
+const TARGET_CITIES = TARGET_CITIES_LIST ? TARGET_CITIES_LIST.split(',').map(city => city.trim()) : [];
 
 // Function to load talk groups from env vars
 function loadTalkGroups(db) {
@@ -121,15 +118,41 @@ function escapeRegExp(string) {
  */
 async function extractAddressWithLLM(transcript, town) {
   try {
+    const countiesString = TARGET_COUNTIES.join(', ');
+    
     const prompt = `
 You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
 Focus on extracting a single full address, block, or intersection from the transcript provided below.
 If an address is incomplete, attempt to complete it based on the given town.
 Only extract addresses for ${town}.
-If no valid address is found, respond with "No address found".
-Be sure to read the full transcript and determine if an address/intersection or place is being talked about before extracting.
-Keep in mind units often start by saying their unit number and city. Sometimes the city is misspelled - don't confuse this for an address.
-Ignore things like "Texas Sam Tom John 4318" - that's just a license plate.
+The address could be in one of these counties: ${countiesString}.
+
+VERY IMPORTANT INSTRUCTIONS:
+1. If no valid address is found in the transcript, respond with exactly "No address found". 
+2. DO NOT make up or hallucinate addresses that aren't clearly mentioned in the transcript.
+3. DO NOT include ANY notes, comments, explanations, or parentheticals in your response.
+4. Respond with ONLY the address in one line, nothing else.
+5. NEVER include phrases like "Town Not Specified" - if you don't know the town, use "${GEOCODING_CITY}" as default.
+
+Be extremely strict - only extract if there are actual street names present in the text.
+Phrases like "Copy following it" or general chatter should NEVER result in address extraction.
+When you hear patterns like "7-9-0-8, Cindy Lane" extract as "7908 Cindy Lane".
+When in doubt, respond with "No address found" rather than guessing.
+
+Valid examples:
+- "123 Main Street"
+- "Main Street and Park Avenue" (intersection)
+- "300 block of Maple Drive"
+- "Fire reported at the Town Center Mall"
+- "Elm Street" (if street name is clearly mentioned as a location)
+
+Invalid examples (respond "No address found"):
+- "Copy that"
+- "Unit 5 responding"
+- "Can you repeat that?"
+- "We're on our way"
+- "Copy following it"
+- "10-4 received"
 
 Format full addresses as: "123 Main St, Town, ${GEOCODING_STATE}".
 Format blocks as: "100 block of Main St, Town, ${GEOCODING_STATE}" into "100 Main St, Town, ${GEOCODING_STATE}".
@@ -138,9 +161,7 @@ Format intersections as: "Main St & Oak Ave, Town, ${GEOCODING_STATE}".
 From ${town}:
 "${transcript}"
 
-Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.
-
-Extracted Address:`;
+Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.`;
 
     // Call the Ollama API
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -161,20 +182,29 @@ Extracted Address:`;
     const extractedAddress = result.response.trim();
     
     logger.info(`LLM Extracted Address: "${extractedAddress}"`);
-    return extractedAddress === "No address found" ? null : extractedAddress;
+    
+    // Check for "No address found" response
+    if (extractedAddress === "No address found" || extractedAddress === "No address found.") {
+      return null;
+    }
+    
+    return extractedAddress;
   } catch (error) {
     logger.error(`Error extracting address with LLM: ${error.message}`);
     return null;
   }
 }
-
 /**
  * Geocodes an address using Google's Geocoding API.
  * @param {string} address - The validated address.
- * @returns {Promise<{ lat: number, lng: number, formatted_address: string } | null>} - Geocoded data or null.
+ * @returns {Promise<{ lat: number, lng: number, formatted_address: string, county: string } | null>} - Geocoded data or null.
  */
 async function geocodeAddress(address) {
-  if (!address) return null;
+  // FIX: Add explicit check for null, undefined, or empty address
+  if (!address || address.trim() === '') {
+    logger.info('No address provided for geocoding.');
+    return null;
+  }
   
   const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
   
@@ -230,23 +260,25 @@ async function geocodeAddress(address) {
     }
     
     // Check for county-level results
-    if (formatted_address === `${GEOCODING_TARGET_COUNTY}, ${GEOCODING_STATE}, USA` || 
+    if (TARGET_COUNTIES.some(county => formatted_address === `${county}, ${GEOCODING_STATE}, USA`) || 
         (resultTypes.includes('administrative_area_level_2') && resultTypes.length <= 3)) {
       logger.info(`Skipping county-level result: "${formatted_address}"`);
       return null;
     }
 
-    // Verify that the result is in the target county
+    // Verify that the result is in one of the target counties
     const countyComponent = result.address_components.find(component => 
       component.types.includes('administrative_area_level_2') && 
-      component.long_name === GEOCODING_TARGET_COUNTY
+      TARGET_COUNTIES.includes(component.long_name)
     );
 
     if (countyComponent) {
-      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng})`);
-      return { lat, lng, formatted_address };
+      const county = countyComponent.long_name;
+      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng}) in ${county}`);
+      return { lat, lng, formatted_address, county };
     } else {
-      logger.warn(`Geocoded address "${formatted_address}" is not within ${GEOCODING_TARGET_COUNTY}.`);
+      const countiesList = TARGET_COUNTIES.join(' or ');
+      logger.warn(`Geocoded address "${formatted_address}" is not within ${countiesList}.`);
       return null;
     }
   } catch (error) {
@@ -262,7 +294,10 @@ async function geocodeAddress(address) {
  * @returns {string} - Transcription with hyperlinked address.
  */
 function hyperlinkAddress(transcript, address) {
-  if (!address) return transcript;
+  // FIX: Add explicit check for null, undefined, or empty address
+  if (!address || address.trim() === '') {
+    return transcript;
+  }
 
   const encodedAddress = encodeURIComponent(`${address}`);
   const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
@@ -280,16 +315,57 @@ function hyperlinkAddress(transcript, address) {
  */
 async function extractAddress(transcript, talkGroupId) {
   // Use loaded talk groups, or fall back to a generic area
-  const town = TALK_GROUPS[talkGroupId] || `${GEOCODING_TARGET_COUNTY}, ${GEOCODING_STATE}`;
+  const town = TALK_GROUPS[talkGroupId] || `${TARGET_COUNTIES.join(' or ')}, ${GEOCODING_STATE}`;
   
   logger.info(`Extracting address for talk group ID: ${talkGroupId} (${town})`);
   
-  const extractedAddress = await extractAddressWithLLM(transcript, town);
-  if (!extractedAddress || extractedAddress === "No address found") {
-    logger.info('No address extracted by LLM.');
+  let extractedAddress = await extractAddressWithLLM(transcript, town);
+  
+  if (!extractedAddress) {
     return null;
   }
-
+  
+  // Remove any explanatory text in parentheses or notes
+  extractedAddress = extractedAddress
+    .replace(/\([^)]*\)/g, '') // Remove text in parentheses
+    .replace(/Note:.*$/i, '')   // Remove any "Note:" text
+    .replace(/Town Not Specified/gi, GEOCODING_CITY) // Replace "Town Not Specified" with default city
+    .trim();
+  
+  // If the address contains more than 3 commas or a newline, it likely includes explanatory text
+  if (extractedAddress.split(',').length > 3 || extractedAddress.includes('\n')) {
+    // Try to extract just the first line or first part of the response
+    const firstLine = extractedAddress.split('\n')[0].trim();
+    const firstPart = extractedAddress.split(',').slice(0, 3).join(',').trim();
+    
+    extractedAddress = firstLine.length < firstPart.length ? firstLine : firstPart;
+    logger.warn(`Fixed malformed address response from LLM: "${extractedAddress}"`);
+  }
+  
+  // Clean up the address format:
+  // 1. Remove commas from numbers (e.g., 12,325 → 12325)
+  extractedAddress = extractedAddress.replace(/(\d),(\d)/g, '$1$2');
+  
+  // 2. Fix other common formatting issues
+  // Standardize abbreviations
+  extractedAddress = extractedAddress
+    .replace(/\bAvenue\b/gi, 'Ave')
+    .replace(/\bRoad\b/gi, 'Rd')
+    .replace(/\bStreet\b/gi, 'St')
+    .replace(/\bDrive\b/gi, 'Dr')
+    .replace(/\bBoulevard\b/gi, 'Blvd')
+    .replace(/\bLane\b/gi, 'Ln')
+    .replace(/\bPlace\b/gi, 'Pl')
+    .replace(/\bParkway\b/gi, 'Pkwy')
+    .replace(/\bHighway\b/gi, 'Hwy');
+  
+  // If the address doesn't contain the state, add it
+  if (!extractedAddress.includes(GEOCODING_STATE)) {
+    extractedAddress += `, ${GEOCODING_STATE}`;
+  }
+  
+  // Log the found address
+  logger.info(`Extracted Address for ID ${talkGroupId}: ${extractedAddress}`);
   return extractedAddress;
 }
 
@@ -297,7 +373,7 @@ async function extractAddress(transcript, talkGroupId) {
  * Processes a transcript to extract and geocode addresses.
  * @param {string} transcript - The transcript text.
  * @param {string} talkGroupId - The talk group ID associated with the transcript.
- * @returns {Promise<Array<{ lat: number, lng: number, formatted_address: string }> | null>} - Array of geocoded data or null.
+ * @returns {Promise<Array<{ lat: number, lng: number, formatted_address: string, county: string }> | null>} - Array of geocoded data or null.
  */
 async function processTranscript(transcript, talkGroupId) {
   // Verify that Ollama is running before proceeding
@@ -313,6 +389,8 @@ async function processTranscript(transcript, talkGroupId) {
   }
   
   const extractedAddresses = await extractAddress(transcript, talkGroupId);
+  
+  // FIX: Add explicit check for null result
   if (!extractedAddresses) {
     logger.info('No valid addresses extracted from transcript.');
     return null;
@@ -322,6 +400,9 @@ async function processTranscript(transcript, talkGroupId) {
   const geocodedResults = [];
 
   for (const address of addresses) {
+    // FIX: Skip empty addresses
+    if (!address || address.trim() === '') continue;
+    
     const geocodeResult = await geocodeAddress(address);
     if (geocodeResult) {
       geocodedResults.push(geocodeResult);

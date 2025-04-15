@@ -2,6 +2,20 @@
 
 require('dotenv').config();
 
+// Get environment variables first, before any usage
+const {
+  BOT_PORT: PORT,  
+  PUBLIC_DOMAIN,
+  DISCORD_TOKEN,
+  MAPPED_TALK_GROUPS: mappedTalkGroupsString, 
+  TIMEZONE,
+  API_KEY_FILE,
+  OLLAMA_URL, 
+  OLLAMA_MODEL,
+  SUMMARY_LOOKBACK_HOURS  
+} = process.env;
+
+// Now initialize derived variables
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -15,16 +29,16 @@ const fetch = require('node-fetch');
 const winston = require('winston');
 const moment = require('moment-timezone');
 const TALK_GROUPS = {};
+const readline = require('readline');
+let summaryChannel;
+const SUMMARY_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
+let lastSummaryUpdate = 0;
+let summaryMessage = null;
 
-// Get MAPPED_TALK_GROUPS as a string from environment variable
-const {
-  BOT_PORT: PORT,  
-  PUBLIC_DOMAIN,
-  DISCORD_TOKEN,
-  MAPPED_TALK_GROUPS: mappedTalkGroupsString, 
-  TIMEZONE,
-  API_KEY_FILE
-} = process.env;
+// Parse lookback hours from environment with fallback to 1 hour
+const parsedLookbackHours = parseInt(SUMMARY_LOOKBACK_HOURS, 10);
+const LOOKBACK_HOURS = isNaN(parsedLookbackHours) ? 1 : parsedLookbackHours;
+const LOOKBACK_PERIOD = LOOKBACK_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
 
 // Parse the string into an array
 const MAPPED_TALK_GROUPS = mappedTalkGroupsString
@@ -51,6 +65,28 @@ const logger = winston.createLogger({
           message.includes('Geocoded Address')) {
         // ANSI green color code
         return `${timestamp} \x1b[32m[${level.toUpperCase()}] ${message}\x1b[0m`;
+      }
+      
+      // Cyan color only for the actual transcription text
+      if (message.includes('Transcription process output')) {
+        try {
+          const jsonStartIndex = message.indexOf('{');
+          if (jsonStartIndex !== -1) {
+            const prefix = message.substring(0, jsonStartIndex);
+            const jsonPart = message.substring(jsonStartIndex);
+            const parsedJson = JSON.parse(jsonPart);
+            
+            if (parsedJson.transcription) {
+              // Apply cyan color only to the transcription value
+              return `${timestamp} [${level.toUpperCase()}] ${prefix}${jsonPart.replace(
+                `"transcription": "${parsedJson.transcription}"`, 
+                `"transcription": "\x1b[36m${parsedJson.transcription}\x1b[0m"`
+              )}`;
+            }
+          }
+        } catch (e) {
+          // If there's an error parsing JSON, fall back to normal formatting
+        }
       }
       
       // White color for other info messages
@@ -146,6 +182,8 @@ const MAX_CONCURRENT_TRANSCRIPTIONS = 3;
 let isBootComplete = false;
 const messageCache = new Map(); // Stores the latest message for each channel
 const MESSAGE_COOLDOWN = 15000; // 15 seconds in milliseconds
+let transcriptionProcess = null;
+let isProcessingTranscription = false;
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -243,14 +281,17 @@ loadApiKeys();
 
 // Helper Functions
 const validateApiKey = async (key) => {
+  //logger.info(`Validating API key: ${key.substring(0, 3)}...`);
   for (let apiKey of apiKeys) {
     if (!apiKey.disabled) {
       const match = await bcrypt.compare(key, apiKey.key);
       if (match) {
+        //logger.info('API key validation successful');
         return apiKey;
       }
     }
   }
+  logger.error('API key validation failed');
   return null;
 };
 
@@ -270,8 +311,23 @@ const generateCustomFilename = (fields, originalFilename) => {
   const talkgroup = fields.talkgroup || 'Unknown';
   const source = fields.source || 'Unknown';
   
-  // Force mp3 extension instead of using the original extension for PCM files
-  const extension = isIgnoredFileType(originalFilename) ? '.mp3' : path.extname(originalFilename || '.mp3');
+  // Get the file extension - either from the original file or use appropriate default
+  // TrunkRecorder sends M4A files, others typically send MP3
+  let extension;
+  if (originalFilename) {
+    extension = path.extname(originalFilename).toLowerCase();
+    if (!extension || extension === '.') {
+      // If we're missing a valid extension
+      extension = fields.audioType === 'audio/mp4' ? '.m4a' : '.mp3';
+    }
+  } else {
+    extension = fields.audioType === 'audio/mp4' ? '.m4a' : '.mp3';
+  }
+  
+  // Force mp3 extension for PCM files
+  if (isIgnoredFileType(originalFilename)) {
+    extension = '.mp3';
+  }
 
   return `${dateStr}_${systemName}_${talkgroupInfo}_TO_${talkgroup}_FROM_${source}${extension}`;
 };
@@ -289,103 +345,255 @@ app.use((req, res, next) => {
 
 const isIgnoredFileType = (filename) => {
   const extension = path.extname(filename).toLowerCase();
-  return extension === '.pcm'; // Add more extensions to ignore if needed
+  return extension === '.pcm'; // Only ignore PCM files, allow MP3 and M4A
 };
 
 // Route: /api/call-upload
 app.post('/api/call-upload', (req, res) => {
   logger.info(`Handling /api/call-upload`);
-
-  let fields = {};
-  let fileInfo = null;
-  let fileBuffer = null;
-
-  const bb = busboy({
-    headers: req.headers,
-    limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB limit
-  });
-
-  bb.on('file', (name, file, info) => {
-    fileInfo = { originalFilename: info.filename };
+  
+  // Create a simple flag to track if we've sent a response
+  let hasResponded = false;
+  
+  // Function to safely send a response (prevents multiple response errors)
+  const sendResponse = (status, message) => {
+    if (!hasResponded) {
+      hasResponded = true;
+      res.status(status).send(message);
+    }
+  };
+  
+  // Create a very simple test request detector
+  if (req.headers['user-agent'] === 'sdrtrunk') {
+    // Set up a parser just for SDRTrunk requests
+    const bb = busboy({ headers: req.headers });
+    let isTestRequest = false;
+    let hasFields = false;
+    let hasFile = false;
+    let fields = {};
+    let fileInfo = null;
+    let fileBuffer = null;
     
-    // Check if the file type should be ignored
-    if (isIgnoredFileType(info.filename)) {
-      logger.info(`Ignoring unsupported file type: ${info.filename}`);
-      // Skip collecting file data for ignored file types
-      file.resume();
-      return;
-    }
+    // Fast detection of test field
+    bb.on('field', (name, val) => {
+      hasFields = true;
+      fields[name] = val;
+      
+      if (name === 'test' && val === '1') {
+        isTestRequest = true;
+        // Immediately respond to test requests
+        logger.info('SDRTrunk test request detected, sending response');
+        sendResponse(200, 'incomplete call data: no talkgroup');
+        bb.destroy(); // Stop parsing
+      }
+    });
     
-    const chunks = [];
-    file.on('data', (chunk) => {
-      chunks.push(chunk);
-    });
-    file.on('end', () => {
-      fileBuffer = Buffer.concat(chunks);
-    });
-  });
-
-  bb.on('field', (name, val) => {
-    fields[name] = val;
-  });
-
-  bb.on('close', async () => {
-    if (fields.test === '1') {
-      return res.status(200).send('incomplete call data: no talkgroup');
-    }
-
-    if (!fields.key) {
-      return res.status(400).send('API key is missing.');
-    }
-
-    const apiKey = await validateApiKey(fields.key);
-    if (!apiKey) {
-      return res.status(401).send('Invalid or disabled API key.');
-    }
-
-    // Check if the file was ignored due to file type
-    if (fileInfo && isIgnoredFileType(fileInfo.originalFilename)) {
-      return res.status(200).send('File type not supported. Skipping processing.');
-    }
-
-    if (fileInfo && fileBuffer) {
-      const customFilename = generateCustomFilename(fields, fileInfo.originalFilename);
-      const saveTo = path.join(UPLOAD_DIR, customFilename);
-      fileInfo.saveTo = saveTo;
-
-      fs.writeFile(saveTo, fileBuffer, (err) => {
-        if (err) {
-          logger.error('Error saving file:', err);
-          return res.status(500).send('Error saving file');
-        }
-
-        logger.info(`Received: ${customFilename}`);
-
-        handleNewAudio({
-          filename: customFilename,
-          path: saveTo,
-          talkGroupID: fields.talkgroup,
-          systemName: fields.systemLabel,
-          talkGroupName: fields.talkgroupLabel,
-          dateTime: fields.dateTime,
-          source: fields.source,
-          frequency: fields.frequency,
-          talkGroupGroup: fields.talkgroupGroup,
-        });
-
-        return res.status(200).send('Call imported successfully.');
+    bb.on('file', (name, file, info) => {
+      hasFile = true;
+      fileInfo = { originalFilename: info.filename };
+      
+      if (isTestRequest) {
+        file.resume(); // Skip processing for test requests
+        return;
+      }
+      
+      if (isIgnoredFileType(info.filename)) {
+        logger.info(`Ignoring unsupported file type: ${info.filename}`);
+        file.resume();
+        return;
+      }
+      
+      const chunks = [];
+      file.on('data', (chunk) => {
+        chunks.push(chunk);
       });
-    } else {
-      return res.status(200).send('incomplete call data: no talkgroup');
-    }
-  });
-
-  req.pipe(bb);
+      file.on('end', () => {
+        fileBuffer = Buffer.concat(chunks);
+      });
+    });
+    
+    bb.on('close', async () => {
+      // If we already responded to a test request, just return
+      if (hasResponded) return;
+      
+      // If it's a test request or has no fields/file, respond with no talkgroup
+      if (isTestRequest || !hasFields || !hasFile) {
+        logger.info('SDRTrunk request without proper data, sending test response');
+        return sendResponse(200, 'incomplete call data: no talkgroup');
+      }
+      
+      // This is a real SDRTrunk upload, process it
+      logger.info('Processing SDRTrunk audio upload');
+      
+      // Extract source from filename if it's in the SDRTrunk format
+      if (fileInfo && fileInfo.originalFilename && fileInfo.originalFilename.includes('FROM_')) {
+        const fromMatch = fileInfo.originalFilename.match(/FROM_(\d+)/);
+        if (fromMatch && fromMatch[1]) {
+          fields.source = fromMatch[1];
+        }
+      }
+      
+      // API key validation
+      if (!fields.key) {
+        return sendResponse(400, 'API key is missing.');
+      }
+      
+      try {
+        const apiKey = await validateApiKey(fields.key);
+        if (!apiKey) {
+          return sendResponse(401, 'Invalid or disabled API key.');
+        }
+        
+        if (fileInfo && fileBuffer) {
+          const customFilename = generateCustomFilename(fields, fileInfo.originalFilename);
+          const saveTo = path.join(UPLOAD_DIR, customFilename);
+          
+          fs.writeFile(saveTo, fileBuffer, (err) => {
+            if (err) {
+              logger.error('Error saving file:', err);
+              return sendResponse(500, 'Error saving file');
+            }
+            
+            logger.info(`Received SDRTrunk audio: ${customFilename}`);
+            
+            handleNewAudio({
+              filename: customFilename,
+              path: saveTo,
+              talkGroupID: fields.talkgroup,
+              systemName: fields.systemLabel,
+              talkGroupName: fields.talkgroupLabel,
+              dateTime: fields.dateTime,
+              source: fields.source,
+              frequency: fields.frequency,
+              talkGroupGroup: fields.talkgroupGroup,
+              isTrunkRecorder: false
+            });
+            
+            return sendResponse(200, 'Call imported successfully.');
+          });
+        } else {
+          return sendResponse(200, 'incomplete call data: no audio file');
+        }
+      } catch (error) {
+        logger.error('Error processing SDRTrunk request:', error);
+        return sendResponse(500, 'Error processing request');
+      }
+    });
+    
+    req.pipe(bb);
+  } else {
+    // Handle TrunkRecorder or other uploads
+    const bb = busboy({
+      headers: req.headers,
+      limits: { fileSize: 2 * 1024 * 1024 * 1024 }
+    });
+    
+    let fields = {};
+    let fileInfo = null;
+    let fileBuffer = null;
+    let isTrunkRecorder = true; // Default to TrunkRecorder for non-SDRTrunk requests
+    
+    bb.on('file', (name, file, info) => {
+      fileInfo = { originalFilename: info.filename };
+      
+      if (isIgnoredFileType(info.filename)) {
+        logger.info(`Ignoring unsupported file type: ${info.filename}`);
+        file.resume();
+        return;
+      }
+      
+      const chunks = [];
+      file.on('data', (chunk) => {
+        chunks.push(chunk);
+      });
+      file.on('end', () => {
+        fileBuffer = Buffer.concat(chunks);
+      });
+    });
+    
+    bb.on('field', (name, val) => {
+      fields[name] = val;
+      
+      // Test for TrunkRecorder's sources JSON field for source ID
+      if (name === 'sources' && val.trim() !== '[]') {
+        try {
+          const sources = JSON.parse(val);
+          if (sources && sources.length > 0 && sources[0].src) {
+            fields.source = sources[0].src.toString();
+            logger.info(`Extracted source ID from TrunkRecorder: ${fields.source}`);
+          }
+        } catch (error) {
+          logger.error('Error parsing TrunkRecorder sources JSON:', error);
+        }
+      }
+    });
+    
+    bb.on('close', async () => {
+      // API key validation
+      if (!fields.key) {
+        return sendResponse(400, 'API key is missing.');
+      }
+      
+      try {
+        const apiKey = await validateApiKey(fields.key);
+        if (!apiKey) {
+          return sendResponse(401, 'Invalid or disabled API key.');
+        }
+        
+        // Handle TrunkRecorder specific fields
+        if (!fields.source || fields.source === '') {
+          fields.source = `TR-${Math.floor(Math.random() * 9000) + 1000}`;
+        }
+        
+        // Map audioName to filename for TrunkRecorder if original isn't available
+        if (fields.audioName && (!fileInfo || !fileInfo.originalFilename)) {
+          fileInfo = fileInfo || {};
+          fileInfo.originalFilename = fields.audioName;
+        }
+        
+        if (fileInfo && fileBuffer) {
+          const customFilename = generateCustomFilename(fields, fileInfo.originalFilename);
+          const saveTo = path.join(UPLOAD_DIR, customFilename);
+          
+          fs.writeFile(saveTo, fileBuffer, (err) => {
+            if (err) {
+              logger.error('Error saving file:', err);
+              return sendResponse(500, 'Error saving file');
+            }
+            
+            logger.info(`Received TrunkRecorder audio: ${customFilename}`);
+            
+            handleNewAudio({
+              filename: customFilename,
+              path: saveTo,
+              talkGroupID: fields.talkgroup,
+              systemName: fields.systemLabel,
+              talkGroupName: fields.talkgroupLabel,
+              dateTime: fields.dateTime,
+              source: fields.source,
+              frequency: fields.frequency,
+              talkGroupGroup: fields.talkgroupGroup,
+              isTrunkRecorder: true
+            });
+            
+            return sendResponse(200, 'Call imported successfully.');
+          });
+        } else {
+          return sendResponse(200, 'incomplete call data: no audio file');
+        }
+      } catch (error) {
+        logger.error('Error processing TrunkRecorder request:', error);
+        return sendResponse(500, 'Error processing request');
+      }
+    });
+    
+    req.pipe(bb);
+  }
 });
 
 app.get('/audio/:id', (req, res) => {
   const audioId = req.params.id;
-  db.get('SELECT audio_data FROM audio_files WHERE transcription_id = ?', [audioId], (err, row) => {
+  db.get('SELECT audio_data, transcription_id FROM audio_files WHERE transcription_id = ?', [audioId], (err, row) => {
     if (err) {
       logger.error('Error fetching audio:', err);
       return res.status(500).send('Error fetching audio');
@@ -393,10 +601,148 @@ app.get('/audio/:id', (req, res) => {
     if (!row) {
       return res.status(404).send('Audio not found');
     }
-    res.set('Content-Type', 'audio/mpeg');
-    res.send(row.audio_data);
+    
+    // Get the file extension from the original file path
+    db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [row.transcription_id], (err, pathRow) => {
+      // Set the appropriate content type based on file extension
+      const filePath = pathRow ? pathRow.audio_file_path : '';
+      const extension = path.extname(filePath).toLowerCase();
+      
+      if (extension === '.m4a') {
+        res.set('Content-Type', 'audio/mp4');
+      } else {
+        res.set('Content-Type', 'audio/mpeg');
+      }
+      
+      res.send(row.audio_data);
+    });
   });
 });
+
+// Function to start the transcription process
+function startTranscriptionProcess() {
+  if (transcriptionProcess) {
+    // Process already running
+    logger.info('Transcription process already running, reusing existing process');
+    return;
+  }
+
+  logger.info('Starting persistent transcription process...');
+  
+  // Spawn the Python process
+  transcriptionProcess = spawn('python', ['transcribe.py']);
+  
+  // Create interface to read line-by-line from stdout
+  const rl = readline.createInterface({
+    input: transcriptionProcess.stdout,
+    crlfDelay: Infinity
+  });
+  
+  // Handle each line of output
+  rl.on('line', (line) => {
+  try {
+    logger.info(`Transcription process output: ${line}`);
+    const response = JSON.parse(line);
+    
+    if (response.ready) {
+      logger.info('Transcription service ready');
+      // Process any waiting transcriptions
+      processNextTranscription();
+    } else if (response.id && response.transcription !== undefined) {
+      logger.info(`Received transcription for ID: ${response.id} (${response.transcription.length} chars)`);
+      
+      // Find the callback for this ID
+      const pendingItem = transcriptionQueue.find(item => item.id === response.id);
+      if (pendingItem && pendingItem.callback) {
+        logger.info(`Found callback for ID: ${response.id}, executing`);
+        // Even if the transcription is empty, we still execute the callback
+        pendingItem.callback(response.transcription);
+        
+        // Remove this item from the queue
+        transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
+        
+        // Process next item - VERY IMPORTANT - this allows the queue to continue
+        isProcessingTranscription = false;
+        processNextTranscription();
+      } else {
+        logger.error(`No callback found for transcription ID: ${response.id}`);
+        // Even if no callback, we should still reset the flag to allow processing to continue
+        isProcessingTranscription = false;
+        processNextTranscription();
+      }
+    } else if (response.error) {
+      logger.error(`Transcription error: ${response.error}`);
+      
+      // Still allow queue to continue
+      isProcessingTranscription = false;
+      processNextTranscription();
+    } else {
+      logger.warn(`Unrecognized response from transcription process: ${line}`);
+      // IMPORTANT: Reset the processing flag so we don't stall
+      isProcessingTranscription = false;
+      processNextTranscription();
+    }
+  } catch (err) {
+    logger.error(`Error parsing transcription process output: ${err.message}, line: ${line}`);
+    
+    // Still allow queue to continue in case of parsing errors
+    isProcessingTranscription = false;
+    processNextTranscription();
+  }
+});
+  
+  // Handle stderr
+  transcriptionProcess.stderr.on('data', (data) => {
+    // Convert Buffer to string - important for full message
+    const errorMsg = data.toString().trim();
+    //logger.error(`Transcription process stderr: ${errorMsg}`);
+  });
+  
+  // Handle process exit
+  transcriptionProcess.on('close', (code) => {
+    //logger.error(`Transcription process exited with code ${code}`);
+    transcriptionProcess = null;
+    
+    // Clean up any pending items in the queue
+    if (transcriptionQueue.length > 0) {
+      logger.warn(`${transcriptionQueue.length} transcription requests were pending when process exited`);
+    }
+    
+    // Restart the process after a delay if it crashes
+    if (code !== 0) {
+      logger.info('Will attempt to restart transcription process in 5 seconds...');
+      setTimeout(() => {
+        startTranscriptionProcess();
+      }, 5000);
+    }
+  });
+  
+  // Handle process errors
+  transcriptionProcess.on('error', (err) => {
+    logger.error(`Failed to start transcription process: ${err.message}`);
+    transcriptionProcess = null;
+  });
+  
+  // Log that we've successfully started the process
+  //logger.info('Transcription process spawned, waiting for ready signal...');
+}
+
+// Function to process the next transcription in the queue
+function processNextTranscription() {
+  if (isProcessingTranscription || transcriptionQueue.length === 0 || !transcriptionProcess) {
+    return;
+  }
+  
+  isProcessingTranscription = true;
+  const nextItem = transcriptionQueue[0];
+  
+  // Send the file path to the python process
+  transcriptionProcess.stdin.write(JSON.stringify({
+    command: 'transcribe',
+    id: nextItem.id,
+    path: nextItem.path
+  }) + '\n');
+}
 
 // Function to handle new audio
 function handleNewAudio(audioData) {
@@ -453,19 +799,34 @@ function handleNewAudio(audioData) {
 
             logger.info(`Saved audio for transcription ID ${transcriptionId}`);
 
-            // Add to transcription queue
-            transcriptionQueue.push({
-              tempPath,
-              transcriptionId,
-              talkGroupID,
-              systemName,
-              talkGroupName,
-              source,
-              talkGroupGroup,
-              filename,
-            });
+            // Use our new transcribeAudio function directly
+            transcribeAudio(tempPath, (transcriptionText) => {
+              if (!transcriptionText) {
+                logger.warn(`No transcription obtained for ID ${transcriptionId}`);
+                return;
+              }
 
-            processTranscriptionQueue();
+              updateTranscription(transcriptionId, transcriptionText, () => {
+                logger.info(`Updated transcription for ID ${transcriptionId}`);
+
+                handleNewTranscription(
+                  transcriptionId,
+                  transcriptionText,
+                  talkGroupID,
+                  systemName,
+                  talkGroupName,
+                  source,
+                  talkGroupGroup,
+                  filename
+                );
+
+                fs.unlink(tempPath, (err) => {
+                  if (err) logger.error('Error deleting temp file:', err);
+                });
+
+                logger.info(`Processed: ${filename}`);
+              });
+            });
           }
         );
       }
@@ -545,7 +906,7 @@ function cleanupOldAudioFiles() {
 setInterval(cleanupOldAudioFiles, 24 * 60 * 60 * 1000);
 
 // Function to process transcription queue
-function processTranscriptionQueue() {
+/* function processTranscriptionQueue() {
   while (
     activeTranscriptions < MAX_CONCURRENT_TRANSCRIPTIONS &&
     transcriptionQueue.length > 0
@@ -586,45 +947,32 @@ function processTranscriptionQueue() {
       });
     });
   }
-}
+} */
 
 // Function to transcribe audio
 function transcribeAudio(filePath, callback) {
-  const pythonProcess = spawn('python', ['transcribe.py', filePath]);
-
-  let transcriptionText = '';
-  let errorOutput = '';
-
-  pythonProcess.stdout.setEncoding('utf8');
-  pythonProcess.stdout.on('data', (data) => {
-    transcriptionText += data;
-  });
-
-  pythonProcess.stderr.setEncoding('utf8');
-  pythonProcess.stderr.on('data', (data) => {
-    errorOutput += data;
-  });
-
-  pythonProcess.on('close', (code) => {
-    if (code !== 0) {
-      logger.error(`Transcription failed for: ${path.basename(filePath)}. Error: ${errorOutput}`);
-      callback(null);
-    } else {
-      try {
-        const response = JSON.parse(transcriptionText.trim());
-        if (response.error) {
-          logger.error(`Transcription error: ${response.error}`);
-          callback(null);
-        } else {
-          const transcription = response.transcription || '';
-          callback(transcription.trim());
-        }
-      } catch (err) {
-        logger.error(`Failed to parse transcription JSON: ${err.message}`);
-        callback(null);
-      }
+  if (!transcriptionProcess) {
+    startTranscriptionProcess();
+  }
+  
+  const requestId = uuidv4();
+  
+  // Create a wrapper callback to match your existing flow
+  const processCallback = (transcriptionText) => {
+    if (callback) {
+      callback(transcriptionText);
     }
+  };
+  
+  // Add to queue
+  transcriptionQueue.push({
+    id: requestId,
+    path: filePath,
+    callback: processCallback  // Use the wrapper callback
   });
+  
+  // Try to process
+  processNextTranscription();
 }
 
 // Function to get category name based on talkgroupGroup or systemName
@@ -954,8 +1302,24 @@ function sendTranscriptionMessage(
             // Log the audioID and URL for debugging
             logger.info(`Transcription ID: ${audioID}, Audio ID: ${actualAudioID}, URL: ${audioUrl}`);
 
-            // Generate the transcription line with ID and properly formatted audio link
-            const transcriptionLine = `**ID-${source}:** ${transcriptionText} [Audio](${audioUrl})`;
+            // Format source display name based on source format
+            let sourceDisplay;
+            
+            if (!source || source === 'Unknown') {
+              sourceDisplay = 'User-Unknown';
+            } else if (source.startsWith('TR-')) {
+              // For our auto-generated TrunkRecorder IDs
+              sourceDisplay = `TrunkRec-${source.substring(3)}`;
+            } else if (/^\d+$/.test(source)) {
+              // For numeric source IDs from TrunkRecorder
+              sourceDisplay = `Unit-${source}`;
+            } else {
+              // Default format
+              sourceDisplay = `ID-${source}`;
+            }
+            
+            // Generate the transcription line with properly formatted source and explicit ID marker
+            const transcriptionLine = `**${sourceDisplay}:** ${transcriptionText} [Audio](${audioUrl})`;
 
             // Check if we have a recent message for this channel
             const cacheKey = channel.id;
@@ -976,13 +1340,22 @@ function sendTranscriptionMessage(
               // Edit the message with the updated embed
               cachedMessage.message.edit({ embeds: [newEmbed] })
                 .then((editedMsg) => {
+                  // Create or update the transcription IDs array
+                  const transcriptionIds = cachedMessage.transcriptionIds || [];
+                  if (!transcriptionIds.includes(audioID)) {
+                    transcriptionIds.push(audioID);
+                  }
+                  
                   // Update the cache with the new data
                   messageCache.set(cacheKey, {
                     message: editedMsg,
                     timestamp: currentTime,
                     transcriptions: updatedTranscription,
-                    url: editedMsg.url  // Store the message URL
+                    url: editedMsg.url,  // Store the message URL
+                    transcriptionIds: transcriptionIds  // Keep a list of transcription IDs in this message
                   });
+                  
+                  logger.info(`Updated message with transcription ID ${audioID}, URL: ${editedMsg.url}`);
                   
                   if (callback) {
                     callback(editedMsg.url);  // Pass back the message URL
@@ -1014,13 +1387,16 @@ function sendTranscriptionMessage(
                 components: [row],
               })
                 .then((msg) => {
-                  // Cache the new message
+                  // Cache the new message with transcription ID
                   messageCache.set(cacheKey, {
                     message: msg,
                     timestamp: currentTime,
                     transcriptions: transcriptionLine,
-                    url: msg.url  // Store the message URL
+                    url: msg.url,  // Store the message URL
+                    transcriptionIds: [audioID]  // Initialize with this transcription ID
                   });
+                  
+                  logger.info(`Created new message with transcription ID ${audioID}, URL: ${msg.url}`);
                   
                   if (callback) {
                     callback(msg.url);  // Pass back the message URL
@@ -1046,6 +1422,636 @@ function cleanupMessageCache() {
       messageCache.delete(key);
     }
   }
+}
+
+// Function to create or get the summary channel
+async function getOrCreateSummaryChannel(guild) {
+  let channel = guild.channels.cache.find(
+    (channel) => channel.name === 'dispatch-summary' && channel.type === ChannelType.GuildText
+  );
+
+  if (!channel) {
+    try {
+      channel = await guild.channels.create({
+        name: 'dispatch-summary',
+        type: ChannelType.GuildText,
+        topic: 'AI-generated summary of recent interesting transmissions',
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            allow: ['ViewChannel', 'ReadMessageHistory'],
+            deny: ['SendMessages'],
+          },
+        ],
+      });
+      logger.info('Created dispatch-summary channel.');
+    } catch (err) {
+      logger.error('Error creating summary channel:', err);
+      return null;
+    }
+  }
+
+  return channel;
+}
+
+// Function to fetch recent transcriptions from the database
+function getRecentTranscriptions() {
+  return new Promise((resolve, reject) => {
+    const oneHourAgo = new Date(Date.now() - LOOKBACK_PERIOD);
+    const oneHourAgoFormatted = oneHourAgo.toISOString();
+    
+    logger.info(`Fetching transcriptions from ${oneHourAgoFormatted} to now`);
+    
+    db.all(
+      `SELECT t.id, t.talk_group_id, t.timestamp, t.transcription, t.address, t.lat, t.lon, 
+              tg.alpha_tag as talk_group_name, tg.description as talk_group_description, tg.county
+       FROM transcriptions t
+       LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+       WHERE datetime(t.timestamp) > datetime(?)
+       AND t.transcription != ''
+       ORDER BY t.timestamp DESC`,
+      [oneHourAgoFormatted],
+      (err, rows) => {
+        if (err) {
+          logger.error('Error fetching recent transcriptions:', err);
+          reject(err);
+        } else {
+          logger.info(`Retrieved ${rows.length} transcriptions spanning from ${oneHourAgoFormatted} to now`);
+          if (rows.length > 0) {
+            logger.info(`Earliest transcription: ${rows[rows.length-1].timestamp}`);
+            logger.info(`Latest transcription: ${rows[0].timestamp}`);
+          }
+          resolve(rows);
+        }
+      }
+    );
+  });
+}
+
+function getMessageUrlForTranscription(transcriptionId, suppressWarnings = false) {
+  return new Promise((resolve) => {
+    // First try to find the URL directly from the database
+    db.get(
+      `SELECT t.talk_group_id, tg.alpha_tag
+       FROM transcriptions t
+       LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+       WHERE t.id = ?`,
+      [transcriptionId],
+      async (err, row) => {
+        if (err || !row) {
+          if (!suppressWarnings) {
+            logger.error(`Error or no results fetching talk group for transcription ${transcriptionId}:`, err);
+          }
+          resolve(null);
+          return;
+        }
+        
+        // Got the talk group, now try to find a message in that talk group's channel
+        const talkGroupID = row.talk_group_id;
+        const talkGroupName = row.alpha_tag || `TG ${talkGroupID}`;
+        const channelName = getChannelName(talkGroupName);
+        
+        // Try to find the channel
+        const guild = client.guilds.cache.first();
+        const channel = guild?.channels.cache.find(
+          ch => ch.name === channelName && ch.type === ChannelType.GuildText
+        );
+        
+        if (!channel) {
+          if (!suppressWarnings) {
+            logger.warn(`Couldn't find channel for talk group ${talkGroupName}`);
+          }
+          resolve(null);
+          return;
+        }
+        
+        // Look through cached messages for this channel
+        for (const [channelId, cachedData] of messageCache.entries()) {
+          if (channelId === channel.id && 
+              cachedData.transcriptions && 
+              cachedData.url) {
+            // Check if this message contains our transcription ID
+            if (cachedData.transcriptionIds && cachedData.transcriptionIds.includes(transcriptionId)) {
+              logger.info(`Found message URL for transcription ${transcriptionId} in channel cache`);
+              resolve(cachedData.url);
+              return;
+            }
+          }
+        }
+        
+        // If not found in cache, try fetching recent messages from the channel
+        try {
+          const messages = await channel.messages.fetch({ limit: 10 });
+          for (const [_, message] of messages) {
+            if (message.author.id === client.user.id && 
+                message.embeds.length > 0) {
+              // Use the transcriptionIds array we store in the cache
+              const cachedData = messageCache.get(channel.id);
+              if (cachedData && cachedData.transcriptionIds && cachedData.transcriptionIds.includes(transcriptionId)) {
+                logger.info(`Found message URL for transcription ${transcriptionId} in channel history`);
+                resolve(message.url);
+                return;
+              }
+            }
+          }
+        } catch (error) {
+          if (!suppressWarnings) {
+            logger.error(`Error fetching messages for transcription ${transcriptionId}:`, error);
+          }
+        }
+        
+        // If we still haven't found it, return null
+        if (!suppressWarnings) {
+          logger.warn(`Couldn't find message URL for transcription ${transcriptionId}`);
+        }
+        resolve(null);
+      }
+    );
+  });
+}
+
+// Function to send data to Ollama and get summary
+async function generateSummary(transcriptions) {
+  try {
+    if (transcriptions.length === 0) {
+      return { 
+        summary: `No notable transmissions in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}.`, 
+        highlights: [] 
+      };
+    }
+    
+    // Prepare the transcriptions in a format useful for the AI
+    const formattedTranscriptions = transcriptions
+      .map(t => {
+        // Format timestamp for human readability
+        const formattedTime = new Date(t.timestamp).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+        
+        // Add minutes ago for easier time reference
+        const minutesAgo = Math.floor((Date.now() - new Date(t.timestamp).getTime()) / (60 * 1000));
+        
+        // Extract more meaningful information
+        return {
+          id: t.id,
+          talk_group_id: t.talk_group_id,
+          talk_group: t.talk_group_name || `TG ${t.talk_group_id}`,
+          county: t.county || 'Unknown',
+          timestamp: t.timestamp,
+          formatted_time: formattedTime,
+          minutes_ago: minutesAgo,
+          transcription: t.transcription,
+          location: t.address ? `${t.address} (${t.lat}, ${t.lon})` : 'Unknown'
+        };
+      });
+    
+    // Group transmissions by time periods to ensure distribution
+    const now = new Date();
+    const periodCount = 4; // Divide the hour into 4 quarters
+    const periodLength = LOOKBACK_HOURS * 60 / periodCount; // in minutes
+    
+    const timeBuckets = Array(periodCount).fill().map(() => []);
+    
+    // Sort transcriptions into time buckets
+    formattedTranscriptions.forEach(t => {
+      const minutesAgo = t.minutes_ago;
+      const bucketIndex = Math.min(periodCount - 1, Math.floor(minutesAgo / periodLength));
+      timeBuckets[bucketIndex].push(t);
+    });
+    
+    // Get time range for the analyzed data
+    const earliest = new Date(now.getTime() - LOOKBACK_PERIOD);
+    const earliestTime = formattedTranscriptions.length > 0 ? 
+      new Date(Math.min(...formattedTranscriptions.map(t => new Date(t.timestamp).getTime()))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
+      earliest.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    
+    const latestTime = formattedTranscriptions.length > 0 ? 
+      new Date(Math.max(...formattedTranscriptions.map(t => new Date(t.timestamp).getTime()))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
+      now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    
+    // Generate time period descriptions for the AI
+    const timePeriodsInfo = timeBuckets.map((bucket, index) => {
+      const startMinutes = index * periodLength;
+      const endMinutes = (index + 1) * periodLength;
+      return {
+        period: `Period ${index+1}: ${startMinutes}-${endMinutes} minutes ago`,
+        count: bucket.length,
+        sample_time: bucket.length > 0 ? bucket[0].formatted_time : 'none'
+      };
+    });
+    
+    logger.info(`Generating summary for ${formattedTranscriptions.length} transmissions from ${earliestTime} to ${latestTime}`);
+    logger.info(`Time periods: ${JSON.stringify(timePeriodsInfo)}`);
+    
+    // Pre-select highlights from each time period to ensure distribution
+    const preSelectedHighlights = [];
+    
+    // Try to select one from each time bucket
+    timeBuckets.forEach((bucket, index) => {
+      if (bucket.length > 0) {
+        // Sort bucket by transcription length as a simple heuristic for "interestingness"
+        bucket.sort((a, b) => b.transcription.length - a.transcription.length);
+        
+        // Take the longest transcription from each bucket (if available)
+        const selection = bucket[0];
+        preSelectedHighlights.push(selection);
+        
+        logger.info(`Selected highlight from Period ${index+1}: ID ${selection.id} at ${selection.formatted_time} (${selection.minutes_ago} min ago)`);
+      }
+    });
+    
+    // Limit to 5 highlights max, prioritizing newer ones if we have too many
+    if (preSelectedHighlights.length > 5) {
+      preSelectedHighlights.sort((a, b) => a.minutes_ago - b.minutes_ago);
+      preSelectedHighlights.splice(5);
+    }
+    
+    // Log our pre-selections
+    logger.info(`Pre-selected ${preSelectedHighlights.length} highlights with timestamps: ${preSelectedHighlights.map(h => h.formatted_time).join(', ')}`);
+    
+    // Format for the AI to only analyze these specific transmissions
+    const highlightSelections = preSelectedHighlights.map(h => ({
+      id: h.id,
+      talk_group: h.talk_group,
+      timestamp: h.timestamp,
+      formatted_time: h.formatted_time,
+      minutes_ago: h.minutes_ago,
+      transcription: h.transcription,
+      location: h.location
+    }));
+    
+    // Create the prompt for the AI - focus only on summarizing, not selecting
+    const prompt = `You are an experienced emergency dispatch analyst for a police and fire department. 
+
+First, write a concise summary (3-6 sentences) of notable activity in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'} (from ${earliestTime} to ${latestTime}).
+
+Then, I've selected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
+1) A clear, detailed description of what's happening
+2) An importance rating (High/Medium/Low)
+
+The transmissions I've selected span across the hour to give a representative view:
+${JSON.stringify(highlightSelections)}
+
+Return ONLY a JSON object with this format:
+{
+  "summary": "Brief overall summary of notable activity covering the full time period",
+  "highlights": [
+    {
+      "id": transcription_id (use the exact id I provided),
+      "talk_group": "Talk group name (use what I provided)",
+      "importance": "High/Medium/Low based on urgency and public safety impact",
+      "description": "Clear, detailed description of what's happening in this transmission and why it matters",
+      "timestamp": "original timestamp (use what I provided)"
+    }
+  ]
+}
+
+Focus on providing insightful analysis of each transmission. The "description" field should help someone understand exactly what's happening without needing to listen to the audio.
+Include no other text besides this JSON.`;
+
+    // Call the Ollama API with a timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          model: OLLAMA_MODEL,
+          prompt,
+          stream: false
+        }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeout);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const resultText = data.response;
+      
+      // Extract the JSON part from the response
+      const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsedJson = JSON.parse(jsonMatch[0]);
+          
+          // Ensure summary reflects the correct time period
+          if (parsedJson.summary && !parsedJson.summary.includes(`${LOOKBACK_HOURS}`)) {
+            parsedJson.summary = parsedJson.summary.replace(
+              /past hour|last hour|recent hour/, 
+              `past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}`
+            );
+          }
+          
+          // Log summary creation success with time details
+          logger.info(`Successfully generated summary with ${parsedJson.highlights?.length || 0} highlights`);
+          
+          // Add a check to verify time distribution
+          if (parsedJson.highlights && parsedJson.highlights.length > 0) {
+            const timestamps = parsedJson.highlights.map(h => new Date(h.timestamp).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            }));
+            logger.info(`Highlight timestamps: ${timestamps.join(', ')}`);
+          }
+          
+          return parsedJson;
+        } catch (e) {
+          logger.error('Error parsing Ollama JSON response:', e);
+          return { 
+            summary: `Error processing summary for the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}.`, 
+            highlights: [] 
+          };
+        }
+      } else {
+        logger.error('No JSON found in Ollama response');
+        return { 
+          summary: `Unable to generate a structured summary for the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}.`, 
+          highlights: [] 
+        };
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Request to Ollama timed out after 30 seconds');
+      }
+      throw error;
+    }
+  } catch (error) {
+    logger.error(`Error generating summary with Ollama: ${error.message}`);
+    
+    // Create a basic fallback summary
+    const timeframe = `${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}`;
+    
+    // If we have transcriptions, create a simple highlight of the most recent ones
+    if (transcriptions.length > 0) {
+      // Select highlights across different time periods for fallback
+      const fallbackHighlights = [];
+      
+      // Sort by timestamp
+      const sortedTranscriptions = [...transcriptions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      
+      // Try to get one from each quarter of the time period
+      const totalItems = sortedTranscriptions.length;
+      if (totalItems > 0) {
+        for (let i = 0; i < Math.min(5, totalItems); i++) {
+          // Get index that's distributed across the array
+          const index = Math.floor(i * totalItems / 5);
+          fallbackHighlights.push({
+            id: sortedTranscriptions[index].id,
+            talk_group: sortedTranscriptions[index].talk_group_name || `TG ${sortedTranscriptions[index].talk_group_id}`,
+            importance: "Medium",
+            description: sortedTranscriptions[index].transcription.length > 100 ? 
+              sortedTranscriptions[index].transcription.substring(0, 97) + '...' : 
+              sortedTranscriptions[index].transcription,
+            timestamp: sortedTranscriptions[index].timestamp
+          });
+        }
+      }
+      
+      return { 
+        summary: `There were ${transcriptions.length} transmissions in the past ${timeframe}. AI summary unavailable: ${error.message}`, 
+        highlights: fallbackHighlights 
+      };
+    }
+    
+    return { 
+      summary: `Failed to generate summary for the past ${timeframe}: ${error.message}`, 
+      highlights: [] 
+    };
+  }
+}
+
+// Add this function to save the summary to a JSON file
+function saveSummaryToJson(summary, highlights) {
+  try {
+    // Make sure the directory exists
+    const publicDir = path.join(__dirname, 'public');
+    if (!fs.existsSync(publicDir)) {
+      fs.mkdirSync(publicDir, { recursive: true });
+    }
+    
+    // Format highlights for the website (omitting audio links)
+    const formattedHighlights = highlights.map(highlight => {
+      // Get the timestamp from the original data
+      let timestampDisplay;
+      try {
+        const originalTimestamp = new Date(highlight.timestamp);
+        timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: '2-digit',
+          hour12: true
+        });
+      } catch (err) {
+        logger.error(`Error formatting timestamp: ${err.message}`);
+        timestampDisplay = new Date().toLocaleTimeString('en-US', {
+          hour: 'numeric', 
+          minute: '2-digit',
+          hour12: true
+        });
+      }
+      
+      return {
+        id: highlight.id,
+        talk_group: highlight.talk_group,
+        importance: highlight.importance,
+        description: highlight.description,
+        time: timestampDisplay
+      };
+    });
+    
+    // Create the JSON object with timestamp
+    const jsonData = {
+      summary: summary,
+      highlights: formattedHighlights,
+      updated: new Date().toISOString(),
+      time_range: `Past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'Hour' : 'Hours'}`
+    };
+    
+    // Write to file
+    const jsonPath = path.join(publicDir, 'summary.json');
+    fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
+    
+    logger.info(`Saved summary to ${jsonPath}`);
+  } catch (error) {
+    logger.error(`Error saving summary to JSON file: ${error.message}`);
+  }
+}
+
+// Function to create or update the summary embed
+async function updateSummaryEmbed() {
+  try {
+    const guild = client.guilds.cache.first();
+    if (!guild) {
+      logger.error('No guild found for the bot.');
+      return;
+    }
+    
+    // Get or create the summary channel
+    if (!summaryChannel) {
+      summaryChannel = await getOrCreateSummaryChannel(guild);
+      if (!summaryChannel) {
+        logger.error('Failed to get or create summary channel.');
+        return;
+      }
+    }
+    
+    // Get recent transcriptions
+    const transcriptions = await getRecentTranscriptions();
+    logger.info(`Found ${transcriptions.length} recent transcriptions for summary spanning past ${LOOKBACK_HOURS} hour(s).`);
+    
+    // Add time span information
+    let timeSpanInfo = "";
+    if (transcriptions.length > 0) {
+      const sortedTranscriptions = [...transcriptions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      const earliest = new Date(sortedTranscriptions[0].timestamp);
+      const latest = new Date(sortedTranscriptions[sortedTranscriptions.length - 1].timestamp);
+      
+      const formatTime = (date) => date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true
+      });
+      
+      timeSpanInfo = `(${formatTime(earliest)} to ${formatTime(latest)})`;
+      logger.info(`Summary time span: ${timeSpanInfo}`);
+    }
+    
+    // Generate summary
+    let summary;
+    try {
+      summary = await generateSummary(transcriptions);
+    } catch (summaryError) {
+      logger.error(`Error in summary generation: ${summaryError.message}`);
+      summary = {
+        summary: `Error generating summary: ${summaryError.message}. Please try again later.`,
+        highlights: []
+      };
+    }
+    
+    // Save the summary to JSON file for the website
+    saveSummaryToJson(summary.summary, summary.highlights);
+    
+    // Create the embed with time span info
+    const embed = new EmbedBuilder()
+      .setTitle(`📻 Dispatch Summary - Past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'Hour' : 'Hours'} ${timeSpanInfo}`)
+      .setDescription(summary.summary)
+      .setTimestamp()
+      .setColor(0x3498db)
+      .setFooter({ text: 'Updates every 5 minutes • Powered by AI' });
+    
+    // Add highlights
+    if (summary.highlights && summary.highlights.length > 0) {
+      for (const highlight of summary.highlights) {
+        // Get audio URL
+        const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${highlight.id}`;
+        
+        // Fix timestamp display - use timestamp directly from database
+        let timestampDisplay;
+        try {
+          // Parse the timestamp from the database
+          const originalTimestamp = new Date(highlight.timestamp);
+          
+          // Format the database timestamp directly
+          timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit',
+            hour12: true
+          });
+        } catch (err) {
+          logger.error(`Error formatting timestamp: ${err.message}`);
+          // Simple fallback
+          timestampDisplay = new Date().toLocaleTimeString();
+          logger.warn('Failed to parse timestamp from database, using current time as fallback');
+        }
+        
+        // Format the field
+        let fieldValue = `**${highlight.description}**\n`;
+        fieldValue += `*${timestampDisplay} • Importance: ${highlight.importance}*\n`;
+        
+        // Only add the audio link - NO message URL for summary
+        fieldValue += `[🔊 Listen](${audioUrl})`;
+        
+        embed.addFields({
+          name: highlight.talk_group,
+          value: fieldValue,
+          inline: false
+        });
+      }
+    } else {
+      embed.addFields({
+        name: 'No Highlights',
+        value: 'No significant transmissions detected in the past hour.',
+        inline: false
+      });
+    }
+    
+    // Add status field if there was an error with Ollama
+    if (summary.summary.includes('Error') || summary.summary.includes('unavailable')) {
+      embed.addFields({
+        name: '⚠️ AI Service Status',
+        value: 'The AI summary service is currently experiencing issues. Please check the server logs for more information.',
+        inline: false
+      });
+    }
+    
+    // Create refresh button
+    const refreshButton = new ButtonBuilder()
+      .setCustomId('refresh_summary')
+      .setLabel('🔄 Refresh Now')
+      .setStyle(ButtonStyle.Secondary);
+    
+    const row = new ActionRowBuilder().addComponents(refreshButton);
+    
+    // Update or send the message
+    if (summaryMessage) {
+      try {
+        await summaryMessage.edit({ embeds: [embed], components: [row] });
+        logger.info('Updated summary embed message.');
+      } catch (err) {
+        logger.error('Error updating summary message, will create new one:', err);
+        summaryMessage = await summaryChannel.send({ embeds: [embed], components: [row] });
+      }
+    } else {
+      // Find the most recent message in the channel
+      const messages = await summaryChannel.messages.fetch({ limit: 1 });
+      if (messages.size > 0 && messages.first().author.id === client.user.id) {
+        summaryMessage = messages.first();
+        await summaryMessage.edit({ embeds: [embed], components: [row] });
+        logger.info('Updated existing summary message found in channel.');
+      } else {
+        // Create a new message
+        summaryMessage = await summaryChannel.send({ embeds: [embed], components: [row] });
+        logger.info('Created new summary embed message.');
+      }
+    }
+    
+    lastSummaryUpdate = Date.now();
+    
+  } catch (error) {
+    logger.error('Error updating summary embed:', error);
+  }
+}
+// Scheduler to update summary
+function startSummaryScheduler() {
+  // Run initial summary
+  updateSummaryEmbed();
+  
+  // Set up the interval
+  setInterval(async () => {
+    const timeSinceLastUpdate = Date.now() - lastSummaryUpdate;
+    if (timeSinceLastUpdate >= SUMMARY_INTERVAL) {
+      logger.info('Running scheduled summary update...');
+      await updateSummaryEmbed();
+    }
+  }, 60000); // Check every minute
 }
 
 // Add this to your existing interval cleanups
@@ -1199,6 +2205,7 @@ function processAudioQueue(talkGroupID) {
 
       const audioBuffer = Buffer.from(row.audio_data);
 
+      // Updated FFmpeg args that handle both MP3 and M4A
       const transcoder = new prism.FFmpeg({
         args: [
           '-i',
@@ -1242,6 +2249,7 @@ function processAudioQueue(talkGroupID) {
     }
   );
 }
+
 
 function deleteAudioFile(transcriptionId) {
   db.run('DELETE FROM audio_files WHERE transcription_id = ?', [transcriptionId], (err) => {
@@ -1499,6 +2507,16 @@ const commands = [
     .addSubcommand((subcommand) =>
       subcommand.setName('list').setDescription('List all alert keywords')
     ),
+  
+  // New summary command
+  new SlashCommandBuilder()
+    .setName('summary')
+    .setDescription('Manage the dispatch summary')
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('refresh')
+        .setDescription('Refresh the summary now')
+    )
 ];
 
 // Discord client setup
@@ -1542,10 +2560,19 @@ client.once('ready', async () => {
       });
       logger.info('Created alerts channel.');
     }
+    
+    // Set up the summary channel
+    summaryChannel = await getOrCreateSummaryChannel(guild);
+    if (summaryChannel) {
+      logger.info('Summary channel is ready.');
+    }
   } else {
     logger.error('Bot is not in any guilds.');
   }
 
+  // Start the summary scheduler
+  startSummaryScheduler();
+  
   isBootComplete = true;
 });
 
@@ -1679,6 +2706,14 @@ client.on('interactionCreate', async (interaction) => {
           });
         });
       }
+    } else if (commandName === 'summary') {
+      const subcommand = interaction.options.getSubcommand();
+      
+      if (subcommand === 'refresh') {
+        await interaction.deferReply({ ephemeral: true });
+        await updateSummaryEmbed();
+        await interaction.editReply('✅ Summary has been refreshed!');
+      }
     }
   } else if (interaction.isButton()) {
     const customId = interaction.customId;
@@ -1686,6 +2721,10 @@ client.on('interactionCreate', async (interaction) => {
     if (customId.startsWith('listen_live_')) {
       const talkGroupID = customId.replace('listen_live_', '');
       handleListenLive(interaction, talkGroupID);
+    } else if (customId === 'refresh_summary') {
+      await interaction.deferReply({ ephemeral: true });
+      await updateSummaryEmbed();
+      await interaction.editReply('✅ Summary has been refreshed!');
     }
   }
 });
@@ -1716,6 +2755,8 @@ const server = app.listen(PORT_NUM, () => {
 
   client.login(DISCORD_TOKEN);
 });
+
+startTranscriptionProcess();
 
 // Handle process termination
 process.on('SIGINT', () => {

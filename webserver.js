@@ -8,6 +8,7 @@ const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
+const fetch = require('node-fetch');
 
 // Environment variables
 const {
@@ -53,6 +54,13 @@ const db = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) =>
     console.error('Error opening database', err.message);
   } else {
     console.log('Connected to the SQLite database.');
+  }
+});
+
+db.run(`ALTER TABLE transcriptions ADD COLUMN summary TEXT`, err => {
+  // Ignore error if column already exists
+  if (!err || err.message.includes('duplicate column name')) {
+    console.log('Summary column exists or was created successfully');
   }
 });
 
@@ -131,6 +139,69 @@ async function validateSession(token) {
     );
   });
 }
+
+async function generateShortSummary(transcript) {
+  try {
+    // Get environment variables for Ollama
+    const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+    const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+
+    const prompt = `
+Categorize this first responder radio transmission into EXACTLY ONE of the following categories:
+- MEDICAL: Medical emergencies, injuries, ambulance calls, seizures, unresponsive persons
+- FIRE: Fire alarms, structure fires, smoke reported
+- TRAFFIC: Vehicle accidents, traffic incidents, parking issues, disabled vehicles
+- THEFT: Robbery, burglary, theft, stolen items
+- SUSPICIOUS: Suspicious persons, vehicles, or activities
+- DOMESTIC: Domestic disputes, family issues
+- ASSAULT: Fights, assaults, attacks, shootings, violent incidents
+- ALARM: Security alarms, panic alarms (not fire alarms)
+- WELFARE: Welfare checks, missing persons, suicide threats
+- ANIMAL: Animal-related calls, animal control
+- OTHER: Any transmission that doesn't fit the above categories
+
+RESPOND WITH ONLY THE CATEGORY NAME (e.g., "MEDICAL") AND NOTHING ELSE.
+
+Transmission: "${transcript}"
+
+Category:`;
+
+    // Call the Ollama API
+    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    let category = result.response.trim().toUpperCase();
+    
+    // Validate the category is one of our defined categories
+    const validCategories = [
+      'MEDICAL', 'FIRE', 'TRAFFIC', 'THEFT', 'SUSPICIOUS', 
+      'DOMESTIC', 'ASSAULT', 'ALARM', 'WELFARE', 'ANIMAL', 'OTHER'
+    ];
+    
+    if (!validCategories.includes(category)) {
+      category = 'OTHER';
+    }
+    
+    console.log(`Categorized call as: "${category}"`);
+    return category;
+  } catch (error) {
+    console.error(`Error categorizing call: ${error.message}`);
+    return 'OTHER';
+  }
+}
+
 
 function cleanupExpiredSessions() {
   if (authEnabled) {
@@ -644,10 +715,11 @@ function initializeLastCallId() {
   });
 }
 
+// Modified checkForNewCalls function in webserver.js
 function checkForNewCalls() {
   db.all(
     `
-    SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
+    SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name, tg.tag AS talk_group_tag
     FROM transcriptions t
     LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
@@ -659,19 +731,54 @@ function checkForNewCalls() {
     ORDER BY t.id ASC
     `,
     [lastCallId],
-    (err, rows) => {
+    async (err, rows) => {
       if (err) {
         console.error('Error checking for new calls:', err.message);
         return;
       }
+      
       if (rows && rows.length > 0) {
-        rows.forEach((row) => {
+        for (const row of rows) {
+          // Update lastCallId
           if (row.id > lastCallId) {
             lastCallId = row.id;
           }
+          
+          // Generate category if it doesn't exist and we have a transcription
+          if (!row.category && row.transcription) {
+            try {
+              const category = await generateShortSummary(row.transcription);
+              if (category) {
+                console.log(`Generated category for call ID ${row.id}: "${category}"`);
+                
+                // Update the database with the category using a Promise to ensure it completes before emitting
+                await new Promise((resolve, reject) => {
+                  db.run(
+                    `UPDATE transcriptions SET category = ? WHERE id = ?`,
+                    [category, row.id],
+                    function(err) {
+                      if (err) {
+                        console.error(`Error updating category for ID ${row.id}:`, err);
+                        reject(err);
+                      } else {
+                        console.log(`Saved category "${category}" for call ID ${row.id}`);
+                        // Update the row object to include the category
+                        row.category = category;
+                        resolve();
+                      }
+                    }
+                  );
+                });
+              }
+            } catch (categoryError) {
+              console.error(`Error generating category for call ID ${row.id}:`, categoryError);
+            }
+          }
+          
+          // Emit the call event
           io.emit('newCall', row);
           console.log('Emitted newCall event for call ID:', row.id);
-        });
+        }
       }
     }
   );
