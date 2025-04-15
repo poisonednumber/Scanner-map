@@ -36,7 +36,7 @@ let lastSummaryUpdate = 0;
 let summaryMessage = null;
 
 // Parse lookback hours from environment with fallback to 1 hour
-const parsedLookbackHours = parseInt(SUMMARY_LOOKBACK_HOURS, 10);
+const parsedLookbackHours = parseFloat(SUMMARY_LOOKBACK_HOURS);
 const LOOKBACK_HOURS = isNaN(parsedLookbackHours) ? 1 : parsedLookbackHours;
 const LOOKBACK_PERIOD = LOOKBACK_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
 
@@ -640,56 +640,69 @@ function startTranscriptionProcess() {
   
   // Handle each line of output
   rl.on('line', (line) => {
-  try {
-    logger.info(`Transcription process output: ${line}`);
-    const response = JSON.parse(line);
-    
-    if (response.ready) {
-      logger.info('Transcription service ready');
-      // Process any waiting transcriptions
-      processNextTranscription();
-    } else if (response.id && response.transcription !== undefined) {
-      logger.info(`Received transcription for ID: ${response.id} (${response.transcription.length} chars)`);
+    try {
+      logger.info(`Transcription process output: ${line}`);
+      const response = JSON.parse(line);
       
-      // Find the callback for this ID
-      const pendingItem = transcriptionQueue.find(item => item.id === response.id);
-      if (pendingItem && pendingItem.callback) {
-        logger.info(`Found callback for ID: ${response.id}, executing`);
-        // Even if the transcription is empty, we still execute the callback
-        pendingItem.callback(response.transcription);
+      if (response.ready) {
+        logger.info('Transcription service ready');
+        // Process any waiting transcriptions
+        processNextTranscription();
+      } else if (response.id && response.transcription !== undefined) {
+        logger.info(`Received transcription for ID: ${response.id} (${response.transcription.length} chars)`);
         
-        // Remove this item from the queue
-        transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
+        // Find the callback for this ID
+        const pendingItem = transcriptionQueue.find(item => item.id === response.id);
+        if (pendingItem && pendingItem.callback) {
+          logger.info(`Found callback for ID: ${response.id}, executing`);
+          // Even if the transcription is empty, we still execute the callback
+          pendingItem.callback(response.transcription);
+          
+          // Remove this item from the queue
+          transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
+          
+          // Process next item - VERY IMPORTANT - this allows the queue to continue
+          isProcessingTranscription = false;
+          processNextTranscription();
+        } else {
+          logger.error(`No callback found for transcription ID: ${response.id}`);
+          // Even if no callback, we should still reset the flag to allow processing to continue
+          isProcessingTranscription = false;
+          processNextTranscription();
+        }
+      } else if (response.error) {
+        logger.error(`Transcription error: ${response.error}`);
         
-        // Process next item - VERY IMPORTANT - this allows the queue to continue
+        // If the error is about a file not existing, find and remove that item from the queue
+        if (response.error.includes("does not exist") && response.id) {
+          const pendingItem = transcriptionQueue.find(item => item.id === response.id);
+          if (pendingItem && pendingItem.callback) {
+            // Execute callback with empty string to continue the flow
+            pendingItem.callback("");
+            
+            // Remove this item from the queue
+            transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
+            logger.info(`Removed non-existent file from queue: ID ${response.id}`);
+          }
+        }
+        
+        // Still allow queue to continue
         isProcessingTranscription = false;
         processNextTranscription();
       } else {
-        logger.error(`No callback found for transcription ID: ${response.id}`);
-        // Even if no callback, we should still reset the flag to allow processing to continue
+        logger.warn(`Unrecognized response from transcription process: ${line}`);
+        // IMPORTANT: Reset the processing flag so we don't stall
         isProcessingTranscription = false;
         processNextTranscription();
       }
-    } else if (response.error) {
-      logger.error(`Transcription error: ${response.error}`);
+    } catch (err) {
+      logger.error(`Error parsing transcription process output: ${err.message}, line: ${line}`);
       
-      // Still allow queue to continue
-      isProcessingTranscription = false;
-      processNextTranscription();
-    } else {
-      logger.warn(`Unrecognized response from transcription process: ${line}`);
-      // IMPORTANT: Reset the processing flag so we don't stall
+      // Still allow queue to continue in case of parsing errors
       isProcessingTranscription = false;
       processNextTranscription();
     }
-  } catch (err) {
-    logger.error(`Error parsing transcription process output: ${err.message}, line: ${line}`);
-    
-    // Still allow queue to continue in case of parsing errors
-    isProcessingTranscription = false;
-    processNextTranscription();
-  }
-});
+  });
   
   // Handle stderr
   transcriptionProcess.stderr.on('data', (data) => {
@@ -700,13 +713,24 @@ function startTranscriptionProcess() {
   
   // Handle process exit
   transcriptionProcess.on('close', (code) => {
-    //logger.error(`Transcription process exited with code ${code}`);
+    logger.error(`Transcription process exited with code ${code}`);
     transcriptionProcess = null;
     
     // Clean up any pending items in the queue
     if (transcriptionQueue.length > 0) {
       logger.warn(`${transcriptionQueue.length} transcription requests were pending when process exited`);
+      
+      // Execute callbacks with empty strings to prevent deadlocks
+      for (const item of transcriptionQueue) {
+        if (item.callback) {
+          item.callback("");
+        }
+      }
+      transcriptionQueue = [];
     }
+    
+    // Reset the processing flag
+    isProcessingTranscription = false;
     
     // Restart the process after a delay if it crashes
     if (code !== 0) {
@@ -721,10 +745,11 @@ function startTranscriptionProcess() {
   transcriptionProcess.on('error', (err) => {
     logger.error(`Failed to start transcription process: ${err.message}`);
     transcriptionProcess = null;
+    isProcessingTranscription = false;
   });
   
   // Log that we've successfully started the process
-  //logger.info('Transcription process spawned, waiting for ready signal...');
+  logger.info('Transcription process spawned, waiting for ready signal...');
 }
 
 // Function to process the next transcription in the queue
@@ -733,8 +758,26 @@ function processNextTranscription() {
     return;
   }
   
-  isProcessingTranscription = true;
+  // Get the next item but don't remove it from the queue yet
   const nextItem = transcriptionQueue[0];
+  
+  // Check if the file exists before sending to Python process
+  if (!fs.existsSync(nextItem.path)) {
+    logger.warn(`File does not exist, skipping transcription: ${nextItem.path}`);
+    
+    // Execute callback with empty string
+    if (nextItem.callback) {
+      nextItem.callback("");
+    }
+    
+    // Remove from queue and process next
+    transcriptionQueue.shift();
+    processNextTranscription();
+    return;
+  }
+  
+  // Mark as processing
+  isProcessingTranscription = true;
   
   // Send the file path to the python process
   transcriptionProcess.stdin.write(JSON.stringify({
@@ -770,6 +813,12 @@ function handleNewAudio(audioData) {
     
     return;
   }
+  
+  // Verify the file exists before proceeding
+  if (!fs.existsSync(tempPath)) {
+    logger.error(`Audio file doesn't exist: ${tempPath}`);
+    return;
+  }
 
   fs.readFile(tempPath, (err, fileBuffer) => {
     if (err) {
@@ -803,6 +852,16 @@ function handleNewAudio(audioData) {
             transcribeAudio(tempPath, (transcriptionText) => {
               if (!transcriptionText) {
                 logger.warn(`No transcription obtained for ID ${transcriptionId}`);
+                // Still update with empty transcription to avoid stalled records
+                updateTranscription(transcriptionId, "", () => {
+                  logger.info(`Updated with empty transcription for ID ${transcriptionId}`);
+                  
+                  // Clean up temp file even if transcription failed
+                  fs.unlink(tempPath, (err) => {
+                    if (err) logger.error('Error deleting temp file:', err);
+                    else logger.info(`Deleted temp file: ${filename}`);
+                  });
+                });
                 return;
               }
 
@@ -822,6 +881,7 @@ function handleNewAudio(audioData) {
 
                 fs.unlink(tempPath, (err) => {
                   if (err) logger.error('Error deleting temp file:', err);
+                  else logger.info(`Deleted temp file: ${filename}`);
                 });
 
                 logger.info(`Processed: ${filename}`);
@@ -951,6 +1011,15 @@ setInterval(cleanupOldAudioFiles, 24 * 60 * 60 * 1000);
 
 // Function to transcribe audio
 function transcribeAudio(filePath, callback) {
+  // First check if the file exists before attempting transcription
+  if (!fs.existsSync(filePath)) {
+    logger.warn(`Audio file does not exist when starting transcription: ${filePath}`);
+    if (callback) {
+      callback(""); // Return empty string for non-existent files
+    }
+    return;
+  }
+  
   if (!transcriptionProcess) {
     startTranscriptionProcess();
   }
@@ -1457,29 +1526,41 @@ async function getOrCreateSummaryChannel(guild) {
 // Function to fetch recent transcriptions from the database
 function getRecentTranscriptions() {
   return new Promise((resolve, reject) => {
-    const oneHourAgo = new Date(Date.now() - LOOKBACK_PERIOD);
-    const oneHourAgoFormatted = oneHourAgo.toISOString();
+    const thirtyMinutesAgo = new Date(Date.now() - LOOKBACK_PERIOD);
+    const thirtyMinutesAgoFormatted = thirtyMinutesAgo.toISOString();
     
-    logger.info(`Fetching transcriptions from ${oneHourAgoFormatted} to now`);
+    logger.info(`Fetching transcriptions from ${thirtyMinutesAgoFormatted} to now (lookback: ${LOOKBACK_HOURS} hours)`);
+    
+    // Add some debug output
+    logger.info(`LOOKBACK_PERIOD in milliseconds: ${LOOKBACK_PERIOD}`);
     
     db.all(
       `SELECT t.id, t.talk_group_id, t.timestamp, t.transcription, t.address, t.lat, t.lon, 
               tg.alpha_tag as talk_group_name, tg.description as talk_group_description, tg.county
        FROM transcriptions t
        LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
-       WHERE datetime(t.timestamp) > datetime(?)
+       WHERE t.timestamp > ?
        AND t.transcription != ''
        ORDER BY t.timestamp DESC`,
-      [oneHourAgoFormatted],
+      [thirtyMinutesAgoFormatted],
       (err, rows) => {
         if (err) {
           logger.error('Error fetching recent transcriptions:', err);
           reject(err);
         } else {
-          logger.info(`Retrieved ${rows.length} transcriptions spanning from ${oneHourAgoFormatted} to now`);
+          logger.info(`Retrieved ${rows.length} transcriptions spanning from ${thirtyMinutesAgoFormatted} to now`);
+          // Add some sample data to debug
           if (rows.length > 0) {
             logger.info(`Earliest transcription: ${rows[rows.length-1].timestamp}`);
             logger.info(`Latest transcription: ${rows[0].timestamp}`);
+            logger.info(`Sample timestamp format in DB: ${rows[0].timestamp}`);
+          } else {
+            // Debug by querying without time filter to see what's in the database
+            db.get('SELECT COUNT(*) AS count, MIN(timestamp) AS oldest, MAX(timestamp) AS newest FROM transcriptions WHERE transcription != ""', [], (err, info) => {
+              if (!err && info) {
+                logger.info(`Database has ${info.count} total transcriptions from ${info.oldest} to ${info.newest}`);
+              }
+            });
           }
           resolve(rows);
         }
