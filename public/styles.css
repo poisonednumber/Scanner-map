@@ -1721,5 +1721,97 @@ input[type="range"]:focus::-ms-fill-upper {
         margin-bottom: 0;
     }
 }
+/* Address search bar styles */
+.address-search-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background-color: rgba(0, 0, 0, 0.9);
+  color: var(--text-color);
+  text-align: center;
+  padding: 15px;
+  font-family: 'Share Tech Mono', monospace;
+  border-bottom: 2px solid var(--primary-color);
+  box-shadow: 0 0 10px var(--primary-color);
+  z-index: 2000;
+  animation: slideDown 0.3s ease-out;
+}
 
+/* Google Autocomplete dropdown theming */
+.pac-container {
+  z-index: 2001 !important;
+  background-color: var(--background-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 4px;
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+  margin-top: 5px;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.pac-item {
+  padding: 10px;
+  color: var(--text-color);
+  border-bottom: 1px solid rgba(0, 255, 0, 0.1);
+  transition: all 0.2s;
+  background-color: var(--background-color);
+}
+
+.pac-item:hover {
+  background-color: rgba(0, 255, 0, 0.1);
+  cursor: pointer;
+}
+
+.pac-item-query {
+  color: var(--primary-color) !important;
+  font-size: 14px;
+}
+
+.pac-matched {
+  color: #00ff00 !important;
+  text-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
+}
+
+/* Scrollbar styling */
+.pac-container::-webkit-scrollbar {
+  width: 8px;
+  background-color: var(--background-color);
+}
+
+.pac-container::-webkit-scrollbar-thumb {
+  background-color: var(--primary-color);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 255, 0, 0.3);
+}
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+  .address-search-banner {
+    padding: 10px;
+  }
+  
+  #address-search-input {
+    font-size: 14px !important;
+    padding: 6px 8px !important;
+  }
+
+  .pac-container {
+    margin: 0 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .pac-item {
+    padding: 8px;
+    font-size: 14px;
+  }
+}
+
+/* Hide Google branding */
+.pac-logo::after {
+  display: none !important;
+}
+
+.pac-icon {
+  display: none !important;
+}
 /* End of CSS file */

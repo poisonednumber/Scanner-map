@@ -1,324 +1,306 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scanner Map</title>
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <!-- MarkerCluster CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
-    <!-- Custom Stylesheet -->
-    <link rel="stylesheet" href="styles.css">
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <!-- Additional Styles -->
-    <style>
-        .center-controls {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scanner Map</title>
 
-        .search-heatmap-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+  <!-- Leaflet Core -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-        #search-input {
-            flex: 1;
-            min-width: 200px;
-            max-width: 300px;
-        }
+  <!-- MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
 
-        .heatmap-controls {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            white-space: nowrap;
-        }
+  <!-- Other Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.3.2/socket.io.js"></script>
+  <script src="https://unpkg.com/wavesurfer.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
-        #heatmap-intensity-container {
-            min-width: 100px;
-            margin-left: 10px;
-        }
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 
-        .sessions-list {
-            max-height: 400px;
-            overflow-y: auto;
-            margin: 15px 0;
-        }
+  <!-- Inline Styles -->
+  <style>
+    .center-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-        .session-item {
-            padding: 12px;
-            margin-bottom: 10px;
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            background-color: var(--background-color);
-        }
+    .search-heatmap-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
-        .session-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-        }
+    #search-input {
+      flex: 1;
+      min-width: 200px;
+      max-width: 300px;
+    }
 
-        .session-details {
-            flex-grow: 1;
-            padding-right: 15px;
-        }
+    .heatmap-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+    }
 
-        .session-actions {
-            display: flex;
-            gap: 10px;
-        }
+    #heatmap-intensity-container {
+      min-width: 100px;
+      margin-left: 10px;
+    }
 
-        .terminate-session-btn {
-            background-color: #330000;
-            color: #ff0000;
-            border: 1px solid #ff0000;
-            padding: 5px 10px;
-            cursor: pointer;
-            border-radius: 4px;
-            font-family: 'Share Tech Mono', monospace;
-            transition: all 0.3s;
-        }
+    .sessions-list {
+      max-height: 400px;
+      overflow-y: auto;
+      margin: 15px 0;
+    }
 
-        .terminate-session-btn:hover {
-            background-color: #ff0000;
-            color: var(--background-color);
-            box-shadow: 0 0 10px #ff0000;
-        }
+    .session-item {
+      padding: 12px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background-color: var(--background-color);
+    }
 
-        .current-session {
-            border: 1px solid var(--primary-color);
-            box-shadow: 0 0 5px var(--primary-color);
-        }
+    .session-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
 
-        .device-info {
-            margin-top: 8px;
-            font-size: 0.9em;
-            opacity: 0.8;
-        }
+    .session-details {
+      flex-grow: 1;
+      padding-right: 15px;
+    }
 
-        .user-selection {
-            margin-bottom: 15px;
-        }
+    .session-actions {
+      display: flex;
+      gap: 10px;
+    }
 
-        .user-selection label {
-            margin-right: 10px;
-            font-weight: bold;
-        }
+    .terminate-session-btn {
+      background-color: #330000;
+      color: #ff0000;
+      border: 1px solid #ff0000;
+      padding: 5px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      transition: all 0.3s;
+    }
 
-        @media screen and (max-width: 768px) {
-            .search-heatmap-container {
-                flex-direction: column;
-                width: 100%;
-                align-items: stretch;
-            }
+    .terminate-session-btn:hover {
+      background-color: #ff0000;
+      color: var(--background-color);
+      box-shadow: 0 0 10px #ff0000;
+    }
 
-            #search-input {
-                width: 100%;
-                max-width: none;
-                margin-bottom: 10px;
-            }
+    .current-session {
+      border: 1px solid var(--primary-color);
+      box-shadow: 0 0 5px var(--primary-color);
+    }
 
-            .heatmap-controls {
-                width: 100%;
-                justify-content: space-between;
-                flex-wrap: wrap;
-            }
+    .device-info {
+      margin-top: 8px;
+      font-size: 0.9em;
+      opacity: 0.8;
+    }
 
-            #heatmap-intensity-container {
-                width: 100%;
-                margin-left: 0;
-                margin-top: 5px;
-            }
+    .user-selection {
+      margin-bottom: 15px;
+    }
 
-            .session-info {
-                flex-direction: column;
-            }
+    .user-selection label {
+      margin-right: 10px;
+      font-weight: bold;
+    }
 
-            .session-actions {
-                margin-top: 10px;
-                width: 100%;
-                justify-content: flex-end;
-            }
+    @media screen and (max-width: 768px) {
+      .search-heatmap-container {
+        flex-direction: column;
+        width: 100%;
+        align-items: stretch;
+      }
 
-            .session-details {
-                padding-right: 0;
-            }
-        }
-    </style>
-    <!-- Additional Scripts -->
-    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.3.2/socket.io.js"></script>
-    <script src="https://unpkg.com/wavesurfer.js"></script>
-    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+      #search-input {
+        width: 100%;
+        max-width: none;
+        margin-bottom: 10px;
+      }
+
+      .heatmap-controls {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+
+      #heatmap-intensity-container {
+        width: 100%;
+        margin-left: 0;
+        margin-top: 5px;
+      }
+
+      .session-info {
+        flex-direction: column;
+      }
+
+      .session-actions {
+        margin-top: 10px;
+        width: 100%;
+        justify-content: flex-end;
+      }
+
+      .session-details {
+        padding-right: 0;
+      }
+    }
+  </style>
 </head>
+
 <body>
-    <div id="map"></div>
-    <div id="category-sidebar">
-        <div class="category-header">Categories</div>
-        <div id="category-list">
-            <!-- Categories will be populated dynamically -->
-        </div>
+  <div id="map"></div>
+
+  <div id="category-sidebar">
+    <div class="category-header">Categories</div>
+    <div id="category-list"></div>
+  </div>
+
+  <div id="control-panel">
+    <div class="left-controls">
+      <select id="time-filter">
+        <option value="1">Last 1 hour</option>
+        <option value="3">Last 3 hours</option>
+        <option value="6">Last 6 hours</option>
+        <option value="12" selected>Last 12 hours</option>
+        <option value="24">Last 24 hours</option>
+        <option value="48">Last 2 days</option>
+        <option value="168">Last 7 days</option>
+        <option value="custom">Custom range</option>
+      </select>
+      <button id="toggle-mode">Day/Night</button>
     </div>
 
-    <div id="control-panel">
-        <div class="left-controls">
-            <select id="time-filter">
-                <option value="1">Last 1 hour</option>
-                <option value="3">Last 3 hours</option>
-                <option value="6">Last 6 hours</option>
-                <option value="12" selected>Last 12 hours</option>
-                <option value="24">Last 24 hours</option>
-                <option value="48">Last 2 days</option>
-                <option value="168">Last 7 days</option>
-                <option value="custom">Custom range</option>
-            </select>
-            <button id="toggle-mode">Day/Night</button>
-        </div>
-
-        <div id="new-call-banner" class="hidden">
-            New call from: <span id="talkgroup-name"></span><span class="ellipsis"></span>
-        </div>
-
-        <div class="center-controls">
-            <div class="search-heatmap-container">
-                <input type="text" id="search-input" placeholder="Search Calls...">
-                <div class="heatmap-controls">
-                    <label for="enable-heatmap">
-                        <input type="checkbox" id="enable-heatmap">
-                        Enable Heatmap
-                    </label>
-                    <div id="heatmap-intensity-container">
-                        <input type="range" id="heatmap-intensity" min="1" max="10" value="5">
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="right-controls">
-            <div class="controls-checkbox-group">
-                <label for="mute-new-calls">
-                    <input type="checkbox" id="mute-new-calls">
-                    Mute New Calls
-                </label>
-                <label for="track-new-calls">
-                    <input type="checkbox" id="track-new-calls" checked>
-                    Track New Calls
-                </label>
-            </div>
-            <div class="user-management-dropdown">
-                <button id="user-menu-btn" class="cyberpunk-button">User Management</button>
-                <div id="user-menu-content" class="dropdown-content">
-                    <a href="#" id="add-user-btn">Add User</a>
-                    <a href="#" id="view-users-btn">View Users</a>
-                    <a href="#" id="manage-sessions-btn">Manage Sessions</a>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div id="summary-bar">
-        <div class="ticker-wrap">
-            <div class="ticker">
-                <!-- Content will be added by JavaScript -->
-            </div>
-        </div>
-    </div>
-    
-
-    <!-- Custom Time Range Modal -->
-    <div id="custom-time-modal" class="modal">
-        <div class="modal-content">
-            <h2>Select Custom Time Range</h2>
-            <div class="form-group">
-                <label for="custom-start-date">Start Date:</label>
-                <input type="date" id="custom-start-date">
-            </div>
-            <div class="form-group">
-                <label for="custom-start-time">Start Time:</label>
-                <input type="time" id="custom-start-time">
-            </div>
-            <div class="form-group">
-                <label for="custom-end-date">End Date:</label>
-                <input type="date" id="custom-end-date">
-            </div>
-            <div class="form-group">
-                <label for="custom-end-time">End Time:</label>
-                <input type="time" id="custom-end-time">
-            </div>
-            <div class="modal-buttons">
-                <button onclick="applyCustomTimeFilter()">Apply</button>
-                <button onclick="document.getElementById('custom-time-modal').style.display='none'">Cancel</button>
-            </div>
-        </div>
+    <div id="new-call-banner" class="hidden">
+      New call from: <span id="talkgroup-name"></span><span class="ellipsis"></span>
     </div>
 
-    <!-- Add User Modal -->
-    <div id="add-user-modal" class="modal">
-        <div class="modal-content">
-            <h2>Add New User</h2>
-            <form id="add-user-form">
-                <div class="form-group">
-                    <label for="new-username">Username:</label>
-                    <input type="text" id="new-username" required>
-                </div>
-                <div class="form-group">
-                    <label for="new-password">Password:</label>
-                    <input type="password" id="new-password" required>
-                </div>
-                <div class="modal-buttons">
-                    <button type="submit" class="confirm-btn">Add User</button>
-                    <button type="button" class="cancel-btn">Cancel</button>
-                </div>
-            </form>
+    <div class="center-controls">
+      <div class="search-heatmap-container">
+        <input type="text" id="search-input" placeholder="Search Calls..." />
+        <div class="heatmap-controls">
+          <label for="enable-heatmap">
+            <input type="checkbox" id="enable-heatmap" />
+            Enable Heatmap
+          </label>
+          <div id="heatmap-intensity-container">
+            <input type="range" id="heatmap-intensity" min="1" max="10" value="5" />
+          </div>
         </div>
+      </div>
     </div>
 
-    <!-- View Users Modal -->
-    <div id="view-users-modal" class="modal">
-        <div class="modal-content">
-            <h2>Manage Users</h2>
-            <div id="users-list" class="users-list">
-                <!-- Users will be populated here dynamically -->
-            </div>
-            <div class="modal-buttons">
-                <button class="cancel-btn">Close</button>
-            </div>
+    <div class="right-controls">
+      <div class="controls-checkbox-group">
+        <label for="mute-new-calls">
+          <input type="checkbox" id="mute-new-calls" />
+          Mute New Calls
+        </label>
+        <label for="track-new-calls">
+          <input type="checkbox" id="track-new-calls" checked />
+          Track New Calls
+        </label>
+      </div>
+      <div class="user-management-dropdown">
+        <button id="user-menu-btn" class="cyberpunk-button">User Management</button>
+        <div id="user-menu-content" class="dropdown-content">
+          <a href="#" id="add-user-btn">Add User</a>
+          <a href="#" id="view-users-btn">View Users</a>
+          <a href="#" id="manage-sessions-btn">Manage Sessions</a>
         </div>
+      </div>
     </div>
+  </div>
 
-    <!-- Session Management Modal -->
-    <div id="sessions-modal" class="modal">
-        <div class="modal-content">
-            <h2>Active Sessions</h2>
-            <!-- User Selection Dropdown -->
-            <div class="user-selection">
-                <label for="user-dropdown">Select User:</label>
-                <select id="user-dropdown" class="styled-select">
-                    <!-- Options will be populated dynamically -->
-                </select>
-            </div>
-            <div id="sessions-list" class="sessions-list">
-                <!-- Sessions will be populated here dynamically -->
-            </div>
-            <div class="modal-buttons">
-                <button class="cancel-btn">Close</button>
-            </div>
+  <div id="summary-bar">
+    <div class="ticker-wrap"><div class="ticker"></div></div>
+  </div>
+
+  <!-- Modals -->
+  <div id="custom-time-modal" class="modal">
+    <div class="modal-content">
+      <h2>Select Custom Time Range</h2>
+      <div class="form-group"><label>Start Date:</label><input type="date" id="custom-start-date" /></div>
+      <div class="form-group"><label>Start Time:</label><input type="time" id="custom-start-time" /></div>
+      <div class="form-group"><label>End Date:</label><input type="date" id="custom-end-date" /></div>
+      <div class="form-group"><label>End Time:</label><input type="time" id="custom-end-time" /></div>
+      <div class="modal-buttons">
+        <button onclick="applyCustomTimeFilter()">Apply</button>
+        <button onclick="document.getElementById('custom-time-modal').style.display='none'">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="add-user-modal" class="modal">
+    <div class="modal-content">
+      <h2>Add New User</h2>
+      <form id="add-user-form">
+        <div class="form-group"><label>Username:</label><input type="text" id="new-username" required /></div>
+        <div class="form-group"><label>Password:</label><input type="password" id="new-password" required /></div>
+        <div class="modal-buttons">
+          <button type="submit" class="confirm-btn">Add User</button>
+          <button type="button" class="cancel-btn">Cancel</button>
         </div>
+      </form>
     </div>
+  </div>
 
-    <!-- Audio Container -->
-    <div id="audio-container" style="display: none;"></div>
+  <div id="view-users-modal" class="modal">
+    <div class="modal-content">
+      <h2>Manage Users</h2>
+      <div id="users-list" class="users-list"></div>
+      <div class="modal-buttons"><button class="cancel-btn">Close</button></div>
+    </div>
+  </div>
 
-    <!-- Load config.js first, then app.js -->
-    <script src="config.js"></script>
-    <script src="app.js"></script>
+  <div id="sessions-modal" class="modal">
+    <div class="modal-content">
+      <h2>Active Sessions</h2>
+      <div class="user-selection">
+        <label for="user-dropdown">Select User:</label>
+        <select id="user-dropdown" class="styled-select"></select>
+      </div>
+      <div id="sessions-list" class="sessions-list"></div>
+      <div class="modal-buttons"><button class="cancel-btn">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Audio player container -->
+  <div id="audio-container" style="display: none;"></div>
+
+  <!-- Load config then app -->
+  <script src="config.js"></script>
+
+  <!-- Dynamically load Google Maps JS API -->
+  <script>
+    const gKey = window?.appConfig?.geocoding?.googleApiKey;
+    if (gKey) {
+      const gScript = document.createElement('script');
+      gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places`;
+      gScript.async = true;
+      gScript.defer = true;
+      document.head.appendChild(gScript);
+    } else {
+      console.error('Google Maps API key is missing from config.js (appConfig.geocoding.googleApiKey)');
+    }
+  </script>
+
+  <script src="app.js"></script>
 </body>
 </html>

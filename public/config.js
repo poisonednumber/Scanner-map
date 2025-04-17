@@ -8,14 +8,14 @@
 const config = {
   // Map settings
   map: {
-    defaultCenter: [32.078925, -94.933018], // Default center coordinates on load
+    defaultCenter: [39.078925, -76.933018], // Default center coordinates on load
     defaultZoom: 13,
     maxZoom: 18, // Changing this may break tracking new calls!
     minZoom: 6,
-    attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V1.5',
+    attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V2.0',
     timeZone: 'America/New_York', // Time zone for display
   },
-  
+   
   // Time settings
   time: {
     defaultTimeRangeHours: 12, // Default time range in hours
@@ -55,16 +55,16 @@ const config = {
   // Permanent locations
   permanentLocations: {
     houses: [
-      { lat: 32.078925, lng: -94.933018 },
+      { lat: 39.078925, lng: -76.933018 },
       // Add more locations as needed maybe fire stations and pd stations?
-      
+      // { lat: 38.9907, lng: -87.402731 },
     ]
   },
   
   // Audio settings
   audio: {
     notificationSound: '/notification-sound.mp3',
-    liveStreamUrl: 'https://website,com', // your rdio scanner site if perferred.
+    liveStreamUrl: 'https://radio.scannermap.net', // your rdio scanner site if perferred.
   },
   
   // Marker classification rules
@@ -116,11 +116,24 @@ const config = {
     satelliteLabelsLayer: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png'
   },
   
-  // Animation settings (Changing this mmy break tracking new calls!)
+  // Animation settings (Changing this may break tracking new calls!)
   animation: {
     zoomOutLevel: 13,
     targetZoom: 17,
     duration: 1
+  },
+  
+  // Geocoding settings
+  geocoding: {
+    googleApiKey: 'AIzaSyADFvmRvbAUngugxLcjTcjxE66yCZ-h79w',
+    defaultArea: {
+      lat: 39.078925, 
+      lng: -76.933018
+    },
+    // Maximum results to show in dropdown
+    maxResults: 5,
+    // Minimum characters required to trigger search
+    minQueryLength: 3
   }
 };
 

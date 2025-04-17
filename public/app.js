@@ -958,11 +958,14 @@ function showCorrectionModal(callId, marker) {
     <div class="modal-content bg-gray-800 text-white p-4 rounded-lg shadow-lg">
       <h2 class="text-xl mb-4">Marker Correction Options</h2>
       <div class="flex flex-col space-y-4">
-        <button id="delete-marker" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">
-          Delete Marker
+        <button id="address-marker" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+          Enter Address
         </button>
         <button id="relocate-marker" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-          Correct Location
+          Manual Correction
+        </button>
+        <button id="delete-marker" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">
+          Delete Marker
         </button>
         <button id="cancel-correction" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded">
           Cancel
@@ -973,16 +976,21 @@ function showCorrectionModal(callId, marker) {
 
   document.body.appendChild(modal);
 
-  // Handle delete
-  document.getElementById('delete-marker').addEventListener('click', () => {
-    if (confirm('Are you sure you want to delete this marker? This action cannot be undone.')) {
-      deleteMarker(callId, marker, modal);
-    }
+  // Handle address search
+  document.getElementById('address-marker').addEventListener('click', () => {
+    startAddressSearch(callId, marker, modal);
   });
 
   // Handle relocate
   document.getElementById('relocate-marker').addEventListener('click', () => {
     startMarkerRelocation(callId, marker, modal);
+  });
+
+  // Handle delete
+  document.getElementById('delete-marker').addEventListener('click', () => {
+    if (confirm('Are you sure you want to delete this marker? This action cannot be undone.')) {
+      deleteMarker(callId, marker, modal);
+    }
   });
 
   // Handle cancel
@@ -991,47 +999,332 @@ function showCorrectionModal(callId, marker) {
   });
 }
 
+function startAddressSearch(callId, originalMarker, modal) {
+  modal.remove();
+
+  if (!markers[callId] || !allMarkers[callId]) {
+    showNotification('Marker data not found', 'error');
+    return;
+  }
+
+  const callData = allMarkers[callId];
+  const transcription = callData.transcription || 'No transcription available';
+  const category = callData.category || 'OTHER';
+  const originalLocation = {
+    lat: originalMarker.getLatLng().lat,
+    lng: originalMarker.getLatLng().lng
+  };
+
+  markerGroups.removeLayer(originalMarker);
+
+  const previewIcon = L.divIcon({
+    className: 'preview-marker',
+    html: `<div class="marker-pulse" style="
+      width: 20px;
+      height: 20px;
+      background: rgba(0, 255, 0, 0.6);
+      border: 2px solid #00ff00;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    "></div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+
+  const previewMarker = L.marker(originalMarker.getLatLng(), {
+    icon: previewIcon,
+    draggable: false,
+    opacity: 1
+  }).addTo(map);
+
+  const banner = document.createElement('div');
+  banner.className = 'address-search-banner';
+  banner.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0;
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #00ff00; padding: 15px; text-align: center; z-index: 2000;
+    font-family: 'Share Tech Mono', monospace;
+    border-bottom: 2px solid #00ff00;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+  `;
+
+  banner.innerHTML = `
+    <div style="margin-bottom: 10px;"><strong>🔍 Search Address</strong></div>
+    <div style="margin-bottom: 15px; padding: 10px; background-color: rgba(0, 51, 0, 0.7); border: 1px solid rgba(0, 255, 0, 0.3); border-radius: 4px; text-align: left; max-height: 60px; overflow-y: auto;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="color: #00ccff; font-weight: bold;">${category}</span>
+        <span style="flex: 1; color: #00ff00; overflow: hidden; text-overflow: ellipsis;">${transcription}</span>
+      </div>
+    </div>
+    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+      <input id="address-search-input" type="text" style="
+        width: 100%; max-width: 500px;
+        padding: 8px 10px; background-color: #000; color: #00ff00;
+        border: 1px solid #00ff00; border-radius: 4px;
+        font-family: 'Share Tech Mono', monospace; font-size: 14px;
+      " placeholder="Enter address...">
+    </div>
+    <div style="display: flex; justify-content: center; gap: 10px;">
+      <button id="confirm-address" style="
+        background-color: #003300; color: #00ff00;
+        border: 1px solid #00ff00; padding: 8px 16px;
+        cursor: pointer; border-radius: 4px;
+        font-family: 'Share Tech Mono', monospace;
+        opacity: 0.5; pointer-events: none;
+      ">Confirm New Location</button>
+      <button id="cancel-address-search" style="
+        background-color: #330000; color: #ff0000;
+        border: 1px solid #ff0000; padding: 8px 16px;
+        cursor: pointer; border-radius: 4px;
+        font-family: 'Share Tech Mono', monospace;
+      ">Cancel</button>
+    </div>
+  `;
+
+  document.body.appendChild(banner);
+
+  const input = document.getElementById('address-search-input');
+  const confirmBtn = document.getElementById('confirm-address');
+  let newLocation = previewMarker.getLatLng();
+  let newAddress = '';
+
+  setTimeout(() => input.focus(), 100);
+
+  const autocomplete = new google.maps.places.Autocomplete(input, {
+    componentRestrictions: { country: "us" },
+    fields: ['geometry', 'formatted_address'],
+    types: ['geocode']
+  });
+
+  autocomplete.addListener('place_changed', () => {
+    const place = autocomplete.getPlace();
+    if (!place.geometry) {
+      showNotification('No location found', 'error');
+      return;
+    }
+
+    newAddress = place.formatted_address;
+    newLocation = L.latLng(
+      place.geometry.location.lat(),
+      place.geometry.location.lng()
+    );
+
+    previewMarker.setLatLng(newLocation);
+    map.setView(newLocation, 17);
+    confirmBtn.style.opacity = '1';
+    confirmBtn.style.pointerEvents = 'auto';
+  });
+
+  function getOriginalAddress(lat, lng) {
+    return fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${appConfig.geocoding.googleApiKey}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.results && data.results.length > 0) {
+          return data.results[0].formatted_address;
+        } else {
+          return `Unknown (${lat}, ${lng})`;
+        }
+      })
+      .catch(err => {
+        console.error('Reverse geocode error:', err);
+        return `Unknown (${lat}, ${lng})`;
+      });
+  }
+
+  function logCorrection(originalAddress, newAddress) {
+    const logData = {
+      timestamp: new Date().toISOString(),
+      callId,
+      category,
+      transcription,
+      originalLocation,
+      originalAddress,
+      newLocation: {
+        lat: newLocation.lat,
+        lng: newLocation.lng
+      },
+      newAddress,
+      action: 'location_correction'
+    };
+
+    fetch('/api/log/correction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(logData)
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          console.log('Correction logged');
+        } else {
+          console.error('Logging failed:', data.error);
+        }
+      })
+      .catch(err => {
+        console.error('Log error:', err);
+      });
+  }
+
+  confirmBtn.addEventListener('click', () => {
+    if (confirmBtn.style.pointerEvents === 'none') return;
+
+    confirmBtn.textContent = 'Updating...';
+    confirmBtn.disabled = true;
+
+    getOriginalAddress(originalLocation.lat, originalLocation.lng)
+      .then(originalAddress => {
+        return fetch(`/api/markers/${callId}/location`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: newLocation.lat,
+            lon: newLocation.lng
+          })
+        })
+        .then(res => res.json())
+        .then(() => {
+          originalMarker.setLatLng(newLocation);
+          markerGroups.addLayer(originalMarker);
+          if (markers[callId]?.pulseMarker) {
+            markers[callId].pulseMarker.setLatLng(newLocation);
+          }
+          logCorrection(originalAddress, newAddress || 'Unknown');
+          map.removeLayer(previewMarker);
+          banner.remove();
+          showNotification('Marker location updated successfully', 'success');
+          if (document.getElementById('enable-heatmap').checked) {
+            updateHeatmap();
+          }
+        });
+      })
+      .catch(err => {
+        console.error('Update error:', err);
+        showNotification('Error updating marker location', 'error');
+        markerGroups.addLayer(originalMarker);
+      })
+      .finally(() => {
+        map.removeLayer(previewMarker);
+        banner.remove();
+      });
+  });
+
+  document.getElementById('cancel-address-search').addEventListener('click', () => {
+    map.removeLayer(previewMarker);
+    banner.remove();
+    markerGroups.addLayer(originalMarker);
+  });
+}
+// Helper function for reverse geocoding
+function getOriginalAddress(lat, lng) {
+  return fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${appConfig.geocoding.googleApiKey}`)
+    .then(res => res.json())
+    .then(data => {
+      if (data.results && data.results.length > 0) {
+        return data.results[0].formatted_address;
+      } else {
+        return `Unknown (${lat}, ${lng})`;
+      }
+    })
+    .catch(err => {
+      console.error('Reverse geocode error:', err);
+      return `Unknown (${lat}, ${lng})`;
+    });
+}
+
 function deleteMarker(callId, marker, modal) {
-  fetch(`/api/markers/${callId}`, {
-    method: 'DELETE'
+  const markerData = allMarkers[callId];
+  const originalLocation = {
+    lat: marker.getLatLng().lat,
+    lng: marker.getLatLng().lng
+  };
+
+  // Helper to handle actual deletion process
+  const performDeletion = () => {
+    fetch(`/api/markers/${callId}`, {
+      method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+      // Remove pulsing effect if exists
+      if (markers[callId] && markers[callId].pulseMarker) {
+        map.removeLayer(markers[callId].pulseMarker);
+      }
+
+      // Remove from newestCallIds array if present
+      const indexInNewest = newestCallIds.indexOf(callId);
+      if (indexInNewest > -1) {
+        newestCallIds.splice(indexInNewest, 1);
+      }
+
+      // Remove marker and cleanup
+      markerGroups.removeLayer(marker);
+      delete markers[callId];
+      delete allMarkers[callId];
+      modal.remove();
+
+      // Show success notification
+      showNotification('Marker deleted successfully', 'success');
+
+      // Update heatmap if active
+      if (document.getElementById('enable-heatmap').checked) {
+        updateHeatmap();
+      }
+
+      // If a marker in the newest list was deleted, update pulsing markers
+      if (indexInNewest > -1) {
+        loadNewNewestMarker();
+      }
+    })
+    .catch(error => {
+      console.error('Error deleting marker:', error);
+      showNotification('Error deleting marker', 'error');
+    });
+  };
+
+  // Try to log the deletion first
+  getOriginalAddress(originalLocation.lat, originalLocation.lng)
+    .then(address => {
+      logDeletion(callId, markerData, originalLocation, address);
+      performDeletion();
+    })
+    .catch(error => {
+      console.error('Error getting address for deletion log:', error);
+      performDeletion(); // Continue deletion even if address fails
+    });
+}
+
+function logDeletion(callId, markerData, location, address) {
+  const timestamp = new Date().toISOString();
+  const logData = {
+    timestamp: timestamp,
+    callId: callId,
+    category: markerData?.category || 'UNKNOWN',
+    transcription: markerData?.transcription || 'No transcription available',
+    location: location,
+    address: address,
+    action: 'marker_deletion'
+  };
+
+  fetch('/api/log/correction', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(logData)
   })
   .then(response => response.json())
   .then(data => {
-    // First, check if this marker has a pulsing effect and remove it
-    if (markers[callId] && markers[callId].pulseMarker) {
-      map.removeLayer(markers[callId].pulseMarker);
-    }
-    
-    // Remove from newestCallIds array if present
-    const indexInNewest = newestCallIds.indexOf(callId);
-    if (indexInNewest > -1) {
-      newestCallIds.splice(indexInNewest, 1);
-    }
-    
-    // Then remove the main marker
-    markerGroups.removeLayer(marker);
-    delete markers[callId];
-    delete allMarkers[callId];
-    modal.remove();
-    
-    // Show success notification
-    showNotification('Marker deleted successfully', 'success');
-    
-    // Update heatmap if active
-    if (document.getElementById('enable-heatmap').checked) {
-      updateHeatmap();
-    }
-    
-    // If a marker in the newest list was deleted, update pulsing markers
-    if (indexInNewest > -1) {
-      loadNewNewestMarker();
+    if (data.success) {
+      console.log('Deletion logged successfully to server');
+    } else {
+      console.error('Error logging deletion:', data.error);
     }
   })
   .catch(error => {
-    console.error('Error deleting marker:', error);
-    showNotification('Error deleting marker', 'error');
+    console.error('Error sending deletion log to server:', error);
   });
 }
+
 
 // Add this helper function to load a new marker to the newest list if needed
 function loadNewNewestMarker() {
