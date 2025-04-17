@@ -125,7 +125,7 @@ const config = {
   
   // Geocoding settings
   geocoding: {
-    googleApiKey: 'AIzaSyADFvmRvbAUngugxLcjTcjxE66yCZ-h79w',
+    googleApiKey: 'googleApiKey',
     defaultArea: {
       lat: 39.078925, 
       lng: -76.933018
