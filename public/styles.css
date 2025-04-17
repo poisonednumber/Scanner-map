@@ -24,9 +24,9 @@ body, html {
 
 #control-panel {
     position: absolute;
-    top: 10px;
-    left: 10px;
-    right: 10px;
+    top: 0px;
+    left: 0px;
+    right: 0px;
     z-index: 1000;
     background: rgba(0, 0, 0, 0.7);
     padding: 10px;
@@ -1426,7 +1426,7 @@ input[type="range"]:focus::-ms-fill-upper {
   margin-left: 5px;
   display: inline-block;
 }
-/* Add this to styles.css to move the zoom controls to the right side */
+
 .leaflet-control-zoom {
   position: absolute;
   right: 10px;
@@ -1442,7 +1442,7 @@ input[type="range"]:focus::-ms-fill-upper {
 /* Summary Bar Styles */
 #summary-bar {
   position: absolute;
-  top: 65px; /* Position it just below the control panel */
+  top: 74px; /* Position it just below the control panel */
   left: 222px;
   right: 222px;
   height: 40px;
@@ -1533,7 +1533,7 @@ input[type="range"]:focus::-ms-fill-upper {
 
 /* For the call banner position */
 #new-call-banner {
-    top: 120px !important;
+    top: 130px !important;
 }
 /* Hide map scale on mobile */
 @media screen and (max-width: 768px) {
@@ -1585,4 +1585,141 @@ input[type="range"]:focus::-ms-fill-upper {
         padding: 2px 5px !important;
         border-radius: 3px !important;
 }
+/* Pulsing icon CSS */
+.leaflet-pulsing-icon {
+    border-radius: 1%;
+    box-shadow: 0px 0px 0px 0 rgba(0,0,0,.75);
+    background-color: transparent !important; /* Make the center transparent */
+}
+
+.leaflet-pulsing-icon:after {
+    content: "";
+    border-radius: 100%;
+    height: 300%;
+    width: 300%;
+    position: absolute;
+    margin: -100% 0 0 -100%;
+    -webkit-animation: pulsate 1s ease-out;
+    animation: pulsate 1s ease-out;
+    -webkit-animation-iteration-count: infinite;
+    animation-iteration-count: infinite;
+    -webkit-animation-delay: 1.1s;
+    animation-delay: 1.1s;
+}
+
+@-webkit-keyframes pulsate {
+    0% {
+        -webkit-transform: scale(0,0);
+        transform: scale(0,0);
+        opacity: 1;
+        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
+        filter: alpha(opacity=0);
+    }
+    50% {
+        opacity: 1;
+        -ms-filter: none;
+        -webkit-filter: none;
+        filter: none;
+    }
+    100% {
+        -webkit-transform: scale(1.9,1.9);
+        transform: scale(1.9,1.9);
+        opacity: 0;
+        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
+        filter: alpha(opacity=0);
+    }
+}
+
+@keyframes pulsate {
+    0% {
+        -webkit-transform: scale(0,0);
+        transform: scale(0,0);
+        opacity: 1;
+        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
+        filter: alpha(opacity=0);
+    }
+    50% {
+        opacity: 1;
+        -ms-filter: none;
+        -webkit-filter: none;
+        filter: none;
+    }
+    100% {
+        -webkit-transform: scale(1.9,1.9);
+        transform: scale(1.9,1.9);
+        opacity: 0;
+        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
+        filter: alpha(opacity=0);
+    }
+}
+/* Checkbox group styles */
+.controls-checkbox-group {
+    display: flex;
+    flex-direction: column;
+    margin-right: 10px;
+}
+
+.controls-checkbox-group label {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+    cursor: pointer;
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+}
+
+.controls-checkbox-group label:hover {
+    text-shadow: 0 0 5px var(--primary-color);
+}
+
+.controls-checkbox-group input[type="checkbox"] {
+    margin-right: 5px;
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    vertical-align: middle;
+}
+
+.controls-checkbox-group input[type="checkbox"]:checked {
+    background-color: var(--hover-color);
+    border-color: var(--primary-color);
+}
+
+.controls-checkbox-group input[type="checkbox"]:checked::after {
+    content: '✓';
+    position: absolute;
+    color: var(--primary-color);
+    font-size: 12px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.controls-checkbox-group input[type="checkbox"]:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 5px var(--primary-color);
+}
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+    .controls-checkbox-group {
+        flex-direction: row;
+        justify-content: space-between;
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .controls-checkbox-group label {
+        font-size: 12px;
+        margin-bottom: 0;
+    }
+}
+
 /* End of CSS file */

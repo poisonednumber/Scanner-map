@@ -8,7 +8,6 @@ let timeRangeHours; // Time range from config
 let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
 let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
 let socket; // Socket.IO
-let isNewCallAudioMuted = false;
 let currentSearchTerm = ''; // Current search term
 const wavesurfers = {}; // Store WaveSurfer instances
 let audioContext;
@@ -19,6 +18,11 @@ let liveAudioStream = null;
 let isLiveStreamPlaying = false;
 let audioContainer = null;
 let currentSessionToken = null;
+let selectedCategory = null;
+let timestampUpdateInterval = null;
+let isNewCallAudioMuted = false;
+let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
+
 let categoryCounts = {
   'MEDICAL': 0,
   'FIRE': 0,
@@ -32,9 +36,58 @@ let categoryCounts = {
   'ANIMAL': 0,
   'OTHER': 0
 };
-let selectedCategory = null;
-let timestampUpdateInterval = null;
+let newestCallIds = []; // Store IDs of newest calls
+const MAX_PULSING_MARKERS = 3; // Maximum number of pulsing markers
 
+// Category color mapping - carefully selected colors that match the categories
+const CATEGORY_COLORS = {
+    'MEDICAL': '#ff0000',    // Bright red for medical emergencies
+    'FIRE': '#ff6600',       // Orange-red for fire calls
+    'TRAFFIC': '#ffcc00',    // Amber for traffic incidents
+    'THEFT': '#cc33ff',      // Purple for theft
+    'SUSPICIOUS': '#9933ff', // Violet for suspicious activity
+    'DOMESTIC': '#ff0066',   // Pink for domestic issues
+    'ASSAULT': '#cc0000',    // Dark red for assault
+    'ALARM': '#0066ff',      // Blue for alarms
+    'WELFARE': '#00cc99',    // Teal for welfare checks
+    'ANIMAL': '#66cc33',     // Green for animal calls
+    'OTHER': '#dad600'       // yellow for other/unknown
+};
+
+// Pulsing Icon Implementation
+L.Icon.Pulse = L.DivIcon.extend({
+    options: {
+        className: '',
+        iconSize: [12, 12],
+        color: 'red'
+    },
+    initialize: function(options) {
+        L.setOptions(this, options);
+        
+        // Generate a unique class name for this icon instance
+        var uniqueClassName = 'lpi-' + (new Date()).getTime() + '-' + Math.round(Math.random() * 100000);
+        this.options.className = this.options.className + ' leaflet-pulsing-icon ' + uniqueClassName;
+        
+        // Create a style element with custom CSS for this specific icon
+        var style = document.createElement('style');
+        // Only apply color to the pulse effect, not the center dot
+        var css = '.' + uniqueClassName + ':after{box-shadow: 0 0 6px 2px ' + this.options.color + ';}';
+        
+        if (style.styleSheet) {
+            style.styleSheet.cssText = css;
+        } else {
+            style.appendChild(document.createTextNode(css));
+        }
+        document.getElementsByTagName('head')[0].appendChild(style);
+        
+        L.DivIcon.prototype.initialize.call(this, options);
+    }
+});
+
+// Helper function to create a new pulsing icon
+L.icon.pulse = function(options) {
+    return new L.Icon.Pulse(options);
+};
 
 // Animation Queue Variables
 const animationQueue = [];
@@ -54,6 +107,83 @@ function createIconsFromConfig() {
 
 // Store icons globally
 const customIcons = {};
+
+// Function to add pulsing effect to an existing marker
+function addPulsingEffectToMarker(callId) {
+    // Skip if marker doesn't exist or already has a pulse effect
+    if (!markers[callId] || !allMarkers[callId] || markers[callId].pulseMarker) {
+        return;
+    }
+    
+    try {
+        // Get the marker's category and determine color
+        const category = allMarkers[callId].category || 'OTHER';
+        const color = CATEGORY_COLORS[category] || CATEGORY_COLORS['OTHER'];
+        
+        // Get marker position
+        const latlng = markers[callId].getLatLng();
+        
+        // Create pulsing icon with the category color
+        const pulsingIcon = L.icon.pulse({
+            iconSize: [15, 15],
+            color: color
+        });
+        
+        // Create a pulsing marker at the same position
+        const pulseMarker = L.marker(latlng, {
+            icon: pulsingIcon,
+            zIndexOffset: -100, // Position behind the original marker
+            interactive: false  // Prevent interaction with the pulsing marker
+        });
+        
+        // Add to map
+        pulseMarker.addTo(map);
+        
+        // Store reference to pulse marker in original marker
+        markers[callId].pulseMarker = pulseMarker;
+        
+        console.log(`Added pulsing effect to marker ${callId} with color ${color}`);
+    } catch(e) {
+        console.error("Error creating pulse marker:", e, e.stack);
+    }
+}
+
+// Function to remove pulsing effect from a marker
+function removePulsingEffect(callId) {
+    if (markers[callId] && markers[callId].pulseMarker) {
+        map.removeLayer(markers[callId].pulseMarker);
+        delete markers[callId].pulseMarker;
+        console.log(`Removed pulsing effect from marker ${callId}`);
+    }
+}
+
+// Function to update which markers should have pulsing effects
+function updatePulsingMarkers() {
+    console.log("Updating pulsing markers, newest call IDs:", newestCallIds);
+    
+    // Remove pulsing effect from all markers that are no longer in the newest list
+    Object.keys(markers).forEach(callId => {
+        if (!newestCallIds.includes(callId) && markers[callId] && markers[callId].pulseMarker) {
+            removePulsingEffect(callId);
+        }
+    });
+    
+    // Add pulsing effect to newest markers if they don't already have it
+    newestCallIds.forEach(callId => {
+        if (markers[callId] && !markers[callId].pulseMarker && allMarkers[callId].visible) {
+            addPulsingEffectToMarker(callId);
+        }
+    });
+}
+
+// Function to update pulsing marker positions when their parent markers move
+function updatePulsingMarkerPositions() {
+    Object.keys(markers).forEach(callId => {
+        if (markers[callId] && markers[callId].pulseMarker) {
+            markers[callId].pulseMarker.setLatLng(markers[callId].getLatLng());
+        }
+    });
+}
 
 function addPermanentHouseMarkers() {
     // Create a separate layer group for permanent markers
@@ -186,7 +316,14 @@ function toggleCategoryFilter(category) {
   }
   
   selectedCategory = category === 'ALL' ? null : category;
+  
+  // Apply filters
   applyFilters();
+  
+  // If switching to ALL category, ensure pulsing markers are updated
+  if (category === 'ALL') {
+    updatePulsingMarkers();
+  }
 }
 
 // Update category counts
@@ -540,37 +677,59 @@ function handleReconnect() {
 
 // Handle New Call Event
 function handleNewCall(call) {
-  console.log('Received newCall event:', call);
+    console.log('Received newCall event:', call);
 
-  if (markers[call.id]) {
-    console.log(`Call ID ${call.id} already exists. Skipping.`);
-    return;
-  }
-
-  if (isValidCall(call)) {
-    const callTimestamp = new Date(call.timestamp);
-    const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
-
-    if (callTimestamp >= sinceTimestamp) {
-      const added = addMarker(call, true);
-      if (added) {
-        console.log('New marker added for call:', call.id);
-        const marker = markers[call.id];
-        if (marker) {
-          showNewCallBanner(call.talk_group_name || 'Unknown Talk Group', call.category || 'OTHER');
-          enqueueAnimation(marker, () => {
-            handleMarkerVisibility(marker);
-          });
-          playNewCallSound();
-          
-          // Update category counts after adding a new marker
-          updateCategoryCounts();
-        }
-      }
+    if (markers[call.id]) {
+        console.log(`Call ID ${call.id} already exists. Skipping.`);
+        return;
     }
-  } else {
-    console.warn('Invalid call data received:', call);
-  }
+
+    if (isValidCall(call)) {
+        const callTimestamp = new Date(call.timestamp);
+        const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
+
+        if (callTimestamp >= sinceTimestamp) {
+            const added = addMarker(call, true);
+            if (added) {
+                console.log('New marker added for call:', call.id);
+                const marker = markers[call.id];
+                if (marker) {
+                    // Show new call banner with talk group name and category
+                    showNewCallBanner(call.talk_group_name || 'Unknown Talk Group', call.category || 'OTHER');
+                    
+                    // Add new call ID to the beginning of newestCallIds array
+                    newestCallIds.unshift(call.id);
+                    
+                    // Limit to MAX_PULSING_MARKERS
+                    if (newestCallIds.length > MAX_PULSING_MARKERS) {
+                        // Remove pulsing from the oldest call that's no longer in top 3
+                        const oldestId = newestCallIds.pop();
+                        removePulsingEffect(oldestId);
+                    }
+                    
+                    // Add pulsing to the new call
+                    addPulsingEffectToMarker(call.id);
+                    
+                    // Only animate to the new marker if tracking is enabled
+                    if (isTrackingNewCalls) {
+                        enqueueAnimation(marker, () => {
+                            handleMarkerVisibility(marker);
+                        });
+                    }
+                    
+                    // Play new call sound if not muted
+                    if (!isNewCallAudioMuted) {
+                        playNewCallSound();
+                    }
+                    
+                    // Update category counts
+                    updateCategoryCounts();
+                }
+            }
+        }
+    } else {
+        console.warn('Invalid call data received:', call);
+    }
 }
 
 
@@ -733,7 +892,7 @@ function addMarker(call, isNew = false) {
         // Handle popup open event
         marker.on('popupopen', function() {
             console.log(`Popup opened for callId: ${call.id}`);
-            initWaveSurfer(call.id, `/audio/${call.id}`, () => {
+            initWaveSurfer(call.id, `/audio/${call.audio_id}`, () => {
                 if (!isNewCallAudioMuted && this.shouldPlayAudio) {
                     const wavesurferInstance = wavesurfers[call.id];
 
@@ -838,6 +997,18 @@ function deleteMarker(callId, marker, modal) {
   })
   .then(response => response.json())
   .then(data => {
+    // First, check if this marker has a pulsing effect and remove it
+    if (markers[callId] && markers[callId].pulseMarker) {
+      map.removeLayer(markers[callId].pulseMarker);
+    }
+    
+    // Remove from newestCallIds array if present
+    const indexInNewest = newestCallIds.indexOf(callId);
+    if (indexInNewest > -1) {
+      newestCallIds.splice(indexInNewest, 1);
+    }
+    
+    // Then remove the main marker
     markerGroups.removeLayer(marker);
     delete markers[callId];
     delete allMarkers[callId];
@@ -850,11 +1021,44 @@ function deleteMarker(callId, marker, modal) {
     if (document.getElementById('enable-heatmap').checked) {
       updateHeatmap();
     }
+    
+    // If a marker in the newest list was deleted, update pulsing markers
+    if (indexInNewest > -1) {
+      loadNewNewestMarker();
+    }
   })
   .catch(error => {
     console.error('Error deleting marker:', error);
     showNotification('Error deleting marker', 'error');
   });
+}
+
+// Add this helper function to load a new marker to the newest list if needed
+function loadNewNewestMarker() {
+  if (newestCallIds.length < MAX_PULSING_MARKERS) {
+    // Find the next newest visible marker not already in the list
+    const allCallIds = Object.keys(allMarkers);
+    
+    // Sort by timestamp (newest first)
+    allCallIds.sort((a, b) => {
+      const timeA = new Date(allMarkers[a].timestamp);
+      const timeB = new Date(allMarkers[b].timestamp);
+      return timeB - timeA;
+    });
+    
+    // Find the first marker that isn't already in newestCallIds
+    for (const callId of allCallIds) {
+      if (!newestCallIds.includes(callId) && allMarkers[callId].visible) {
+        newestCallIds.push(callId);
+        // Add pulsing effect to this marker
+        addPulsingEffectToMarker(callId);
+        break; // Only need to add one
+      }
+    }
+  }
+  
+  // Update all pulsing markers
+  updatePulsingMarkers();
 }
 
 function startMarkerRelocation(callId, originalMarker, modal) {
@@ -1220,12 +1424,28 @@ function enqueueAnimation(marker, callback) {
     }
 }
 
-function setupMuteButton() {
-    const muteButton = document.getElementById('mute-new-calls');
-    if (muteButton) {
-        muteButton.addEventListener('click', toggleNewCallAudioMute);
+// New function to replace setupMuteButton
+function setupCallControls() {
+    const muteCheckbox = document.getElementById('mute-new-calls');
+    const trackCheckbox = document.getElementById('track-new-calls');
+    
+    if (muteCheckbox) {
+        muteCheckbox.addEventListener('change', function() {
+            isNewCallAudioMuted = this.checked;
+            console.log(`New call audio muted: ${isNewCallAudioMuted}`);
+        });
     } else {
-        console.error('Mute button not found');
+        console.error('Mute new calls checkbox not found');
+    }
+    
+    if (trackCheckbox) {
+        trackCheckbox.checked = isTrackingNewCalls; // Set initial state
+        trackCheckbox.addEventListener('change', function() {
+            isTrackingNewCalls = this.checked;
+            console.log(`Tracking new calls: ${isTrackingNewCalls}`);
+        });
+    } else {
+        console.error('Track new calls checkbox not found');
     }
 }
 
@@ -1237,8 +1457,10 @@ function toggleNewCallAudioMute() {
 }
 
 function playNewCallSound() {
-    const audio = new Audio(appConfig.audio.notificationSound);
-    audio.play().catch(error => console.error('Error playing notification sound:', error));
+    if (!isNewCallAudioMuted) {
+        const audio = new Audio(appConfig.audio.notificationSound);
+        audio.play().catch(error => console.error('Error playing notification sound:', error));
+    }
 }
 
 function playAudio(audioId) {
@@ -1287,10 +1509,18 @@ function getAdditionalTranscriptions(callId, skip, container, button) {
 }
 
 function clearMarkers() {
+    // First, remove all pulse markers
+    Object.keys(markers).forEach(callId => {
+        if (markers[callId] && markers[callId].pulseMarker) {
+            map.removeLayer(markers[callId].pulseMarker);
+        }
+    });
+    
+    // Then clear all regular markers
     markerGroups.clearLayers();
     Object.keys(markers).forEach(key => delete markers[key]);
 
-    // Clear heatmap data
+    // Clear heatmap data if it exists
     if (heatmapLayer) {
         heatmapLayer.setLatLngs([]);
     }
@@ -1306,14 +1536,39 @@ function loadCalls(hours) {
                 console.log(`Oldest call received: ${calls[calls.length - 1].timestamp}`);
                 console.log(`Newest call received: ${calls[0].timestamp}`);
             }
+            
+            // Clear existing markers
             clearMarkers();
+            
+            // Reset newest call IDs
+            newestCallIds = [];
+            
+            // Filter for valid calls
             const validCalls = calls.filter(isValidCall);
             console.log(`${validCalls.length} valid calls`);
+            
+            // Sort calls by timestamp (newest first)
+            validCalls.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            // Add all markers to the map
             validCalls.forEach(call => addMarker(call));
+            
+            // Get the newest 3 call IDs
+            newestCallIds = validCalls.slice(0, MAX_PULSING_MARKERS).map(call => call.id);
+            console.log(`Newest call IDs: ${newestCallIds}`);
+            
+            // Apply pulsing effect to newest calls
+            updatePulsingMarkers();
+            
+            // Apply any filters
             applyFilters();
+            
+            // Update heatmap if enabled
             if (document.getElementById('enable-heatmap').checked) {
                 updateHeatmap();
             }
+            
+            // Fit map to markers
             fitMapToMarkers();
         })
         .catch(error => {
@@ -1385,57 +1640,73 @@ function setupSearch() {
 }
 
 function applyFilters() {
-  let visibleMarkers = 0;
-  let lastVisibleMarker = null;
+    let visibleMarkers = 0;
+    let lastVisibleMarker = null;
 
-  const now = new Date();
-  const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
+    const now = new Date();
+    const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
 
-  console.log(`Filtering calls since: ${filterTime.toISOString()}`);
-  console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
+    console.log(`Filtering calls since: ${filterTime.toISOString()}`);
+    console.log(`Total markers before filtering: ${Object.keys(allMarkers).length}`);
 
-  Object.keys(allMarkers).forEach(callId => {
-    const { marker, transcription, category, timestamp } = allMarkers[callId];
-    const callTime = new Date(timestamp);
-    const isWithinTimeRange = callTime >= filterTime;
-    
-    // Check if search term matches either transcription or category
-    const matchesSearch = 
-      transcription.toLowerCase().includes(currentSearchTerm.toLowerCase()) || 
-      (category && category.toLowerCase().includes(currentSearchTerm.toLowerCase()));
-    
-    // Check if category filter matches
-    const matchesCategory = !selectedCategory || category === selectedCategory;
+    // Process each marker
+    Object.keys(allMarkers).forEach(callId => {
+        const { marker, transcription, category, timestamp } = allMarkers[callId];
+        const callTime = new Date(timestamp);
+        const isWithinTimeRange = callTime >= filterTime;
         
-    const shouldDisplay = isWithinTimeRange && matchesSearch && matchesCategory;
+        // Check if search term matches transcription or category
+        const matchesSearch = 
+            transcription.toLowerCase().includes(currentSearchTerm.toLowerCase()) || 
+            (category && category.toLowerCase().includes(currentSearchTerm.toLowerCase()));
+        
+        // Check if category filter matches
+        const matchesCategory = !selectedCategory || category === selectedCategory;
+            
+        const shouldDisplay = isWithinTimeRange && matchesSearch && matchesCategory;
 
-    if (shouldDisplay) {
-      markerGroups.addLayer(marker);
-      allMarkers[callId].visible = true;
-      visibleMarkers++;
-      lastVisibleMarker = marker;
-    } else {
-      markerGroups.removeLayer(marker);
-      allMarkers[callId].visible = false;
+        if (shouldDisplay) {
+            markerGroups.addLayer(marker);
+            allMarkers[callId].visible = true;
+            visibleMarkers++;
+            lastVisibleMarker = marker;
+            
+            // If this is a newest call with pulsing effect, make sure it's visible
+            if (markers[callId] && markers[callId].pulseMarker && newestCallIds.includes(callId)) {
+                if (!map.hasLayer(markers[callId].pulseMarker)) {
+                    map.addLayer(markers[callId].pulseMarker);
+                }
+            }
+        } else {
+            markerGroups.removeLayer(marker);
+            allMarkers[callId].visible = false;
+            
+            // If this marker has a pulsing effect, remove it from map
+            if (markers[callId] && markers[callId].pulseMarker) {
+                map.removeLayer(markers[callId].pulseMarker);
+            }
+        }
+    });
+
+    console.log(`Visible markers after filtering: ${visibleMarkers}`);
+    
+    // Update category counts
+    updateCategoryCounts();
+
+    // Update heatmap if active
+    if (document.getElementById('enable-heatmap').checked) {
+        updateHeatmap();
     }
-  });
 
-  console.log(`Visible markers after filtering: ${visibleMarkers}`);
-  
-  // Update category counts after filtering
-  updateCategoryCounts();
+    // Fit map to visible markers
+    fitMapToMarkers();
 
-  // Update heatmap if active
-  if (document.getElementById('enable-heatmap').checked) {
-    updateHeatmap();
-  }
-
-  fitMapToMarkers();
-
-  if (visibleMarkers === 1 && lastVisibleMarker) {
-    openMarkerPopup(lastVisibleMarker);
-  }
+    // If only one marker is visible, open its popup
+    if (visibleMarkers === 1 && lastVisibleMarker) {
+        openMarkerPopup(lastVisibleMarker);
+    }
 }
+
 
 function isMarkerWithinTimeRange(timestamp) {
     const callTimestamp = new Date(timestamp);
@@ -2009,40 +2280,43 @@ function terminateSession(token) {
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
-  // Initialize configuration variables from the config
-  timeRangeHours = appConfig.time.defaultTimeRangeHours;
-  heatmapIntensity = appConfig.heatmap.defaultIntensity;
-  
-  // Initialize custom icons from config
-  Object.assign(customIcons, createIconsFromConfig());
-  
-  initAudioContext();
-  attemptAutoplay();
-  initMap();
-  setupCallsAndUpdates();
-  setupSearch();
-  setupMuteButton();
-  setupTimeFilter();
-  setupHeatmapControls();
-  setupLiveStreamButton();
-  loadCalls(timeRangeHours);
-  setupUserManagement();
-  
-  // Initialize the category sidebar
-  initCategorySidebar();
-  
-  // Start timestamp updates
-  startTimestampUpdates();
-  
-  fetch('/api/sessions/current')
-    .then(response => response.json())
-    .then(data => {
-      currentSessionToken = data.session.token;
-      setupSessionManagement();
-    })
-    .catch(error => {
-      console.error('Error getting current session:', error);
-    });
+    // Initialize configuration variables from the config
+    timeRangeHours = appConfig.time.defaultTimeRangeHours;
+    heatmapIntensity = appConfig.heatmap.defaultIntensity;
+    
+    // Initialize custom icons from config
+    Object.assign(customIcons, createIconsFromConfig());
+    
+    initAudioContext();
+    attemptAutoplay();
+    initMap();
+    setupCallsAndUpdates();
+    setupSearch();
+    setupCallControls(); // Use this instead of setupMuteButton
+    setupTimeFilter();
+    setupHeatmapControls();
+    setupLiveStreamButton();
+    loadCalls(timeRangeHours);
+    setupUserManagement();
+    
+    // Initialize the category sidebar
+    initCategorySidebar();
+    
+    // Start timestamp updates
+    startTimestampUpdates();
+    
+    fetch('/api/sessions/current')
+        .then(response => response.json())
+        .then(data => {
+            currentSessionToken = data.session.token;
+            setupSessionManagement();
+        })
+        .catch(error => {
+            console.error('Error getting current session:', error);
+        });
+    
+    // Initialize pulsing markers functionality
+    initializePulsingMarkers();
 }
 // Function to load and display summary
 function loadSummary() {

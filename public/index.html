@@ -162,12 +162,12 @@
 </head>
 <body>
     <div id="map"></div>
-	<div id="category-sidebar">
-  <div class="category-header">Categories</div>
-  <div id="category-list">
-    <!-- Categories will be populated dynamically -->
-  </div>
-</div>
+    <div id="category-sidebar">
+        <div class="category-header">Categories</div>
+        <div id="category-list">
+            <!-- Categories will be populated dynamically -->
+        </div>
+    </div>
 
     <div id="control-panel">
         <div class="left-controls">
@@ -204,7 +204,16 @@
         </div>
 
         <div class="right-controls">
-            <button id="mute-new-calls">Mute New Calls</button>
+            <div class="controls-checkbox-group">
+                <label for="mute-new-calls">
+                    <input type="checkbox" id="mute-new-calls">
+                    Mute New Calls
+                </label>
+                <label for="track-new-calls">
+                    <input type="checkbox" id="track-new-calls" checked>
+                    Track New Calls
+                </label>
+            </div>
             <div class="user-management-dropdown">
                 <button id="user-menu-btn" class="cyberpunk-button">User Management</button>
                 <div id="user-menu-content" class="dropdown-content">
@@ -215,14 +224,14 @@
             </div>
         </div>
     </div>
-	<div id="summary-bar">
-  <div class="ticker-wrap">
-    <div class="ticker">
-      <!-- Content will be added by JavaScript -->
+    <div id="summary-bar">
+        <div class="ticker-wrap">
+            <div class="ticker">
+                <!-- Content will be added by JavaScript -->
+            </div>
+        </div>
     </div>
-  </div>
-</div>
-	
+    
 
     <!-- Custom Time Range Modal -->
     <div id="custom-time-modal" class="modal">
