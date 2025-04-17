@@ -9,6 +9,11 @@ const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
 
 // Environment variables
 const {
@@ -801,7 +806,59 @@ server.listen(PORT, () => {
     console.log('Authentication: DISABLED');
   }
 });
-
+// API endpoint to log marker corrections
+app.post('/api/log/correction', (req, res) => {
+  const logData = req.body;
+  
+  // Validate required fields
+  if (!logData.callId) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Missing required fields in correction log data' 
+    });
+  }
+  
+  // Add timestamp if not provided
+  if (!logData.timestamp) {
+    logData.timestamp = new Date().toISOString();
+  }
+  
+  // Path to log file - one file per day
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const logFilePath = path.join(logsDir, `corrections_${today}.json`);
+  
+  // Check if file exists and read it
+  let existingData = [];
+  if (fs.existsSync(logFilePath)) {
+    try {
+      const fileContent = fs.readFileSync(logFilePath, 'utf8');
+      existingData = JSON.parse(fileContent);
+      if (!Array.isArray(existingData)) {
+        existingData = [];
+      }
+    } catch (err) {
+      console.error('Error reading corrections log file:', err);
+      existingData = []; // Reset if there's an error
+    }
+  }
+  
+  // Add new log entry
+  existingData.push(logData);
+  
+  // Write back to file
+  fs.writeFile(logFilePath, JSON.stringify(existingData, null, 2), (err) => {
+    if (err) {
+      console.error('Error writing to correction log:', err);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to write to log' 
+      });
+    }
+    
+    console.log('Correction logged successfully');
+    res.json({ success: true });
+  });
+});
 // Graceful Shutdown
 process.on('SIGINT', () => {
   console.log('Shutting down web server gracefully...');
