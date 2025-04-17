@@ -111,22 +111,66 @@ const logger = winston.createLogger({
   ]
 });
 
-// Override logger.info to suppress specific messages
+// Override logger.info to only allow specific messages
 const originalInfo = logger.info.bind(logger);
-const suppressedPatterns = [
-  /^Processed: .+\.mp3$/,
-  /^Deleted audio file .+\.mp3$/,
+const allowedPatterns = [
+  // Core dispatch information
   /^--- Incoming Request ---$/,
-  /^Method: POST$/,
-  /^URL: \/api\/call-upload$/,
-  /^Headers: {[\s\S]+}$/,
-  /^Handling \/api\/call-upload$/
+  /^Talk Group: .+ - .+$/,
+  /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/,
+  
+  // Startup & shutdown messages
+  /^Shutting down gracefully...$/,
+  /^Express server closed.$/,
+  /^Discord bot disconnected.$/,
+  /^Database connection closed.$/,
+  /^Loaded \d+ talk groups from environment variables$/,
+  /^Using upload directory: .+$/,
+  /^Loaded \d+ API keys.$/,
+  /^Starting persistent transcription process...$/,
+  /^Transcription process spawned, waiting for ready signal...$/,
+  /^Bot server is running on port \d+$/,
+  /^Connected to SQLite database.$/,
+  /^Using talk groups from environment variables. Found \d+ talk groups$/,
+  /^Loaded \d+ talk groups for geocoding$/,
+  /^Logged in as .+!$/,
+  /^Started refreshing application \(\/\) commands.$/,
+  /^Successfully reloaded application \(\/\) commands.$/,
+  /^Summary channel is ready.$/
 ];
 
 logger.info = function (...args) {
   const message = args.join(' ');
-  const shouldSuppress = suppressedPatterns.some((pattern) => pattern.test(message));
-  if (!shouldSuppress) {
+  
+  // Check for transcription output and simplify it
+  if (message.startsWith('Transcription process output: {"id":')) {
+    try {
+      // Extract just the transcription part
+      const match = message.match(/Transcription process output: {"id": "[^"]+", "transcription": "([^"]+)"}/);
+      if (match && match[1]) {
+        // Print the transcription text in cyan color
+        const timestamp = new Date().toLocaleString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+          fractionalSecondDigits: 3
+        }).replace(',', '');
+        
+        // Using ANSI cyan color code for the transcription text
+        console.log(`${timestamp} [INFO] Transcription: \x1b[36m${match[1]}\x1b[0m`);
+        return;
+      }
+    } catch (e) {
+      // If parsing fails, fall back to normal logging behavior
+    }
+  }
+  
+  const shouldLog = allowedPatterns.some((pattern) => pattern.test(message));
+  if (shouldLog) {
     originalInfo(...args);
   }
 };
@@ -155,6 +199,7 @@ const {
   entersState,
 } = require('@discordjs/voice');
 const prism = require('prism-media');
+const { MessageFlags } = require('discord.js');
 
 // Import the geocoding module
 const { extractAddress, geocodeAddress, hyperlinkAddress, loadTalkGroups } = require('./geocoding');
@@ -1766,10 +1811,10 @@ async function generateSummary(transcriptions) {
     // Create the prompt for the AI - focus only on summarizing, not selecting
     const prompt = `You are an experienced emergency dispatch analyst for a police and fire department. 
 
-First, write a concise summary (3-6 sentences) of notable activity in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'} (from ${earliestTime} to ${latestTime}).
+First, write a concise summary (2-3 sentences long max) of notable activity in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'} (from ${earliestTime} to ${latestTime}).
 
 Then, I've selected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
-1) A clear, detailed description of what's happening
+1) A clear, detailed description of what's happening (1 sentence long max)
 2) An importance rating (High/Medium/Low)
 
 The transmissions I've selected span across the hour to give a representative view:
@@ -2351,7 +2396,7 @@ function markAudioFileAsNotNeeded(transcriptionId) {
 
 async function handleListenLive(interaction, talkGroupID) {
   talkGroupID = talkGroupID.toString();
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
   const guild = interaction.guild;
   const talkGroupInfo = await getTalkGroupName(talkGroupID);
@@ -2791,7 +2836,7 @@ client.on('interactionCreate', async (interaction) => {
       const subcommand = interaction.options.getSubcommand();
       
       if (subcommand === 'refresh') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
         await updateSummaryEmbed();
         await interaction.editReply('✅ Summary has been refreshed!');
       }
@@ -2803,7 +2848,7 @@ client.on('interactionCreate', async (interaction) => {
       const talkGroupID = customId.replace('listen_live_', '');
       handleListenLive(interaction, talkGroupID);
     } else if (customId === 'refresh_summary') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
       await updateSummaryEmbed();
       await interaction.editReply('✅ Summary has been refreshed!');
     }

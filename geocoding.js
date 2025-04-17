@@ -76,6 +76,21 @@ const logger = winston.createLogger({
   ]
 });
 
+// Override logger.info to only allow specific messages
+const originalInfo = logger.info.bind(logger);
+const allowedPatterns = [
+  // Core information only
+  /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/
+];
+
+logger.info = function (...args) {
+  const message = args.join(' ');
+  const shouldLog = allowedPatterns.some((pattern) => pattern.test(message));
+  if (shouldLog) {
+    originalInfo(...args);
+  }
+};
+
 // Build TALK_GROUPS from environment variables
 const TALK_GROUPS = {};
 Object.keys(process.env).forEach(key => {
