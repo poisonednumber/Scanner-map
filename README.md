@@ -189,6 +189,8 @@ A real-time mapping system that pulls radio calls from SDRTrunk and TrunkRecorde
     TIMEZONE=US/Eastern
     ```
     
+3.  **Edit the config.js in public/config.js to setup map.:**
+
 
 ### Step 5: Create API Key for SDRTrunk/TrunkRecorder
 
