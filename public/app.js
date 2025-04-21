@@ -39,19 +39,26 @@ let categoryCounts = {
 let newestCallIds = []; // Store IDs of newest calls
 const MAX_PULSING_MARKERS = 3; // Maximum number of pulsing markers
 
-// Category color mapping - carefully selected colors that match the categories
+// Category color mapping - simplified for high contrast
 const CATEGORY_COLORS = {
-    'MEDICAL': '#ff0000',    // Bright red for medical emergencies
-    'FIRE': '#ff6600',       // Orange-red for fire calls
-    'TRAFFIC': '#ffcc00',    // Amber for traffic incidents
-    'THEFT': '#cc33ff',      // Purple for theft
-    'SUSPICIOUS': '#9933ff', // Violet for suspicious activity
-    'DOMESTIC': '#ff0066',   // Pink for domestic issues
-    'ASSAULT': '#cc0000',    // Dark red for assault
-    'ALARM': '#0066ff',      // Blue for alarms
-    'WELFARE': '#00cc99',    // Teal for welfare checks
-    'ANIMAL': '#66cc33',     // Green for animal calls
-    'OTHER': '#dad600'       // yellow for other/unknown
+    // High Urgency / Emergency Response (Vivid Red)
+    'MEDICAL':   '#FF1744',
+    'FIRE':      '#FF1744',
+    'ASSAULT':   '#FF1744',
+    'ALARM':     '#FF1744', // Grouped with high urgency
+
+    // Investigation / Intervention (Vivid Cyan/Blue)
+    'THEFT':     '#00E5FF',
+    'SUSPICIOUS':'#00E5FF',
+    'DOMESTIC':  '#00E5FF', // Grouped with intervention
+
+    // Traffic / Hazard (Vivid Yellow)
+    'TRAFFIC':   '#FFFF00',
+
+    // General / Other (Vivid Lime Green)
+    'WELFARE':   '#76FF03',
+    'ANIMAL':    '#76FF03',
+    'OTHER':     '#76FF03'
 };
 
 // Pulsing Icon Implementation
@@ -603,7 +610,8 @@ function setupEventListeners() {
     toggleModeButton = document.getElementById('toggle-mode');
     if (toggleModeButton) {
         toggleModeButton.addEventListener('click', toggleMapMode);
-        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.day; // Assuming starting in day mode
+        // Set the initial text directly to "Day":
+        toggleModeButton.textContent = 'Day'; // Assuming starting in day mode
     } else {
         console.error('Toggle mode button not found');
     }
@@ -624,17 +632,20 @@ function toggleMapMode() {
         map.removeLayer(dayLayer);
         nightLayer.addTo(map);
         currentMapMode = 'night';
-        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.night;
+        // Use direct text assignment
+        toggleModeButton.textContent = 'Night';
     } else if (currentMapMode === 'night') {
         map.removeLayer(nightLayer);
         satelliteLayer.addTo(map);
         currentMapMode = 'satellite';
-        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.satellite;
+        // Use direct text assignment
+        toggleModeButton.textContent = 'Satellite';
     } else if (currentMapMode === 'satellite') {
         map.removeLayer(satelliteLayer);
         dayLayer.addTo(map);
         currentMapMode = 'day';
-        toggleModeButton.textContent = appConfig.ui.toggleModeLabels.day;
+        // Use direct text assignment
+        toggleModeButton.textContent = 'Day';
     }
 }
 
@@ -2567,7 +2578,40 @@ function terminateSession(token) {
         });
     }
 }
+// Function to setup the sidebar toggle button
+function setupSidebarToggle() {
+  const toggleBtn = document.getElementById('sidebar-toggle-btn');
+  const sidebar = document.getElementById('category-sidebar');
 
+  if (toggleBtn && sidebar) {
+    toggleBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('sidebar-hidden');
+      // Optional: Change button text/icon when sidebar is hidden/shown
+      if (sidebar.classList.contains('sidebar-hidden')) {
+        toggleBtn.textContent = '☰ Show Categories';
+        toggleBtn.setAttribute('aria-expanded', 'false');
+      } else {
+        toggleBtn.textContent = '✕ Hide Categories';
+         toggleBtn.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    // Ensure sidebar is hidden by default on mobile if the screen is small on load
+    if (isMobile() && !sidebar.classList.contains('sidebar-hidden')) {
+         sidebar.classList.add('sidebar-hidden');
+         toggleBtn.textContent = '☰ Show Categories';
+         toggleBtn.setAttribute('aria-expanded', 'false');
+    } else if (!isMobile() && sidebar.classList.contains('sidebar-hidden')) {
+         // Ensure sidebar is shown on desktop if window resizes large
+         sidebar.classList.remove('sidebar-hidden');
+         toggleBtn.textContent = '✕ Hide Categories'; // Or revert to default if needed
+         toggleBtn.setAttribute('aria-expanded', 'true');
+    }
+
+  } else {
+    console.error('Sidebar toggle button or sidebar element not found.');
+  }
+}
 // User and Session Management functions remain the same
 
 document.addEventListener('DOMContentLoaded', initializeApp);
@@ -2591,6 +2635,7 @@ function initializeApp() {
     setupLiveStreamButton();
     loadCalls(timeRangeHours);
     setupUserManagement();
+	setupSidebarToggle();
     
     // Initialize the category sidebar
     initCategorySidebar();
@@ -2614,58 +2659,92 @@ function initializeApp() {
 // Function to load and display summary
 function loadSummary() {
   fetch('/summary.json')
-    .then(response => response.json())
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response.json();
+    })
     .then(data => {
       const ticker = document.querySelector('.ticker');
-      
+      if (!ticker) {
+          console.error('Ticker element not found.');
+          return;
+      }
+      const tickerWrap = document.querySelector('.ticker-wrap');
+       if (!tickerWrap) {
+          console.error('Ticker wrap element not found.');
+          return;
+      }
+
+      // --- NEW TICKER CONTENT HANDLING ---
       // Create content with main summary and highlights
-      let content = `${data.summary} | `;
-      
+      let baseContent = `${data.summary} | `;
+
       // Add highlights if available
       if (data.highlights && data.highlights.length > 0) {
         data.highlights.forEach(highlight => {
-          content += `<span class="summary-highlight">${highlight.talk_group}</span>: ${highlight.description} (${highlight.time}) | `;
+          // IMPORTANT: Use the class "summary-highlight" here
+          baseContent += `<span class="summary-highlight">${highlight.talk_group}</span>: ${highlight.description} (${highlight.time}) | `;
         });
       }
-      
+
       // Add update time
-      content += `Updated: ${new Date(data.updated).toLocaleTimeString()} | `;
-      
-      // Clear ticker
+      baseContent += `Updated: ${new Date(data.updated).toLocaleTimeString()} | `;
+
+      // Create the main ticker item
+      const tickerItem = document.createElement('div');
+      tickerItem.className = 'ticker-item';
+      tickerItem.innerHTML = baseContent;
+
+      // Create a duplicate ticker item for seamless looping (CSS will handle positioning)
+      const tickerItemDuplicate = document.createElement('div');
+      tickerItemDuplicate.className = 'ticker-item';
+      tickerItemDuplicate.innerHTML = baseContent;
+      tickerItemDuplicate.setAttribute('aria-hidden', 'true'); // Hide duplicate from screen readers
+
+       // Clear previous ticker content
       ticker.innerHTML = '';
-      
-      // Create multiple copies of the content for seamless looping
-      for (let i = 0; i < 3; i++) {
-        const item = document.createElement('div');
-        item.className = 'ticker-item';
-        item.innerHTML = content;
-        ticker.appendChild(item);
+
+      // Append the items
+      ticker.appendChild(tickerItem);
+      ticker.appendChild(tickerItemDuplicate);
+
+      // Reset animation (force restart if content changes)
+      // This ensures the animation restarts correctly if the content width changes significantly
+      ticker.style.animation = 'none';
+      void ticker.offsetWidth; // Trigger reflow to apply the 'none' state
+      ticker.style.animation = ''; // Re-apply animation from CSS defined rules
+
+      // OPTIONAL: Dynamically adjust speed based on content width
+      // Uncomment the following lines if you want speed to adjust
+      /*
+      const contentWidth = tickerItem.offsetWidth; // Get width of one copy
+      if (contentWidth > 0 && tickerWrap.offsetWidth > 0) {
+          const pixelsPerSecond = 75; // Adjust this value to control speed (higher = faster)
+          const duration = contentWidth / pixelsPerSecond;
+          // Use the animation name defined in CSS ('ticker-scroll')
+          ticker.style.animation = `ticker-scroll ${Math.max(20, duration)}s linear infinite`; // Ensure a minimum duration
+          console.log(`Ticker animation duration set to: ${ticker.style.animationDuration}`);
+      } else {
+           // Fallback if widths aren't available yet - use CSS default
+           console.log('Could not calculate dynamic ticker duration, using CSS default.');
       }
-      
-      // Reset animation to start from the beginning
-      ticker.style.animationName = 'none';
-      
-      // Force a reflow
-      void ticker.offsetWidth;
-      
-      // Restart animation
-      ticker.style.animationName = 'ticker';
-      
-      // Calculate proper duration based on content length
-      const tickerWidth = ticker.scrollWidth;
-      const viewportWidth = document.querySelector('.ticker-wrap').offsetWidth;
-      const ratio = tickerWidth / viewportWidth;
-      
-      // Adjust duration: higher = slower, lower = faster
-      const baseDuration = 30; // seconds
-      ticker.style.animationDuration = `${baseDuration * (ratio / 3)}s`;
-      
-      console.log(`Ticker animation set with duration: ${ticker.style.animationDuration}`);
+      */
+
+      console.log(`Ticker content updated.`);
+      // --- END NEW TICKER CONTENT HANDLING ---
+
     })
     .catch(error => {
-      console.error('Error loading summary:', error);
+      console.error('Error loading or processing summary:', error);
       const ticker = document.querySelector('.ticker');
-      ticker.innerHTML = '<div class="ticker-item">Summary information unavailable</div>';
+      if (ticker) {
+        // Display error message within the ticker for visibility
+        ticker.innerHTML = '<div class="ticker-item" style="color: #ff3333;">Error loading summary information</div>';
+        // Stop any running animation
+        ticker.style.animation = 'none';
+      }
     });
 }
 // Load summary immediately

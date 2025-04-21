@@ -15,6 +15,7 @@ body, html {
     height: 100%;
     background-color: var(--background-color);
     color: var(--text-color);
+    overflow: hidden; /* Prevent page scrolling */
 }
 
 #map {
@@ -156,15 +157,37 @@ body, html {
     background-color: var(--hover-color);
 }
 
-.leaflet-control-custom-zoom {
-    background-color: var(--background-color);
-    border: 2px solid var(--border-color);
+/* Theme Leaflet Zoom Buttons (Globally, as they are hidden on mobile anyway) */
+.leaflet-control-zoom a {
+    background-color: var(--background-color) !important;
+    color: var(--text-color) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    transition: all 0.3s;
+}
+.leaflet-control-zoom a:hover {
+    background-color: var(--primary-color) !important;
+    color: var(--background-color) !important;
+}
+.leaflet-control-zoom {
+    border: 1px solid var(--border-color) !important;
     border-radius: 4px;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
 }
+/* Hide Leaflet Scale (Globally) */
+.leaflet-control-scale {
+    display: none !important;
+}
 
+
+/* Deprecated custom zoom control styling (can be removed if not used) */
+.leaflet-control-custom-zoom {
+    /* background-color: var(--background-color);
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5); */
+}
 .leaflet-control-custom-zoom a {
-    display: block;
+    /* display: block;
     text-align: center;
     text-decoration: none;
     color: var(--text-color);
@@ -172,17 +195,16 @@ body, html {
     font-weight: bold;
     padding: 5px 10px;
     line-height: 30px;
-    background-color: var(--background-color);
+    background-color: var(--background-color); */
 }
-
 .leaflet-control-custom-zoom a:first-child {
-    border-bottom: 1px solid var(--border-color);
+    /* border-bottom: 1px solid var(--border-color); */
+}
+.leaflet-control-custom-zoom a:hover {
+    /* background-color: var(--primary-color);
+    color: var(--background-color); */
 }
 
-.leaflet-control-custom-zoom a:hover {
-    background-color: var(--primary-color);
-    color: var(--background-color);
-}
 
 .marker-cluster-small div,
 .marker-cluster-medium div,
@@ -396,7 +418,7 @@ body, html {
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    top: 800px; /* Increased from 250px to push it lower */
+    top: 130px !important; /* Position below summary bar and sidebar */
     background-color: rgba(0, 0, 0, 1);
     color: var(--text-color);
     border: 1px solid var(--border-color);
@@ -432,112 +454,498 @@ body, html {
     66% { content: '...'; }
 }
 
-.leaflet-control-zoom {
-    top: 80px;
-}
+/* Ticker Styles - Desktop Base */
+ #summary-bar {
+    position: absolute;
+    top: 70px; /* Position it just below the control panel */
+    left: 200px; /* Position to the right of the sidebar */
+    right: 10px; /* Adjust right padding */
+    height: 40px;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    z-index: 998; /* Below sidebar */
+    overflow: hidden; /* Crucial: Hide overflowing content */
+    font-family: 'Share Tech Mono', monospace;
+    transition: left 0.3s ease-in-out;
+    display: flex; /* Use flexbox for vertical centering */
+    align-items: center; /* Vertically center content */
+ }
 
+ .ticker-wrap {
+    width: 100%;
+    /* height: 100%; No longer needed with flex on parent */
+    overflow: hidden; /* Should be redundant due to #summary-bar, but safe */
+    position: relative; /* Needed if using pseudo-elements for complex loops */
+    /* display: flex; No longer needed with flex on parent */
+    /* align-items: center; No longer needed with flex on parent */
+ }
+
+ .ticker {
+    display: inline-block; /* Treat the container of items as a block for animation */
+    white-space: nowrap; /* Ensure all .ticker-item stay on one line */
+    will-change: transform; /* Performance hint */
+    animation: ticker-scroll 45s linear infinite; /* Adjust duration as needed */
+ }
+
+ .ticker-item {
+    display: inline-block; /* Keep items inline */
+    padding: 0 25px; /* Horizontal spacing between items/sections */
+    color: var(--text-color);
+    font-size: 20px; /* Desktop font size */
+    text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+    vertical-align: middle; /* Ensure vertical alignment */
+ }
+
+ /* Style for the highlighted talk groups */
+ .summary-highlight {
+    color: #00ccff; /* Blue color */
+    font-weight: bold;
+    text-shadow: 0 0 8px rgba(0, 204, 255, 0.7); /* Blue glow */
+    margin: 0 3px; /* Add slight spacing */
+ }
+
+ /* Ticker Animation */
+ @keyframes ticker-scroll {
+   0% {
+     transform: translateX(0%);
+   }
+   100% {
+     /* Scroll one full copy (-50% because there are two identical copies) */
+     transform: translateX(-50%);
+   }
+ }
+
+/* Desktop Specific Adjustments (Excluding Ticker and Leaflet Controls) */
 @media screen and (min-width: 769px) {
-    #new-call-banner {
-        top: 70px;
-        padding: 10px 20px;
-        font-size: 18px;
+    #map {
+        /* Adjust padding if sidebar is shown */
+        padding-left: 0; /* Default */
+        transition: padding-left 0.3s ease-in-out;
     }
+
+    #map.sidebar-visible {
+       padding-left: 180px; /* Width of the sidebar */
+    }
+
+    #category-sidebar {
+      position: absolute;
+      left: 0px;
+      top: 70px; /* Position below the control panel */
+      width: 180px;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+      border-radius: 0 4px 4px 0; /* Rounded corners on the right */
+      box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+      z-index: 999;
+      font-family: 'Share Tech Mono', monospace;
+      padding: 10px;
+      overflow-y: auto;
+      max-height: calc(100vh - 120px); /* Adjust height */
+      transition: transform 0.3s ease-in-out;
+      transform: translateX(0); /* Default: visible */
+    }
+
+    .category-header {
+      font-size: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .category-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 5px;
+      border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .category-item:hover {
+      background-color: var(--hover-color);
+    }
+
+    .category-item.active {
+      background-color: rgba(0, 50, 0, 0.8);
+      border-left: 3px solid var(--primary-color);
+      box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3);
+      padding-left: 7px; /* Adjust padding for border */
+    }
+
+    /* Desktop Category Font Size Increase */
+    .category-name {
+      font-size: 18px; /* Increased from 14px */
+    }
+
+    .category-count {
+      background-color: var(--hover-color);
+      color: var(--text-color);
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 20px; /* Increased from 12px */
+      font-weight: bold; /* Make count bold */
+      min-width: 28px; /* Adjust min width */
+      text-align: center;
+    }
+
+    .leaflet-control-zoom {
+      position: absolute;
+      right: 10px;
+      left: auto !important;
+      top: 120px !important; /* Below summary bar */
+      z-index: 999;
+    }
+
+    .leaflet-control-attribution {
+        z-index: 996 !important; /* Lower z-index than control panel */
+        background-color: rgba(0, 0, 0, 0.7) !important;
+        color: var(--text-color) !important;
+        border: 1px solid var(--border-color);
+        font-size: 10px !important;
+        padding: 2px 5px !important;
+        border-radius: 3px !important;
+    }
+    /* .leaflet-control-scale is hidden globally now */
 }
 
+/* --- SIDEBAR TOGGLE BUTTON & HIDING CLASS --- */
+#sidebar-toggle-btn {
+    display: none; /* Hidden on desktop by default */
+    position: fixed;
+    left: 10px;
+    z-index: 1001;  /* Above sidebar */
+    padding: 5px 10px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    transition: all 0.3s;
+}
+
+#sidebar-toggle-btn:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+
+/* Class to hide/slide the sidebar */
+.sidebar-hidden {
+    transform: translateX(-110%) !important; /* Slide out fully */
+}
+/* --- END SIDEBAR TOGGLE --- */
+
+
+/* ============================================ */
+/* Mobile Responsiveness (max-width: 768px)     */
+/* ============================================ */
 @media screen and (max-width: 768px) {
     #map {
-        height: calc(100vh - 120px);
+        /* Map height adjusted for summary bar (50px) and bottom controls (180px) */
+        height: calc(100vh - 50px - 180px);
+        padding-top: 50px; /* Prevent map content hiding under summary bar */
+        box-sizing: border-box;
+        width: 100%;
     }
+	.leaflet-control-zoom {
+		display: none !important;
+	}
 
+    /* --- Control Panel Mobile GRID Makeover --- */
     #control-panel {
         position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
         top: auto;
-        background: rgba(0, 0, 0, 0.8);
-        padding: 10px;
-        display: flex;
+        background: rgba(0, 0, 0, 0.9);
+        padding: 10px; /* Padding around the grid */
+        box-sizing: border-box;
+        display: grid; /* USE GRID */
+        grid-template-columns: 1fr 1fr; /* Two equal columns */
+        /* Define 3 rows: auto height based on content */
+        grid-template-rows: auto auto auto;
+        gap: 8px; /* Gap between grid cells */
+        height: 180px; /* Increased height */
+        z-index: 1000;
+        align-items: center; /* Vertically center content within grid cells */
+    }
+
+    /* Assign grid areas */
+    #control-panel .center-controls { /* Search + Heatmap */
+        grid-column: 1 / -1; /* Span both columns */
+        grid-row: 1 / 2;     /* First row */
+        display: flex;       /* Use flex for internal layout */
         flex-direction: column;
-        justify-content: space-around;
-        align-items: stretch;
+        gap: 5px;
+        margin: 0; /* Reset margin */
+        order: 0; /* Reset order */
     }
-
-    .left-controls, .center-controls, .right-controls {
+    #control-panel .left-controls { /* Time Filter + Mode */
+        grid-column: 1 / 2; /* First column */
+        grid-row: 2 / 3;     /* Second row */
         display: flex;
-        justify-content: space-between;
-        margin-bottom: 5px;
+        gap: 5px;
+        justify-content: stretch; /* Stretch items */
     }
-
-    .center-controls {
-        order: -1;
-    }
-
-    .search-heatmap-container {
+     #control-panel .right-controls { /* Checkboxes + User Mgmt */
+        grid-column: 2 / 3; /* Second column */
+        grid-row: 2 / 3;     /* Second row */
         display: flex;
-        flex-direction: column;
-        width: 100%;
+        flex-direction: column; /* Stack checkboxes and button */
+        gap: 5px;
+        align-items: stretch; /* Stretch items */
     }
 
-    #search-input {
+    /* Style elements within the grid areas */
+    #control-panel .search-heatmap-container {
+        display: contents; /* Let children participate in parent grid/flex */
+    }
+
+    #control-panel #search-input {
         width: 100%;
         max-width: none;
-        margin-bottom: 5px;
+        padding: 5px 8px; /* Further reduced padding */
+        font-size: 12px; /* Further reduced font */
+        box-sizing: border-box;
+        margin: 0;
     }
 
-    .heatmap-controls {
+    #control-panel .heatmap-controls {
         display: flex;
         justify-content: space-between;
         align-items: center;
-    }
-
-    #control-panel button, 
-    #control-panel select, 
-    #control-panel input[type="text"] {
-        width: 48%;
-        margin: 2px 1%;
-        padding: 6px 8px;
-        font-size: 12px;
-    }
-
-    #time-filter {
         width: 100%;
-        margin-bottom: 5px;
+        gap: 5px;
+        padding: 0 5px; /* Add padding for spacing */
+    }
+    #control-panel .heatmap-controls label {
+        font-size: 10px; /* Smaller label */
+        white-space: nowrap;
+        margin: 0;
+        flex-shrink: 0; /* Prevent shrinking */
+    }
+    #control-panel #heatmap-intensity-container {
+        flex-grow: 1;
+        margin: 0;
+        min-width: 60px; /* Smaller min-width */
+    }
+    #control-panel #heatmap-intensity {
+        height: 6px;
+    }
+     #control-panel #heatmap-intensity::-webkit-slider-thumb {
+        width: 12px; height: 12px; margin-top: -3px;
+    }
+     #control-panel #heatmap-intensity::-moz-range-thumb {
+        width: 12px; height: 12px;
     }
 
-    .leaflet-control-zoom {
-        display: block;
-        top: 70px;
+    /* General buttons/selects inside the mobile panel */
+    #control-panel button,
+    #control-panel select {
+        flex-grow: 1; /* Allow filling space */
+        flex-basis: 0; /* Allow shrinking/growing */
+        width: auto;
+        margin: 0;
+        padding: 6px 5px; /* Adjusted padding */
+        font-size: 11px; /* Slightly smaller font */
+        box-sizing: border-box;
+        text-align: center;
+        min-width: 0; /* Remove minimum width if needed */
     }
+
+    /* Checkboxes group adjustments within the grid */
+    #control-panel .controls-checkbox-group {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-around; /* Space out */
+        align-items: center;
+        gap: 5px; /* Gap between labels */
+        width: 100%; /* Take full width of its grid cell */
+        padding: 3px 0; /* Add some vertical padding */
+        margin: 0;
+    }
+    #control-panel .controls-checkbox-group label {
+        font-size: 10px; /* Even smaller */
+        margin: 0;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+    }
+     #control-panel .controls-checkbox-group input[type="checkbox"] {
+         width: 11px; height: 11px;
+         margin-right: 2px;
+         vertical-align: middle;
+         flex-shrink: 0;
+     }
+
+    /* User management button */
+    #control-panel .user-management-dropdown {
+        width: 100%; /* Full width of its cell */
+        display: flex; /* Enable flex for button alignment */
+    }
+     #control-panel #user-menu-btn {
+         width: 100%; /* Button takes full width */
+     }
+    /* --- End Control Panel Mobile GRID Makeover --- */
+
 
     .custom-popup {
-        max-width: 300px;
-        width: 300px;
+        max-width: 90vw; /* Use viewport width */
+        width: 280px; /* Fixed width if preferred */
     }
 
-    #new-call-banner {
-        top: 5px;
-        font-size: 18px;
-        padding: 6px 12px;
-    }
-}
+     /* --- Ticker Mobile Styles --- */
+     #summary-bar {
+        position: fixed; /* Keep fixed position */
+        top: 0px; /* Summary bar at the very top */
+        left: 10px;
+        right: 10px;
+        height: 50px; /* Mobile height */
+        z-index: 1001; /* Keep high z-index */
+        background-color: rgba(0, 0, 0, 0.8);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        overflow: hidden; /* Ensure overflow is hidden */
+        font-family: 'Share Tech Mono', monospace;
+        display: flex; /* Ensure flex is used for centering */
+        align-items: center; /* Vertically center content */
+     }
 
-@media screen and (max-width: 480px) {
-    #control-panel button, 
-    #control-panel select, 
-    #control-panel input[type="text"] {
-        font-size: 11px;
-        padding: 5px 6px;
-    }
+     .ticker-wrap {
+        width: 100%;
+        overflow: hidden; /* Ensure overflow hidden */
+        position: relative;
+     }
 
-    #new-call-banner {
-        font-size: 18px;
-        padding: 5px 10px;
-    }
-}
+     .ticker {
+        display: inline-block; /* Ensure display is correct */
+        white-space: nowrap; /* CRUCIAL: Prevent wrapping on mobile */
+        will-change: transform;
+        animation: ticker-scroll 55s linear infinite; /* Slower mobile animation */
+     }
 
-/* Additional styles for better mobile experience */
-@media screen and (max-width: 768px) {
+     .ticker-item {
+        display: inline-block; /* Ensure display is correct */
+        padding: 0 15px; /* Mobile padding */
+        font-size: 21px; /* Mobile font size */
+        color: var(--text-color); /* Ensure base color */
+        text-shadow: 0 0 5px rgba(0, 255, 0, 0.5); /* Ensure base shadow */
+        vertical-align: middle;
+		line-height: 40px;
+     }
+
+     /* Explicitly define summary highlight for mobile to avoid overrides */
+     .summary-highlight {
+        color: #00ccff; /* Blue color */
+        font-weight: bold; /* Ensure bold */
+        text-shadow: 0 0 8px rgba(0, 204, 255, 0.7); /* Blue glow */
+        margin: 0 3px; /* Ensure spacing */
+     }
+     /* --- End Ticker Mobile Styles --- */
+
+
+    /* --- SIDEBAR MOBILE STYLES --- */
+      #sidebar-toggle-btn {
+          display: block; /* Show button */
+          position: fixed; /* Fixed position */
+          top: 60px;      /* Position below summary bar */
+          left: 10px;
+          z-index: 1001; /* Above sidebar */
+          transition: left 0.3s ease-in-out; /* Add transition for moving */
+      }
+
+      /* Style for when sidebar is OPEN - move the button */
+      #category-sidebar:not(.sidebar-hidden) + #sidebar-toggle-btn {
+         left: 190px; /* Move button to the right of the opened sidebar (180px width + 10px buffer) */
+      }
+
+      #category-sidebar {
+        position: fixed; /* Fixed position for sliding */
+        top: 50px; /* Position below summary bar */
+        /* Adjust bottom based on new control panel height */
+        bottom: 180px; /* Position above control panel */
+        left: 0px;
+        width: 180px; /* Keep width */
+        /* Adjust max/height based on new control panel height */
+        max-height: calc(100vh - 50px - 180px);
+        height: calc(100vh - 50px - 180px);
+        box-shadow: 0 0 15px rgba(0, 255, 0, 0.6);
+        z-index: 1000; /* Below toggle button, above map */
+        background-color: rgba(0, 0, 0, 0.95); /* More opaque */
+        border: 2px solid var(--border-color);
+        padding: 10px; /* Add padding for content */
+        box-sizing: border-box;
+        overflow-y: auto; /* Ensure vertical scrolling */
+        transition: transform 0.3s ease-in-out;
+        transform: translateX(-110%); /* Start hidden */
+      }
+
+      /* Class to SHOW the sidebar */
+      #category-sidebar:not(.sidebar-hidden) {
+         transform: translateX(0);
+      }
+
+      .category-header {
+        font-size: 16px;
+        padding: 10px 0;
+        text-align: center;
+        border-bottom: 1px solid var(--border-color);
+		margin-bottom: 5px;
+      }
+
+      .category-item {
+        padding: 10px 8px;
+        margin-bottom: 2px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+		cursor: pointer;
+		transition: all 0.2s;
+      }
+	  .category-item:hover {
+        background-color: var(--hover-color); /* Ensure hover works */
+       }
+      .category-item.active {
+        background-color: rgba(0, 50, 0, 0.8); /* Darker green */
+        border-left: 3px solid var(--primary-color); /* Green indicator */
+        box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3); /* Inner glow */
+        padding-left: 5px; /* Adjust padding for the border */
+      }
+      .category-item.active:hover {
+        background-color: rgba(0, 50, 0, 0.8); /* Keep active background on hover */
+       }
+
+       /* Mobile Category Font Size Increase */
+      .category-name {
+        font-size: 15px; /* Increased from 14px */
+      }
+
+      .category-count {
+        font-size: 18px; /* Increased from 12px */
+        min-width: 28px; /* Adjusted min width */
+        padding: 2px 8px;
+        font-weight: bold;
+        background-color: var(--hover-color);
+        color: var(--text-color);
+        border-radius: 12px;
+        text-align: center;
+      }
+    /* --- END SIDEBAR MOBILE --- */
+
+
+    /* Other Mobile Adjustments */
     .modal-content {
         width: 90%;
         margin: 10% auto;
@@ -555,24 +963,104 @@ body, html {
 
     .audio-controls {
         display: flex;
-        flex-direction: row;
+        flex-direction: row; /* Keep horizontal */
         justify-content: space-between;
         align-items: center;
         margin-top: 10px;
         margin-bottom: 10px;
+        flex-wrap: wrap; /* Allow wrapping */
     }
 
     .play-pause, .get-more-info {
-        flex: 1;
-        margin: 0 5px;
+        flex-basis: 48%; /* Roughly half width */
+        margin: 5px 1%;
         padding: 5px 0px;
         font-size: 11px;
+        text-align: center;
     }
 
     .volume {
-        width: 80%;
+        width: 100%; /* Full width */
         margin-top: 10px;
     }
+
+    /* Hide unnecessary controls on mobile */
+    .leaflet-control-zoom { /* Already hidden globally now */
+        /* display: none !important; */
+    }
+    /* .leaflet-control-scale is hidden globally */
+
+    .leaflet-control-attribution {
+        display: none !important;
+    }
+
+
+    #new-call-banner {
+       top: 60px !important; /* Position below summary bar */
+       font-size: 14px; /* Smaller font */
+       padding: 6px 12px;
+       z-index: 998; /* Below summary/sidebar, above map */
+       max-width: calc(100% - 40px); /* Prevent overflow */
+   }
+
+    /* Adjust notification position for taller control panel */
+    .notification {
+        bottom: 200px; /* Position above the taller control panel (180px + 20px buffer) */
+    }
+}
+
+/* Further adjustments for very small screens (if needed) */
+@media screen and (max-width: 480px) {
+    /* Grid layout should adapt reasonably well, but fine-tune if needed */
+     #control-panel {
+         height: auto; /* Allow height to grow if needed */
+         min-height: 180px;
+         gap: 5px; /* Reduce gap slightly */
+     }
+     #control-panel button,
+     #control-panel select {
+        font-size: 10px;
+        padding: 4px;
+     }
+     #control-panel .controls-checkbox-group {
+         gap: 8px; /* Smaller gap */
+     }
+     #control-panel .controls-checkbox-group label {
+        font-size: 9px;
+     }
+     #control-panel .controls-checkbox-group input[type="checkbox"] {
+        width: 10px; height: 10px;
+     }
+      #search-input {
+        font-size: 11px;
+        padding: 4px 6px;
+     }
+     .heatmap-controls label {
+        font-size: 9px;
+     }
+
+    #new-call-banner {
+        font-size: 12px;
+        padding: 5px 10px;
+    }
+
+    .ticker-item {
+        font-size: 14px;
+        padding: 0 10px;
+    }
+
+     .play-pause, .get-more-info {
+        font-size: 10px;
+     }
+
+     #category-sidebar {
+        bottom: auto; /* Let height control */
+        height: calc(100vh - 50px - 190px); /* Adjust approx height */
+        max-height: calc(100vh - 50px - 190px);
+     }
+     .notification {
+         bottom: 210px; /* Adjust further if needed */
+     }
 }
 
 /* Ensure consistent styling across browsers */
@@ -587,11 +1075,6 @@ input[type="time"] {
 ::selection {
     background-color: var(--primary-color);
     color: var(--background-color);
-}
-
-/* Ensure smooth scrolling for all browsers */
-html {
-    scroll-behavior: smooth;
 }
 
 /* Improve focus visibility for accessibility */
@@ -632,25 +1115,30 @@ html {
 .modal-buttons {
     display: flex;
     justify-content: center;
+    gap: 10px; /* Add gap between buttons */
     margin-top: 20px;
 }
 
-.modal-buttons button {
-    padding: 10px 20px;
-    background-color: var(--background-color);
+/* Style modal confirmation/cancel buttons */
+.modal-buttons button.confirm-btn {
+    background-color: var(--hover-color);
     color: var(--text-color);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.3s;
-    font-family: 'Share Tech Mono', monospace;
 }
-
-.modal-buttons button:hover {
+.modal-buttons button.confirm-btn:hover {
     background-color: var(--primary-color);
     color: var(--background-color);
-    box-shadow: 0 0 20px var(--primary-color);
 }
+.modal-buttons button.cancel-btn {
+    background-color: #330000;
+    color: #ff0000;
+    border: 1px solid #ff0000;
+}
+.modal-buttons button.cancel-btn:hover {
+    background-color: #ff0000;
+    color: var(--background-color);
+}
+
 
 @keyframes pulse {
     0% {
@@ -664,14 +1152,14 @@ html {
     }
 }
 
-/* Mobile responsiveness */
+/* Mobile responsiveness for live stream button */
 @media screen and (max-width: 768px) {
-    #live-stream-button {
-        font-size: 12px;
-        padding: 6px 8px;
-        margin-left: 5px;
+    #control-panel #live-stream-button { /* Target specifically inside panel */
+        margin-left: 0; /* Use grid gap */
+        margin-right: 0;
+        /* Flex handles width */
     }
-    
+
     .stream-warning-modal .modal-content {
         width: 90%;
         margin: 10% auto;
@@ -679,9 +1167,9 @@ html {
 }
 
 @media screen and (max-width: 480px) {
-    #live-stream-button {
-        font-size: 11px;
-        padding: 5px 6px;
+    #control-panel #live-stream-button {
+        font-size: 10px; /* Match other buttons */
+        padding: 4px;
     }
 }
 /* Marker Correction Styles */
@@ -852,7 +1340,7 @@ html {
     }
 }
 
-/* Mobile Responsiveness */
+/* Mobile Responsiveness for Correction/Relocation */
 @media screen and (max-width: 768px) {
     .correction-modal .modal-content {
         width: 95%;
@@ -866,7 +1354,7 @@ html {
     }
 
     .notification {
-        bottom: 70px;
+        /* Moved to main mobile block */
         right: 10px;
         left: 10px;
         text-align: center;
@@ -878,52 +1366,6 @@ html {
     }
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes slideDown {
-  from {
-    transform: translateY(-100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-.relocation-banner button {
-  font-family: 'Share Tech Mono', monospace;
-  transition: all 0.3s ease;
-  border: 1px solid var(--primary-color);
-}
-
-.relocation-banner button:hover {
-  box-shadow: 0 0 10px var(--primary-color);
-  background-color: var(--primary-color);
-  color: var(--background-color);
-}
-const notificationStyle = document.createElement('style');
-notificationStyle.textContent = `
-  @keyframes notificationSlideIn {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
-  }
-`;
-document.head.appendChild(notificationStyle);
-
 /* Popup link styles */
 .popup-top-container {
     display: flex;
@@ -933,6 +1375,7 @@ document.head.appendChild(notificationStyle);
     padding: 0 5px 12px 5px;
     border-bottom: 1px solid var(--border-color);
     width: 100%;
+    box-sizing: border-box;
 }
 
 /* Links container within top container */
@@ -967,6 +1410,8 @@ document.head.appendChild(notificationStyle);
     font-size: 12px;
     color: var(--text-color);
     opacity: 0.8;
+    white-space: nowrap; /* Prevent wrapping */
+    padding-left: 10px; /* Add some space */
 }
 
 /* Hover effects for links */
@@ -977,7 +1422,7 @@ document.head.appendChild(notificationStyle);
     text-decoration: none !important;
 }
 
-/* Mobile responsiveness */
+/* Mobile responsiveness for popup links */
 @media screen and (max-width: 768px) {
     .popup-top-container {
         padding: 0 5px 10px 5px;
@@ -996,7 +1441,7 @@ document.head.appendChild(notificationStyle);
 
 .user-management-dropdown {
     position: relative;
-    display: inline-block;
+    display: inline-block; /* Let grid/flex control size */
 }
 
 .dropdown-content {
@@ -1008,7 +1453,8 @@ document.head.appendChild(notificationStyle);
     border: 1px solid var(--border-color);
     z-index: 1002;
     border-radius: 4px;
-    right: 0;
+    right: 0; /* Align to the right */
+    top: 100%; /* Position below the button */
 }
 
 .dropdown-content a {
@@ -1047,6 +1493,7 @@ document.head.appendChild(notificationStyle);
     color: var(--text-color);
     font-family: 'Share Tech Mono', monospace;
     border-radius: 4px;
+    box-sizing: border-box; /* Include padding in width */
 }
 
 .users-list {
@@ -1095,14 +1542,18 @@ document.head.appendChild(notificationStyle);
     box-shadow: 0 0 10px #ff0000;
 }
 
+/* Mobile responsiveness for user management dropdown */
 @media screen and (max-width: 768px) {
+    /* Dropdown button width is handled by grid */
     .dropdown-content {
+        /* Use fixed positioning for mobile overlay effect */
         position: fixed;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
         width: 90%;
         max-width: 300px;
+        box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
     }
 
     .user-item {
@@ -1131,15 +1582,18 @@ document.head.appendChild(notificationStyle);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap; /* Allow wrapping on small screens */
 }
 
 .session-details {
     flex-grow: 1;
+    padding-right: 10px; /* Add space between details and button */
 }
 
 .session-actions {
     display: flex;
     gap: 10px;
+    margin-top: 5px; /* Add margin if it wraps */
 }
 
 .terminate-session-btn {
@@ -1166,6 +1620,7 @@ document.head.appendChild(notificationStyle);
 
 .session-item small {
     opacity: 0.7;
+    display: block; /* Ensure small tags take full width if needed */
 }
 
 .device-info {
@@ -1187,10 +1642,11 @@ document.head.appendChild(notificationStyle);
     -webkit-appearance: none;
     -moz-appearance: none;
     position: relative;
-    background-image: url('data:image/svg+xml;utf8,<svg fill="%23cccccc" height="12" viewBox="0 0 24 24" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    background-image: url('data:image/svg+xml;utf8,<svg fill="%2300ff00" height="12" viewBox="0 0 24 24" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); /* Changed fill color */
     background-repeat: no-repeat;
     background-position: right 10px center;
     background-size: 12px;
+    box-sizing: border-box;
 }
 
 .user-selection {
@@ -1202,6 +1658,8 @@ document.head.appendChild(notificationStyle);
     font-weight: bold;
     color: var(--text-color);
     font-family: 'Share Tech Mono', monospace;
+    display: block; /* Make label take full width */
+    margin-bottom: 5px;
 }
 
 .styled-select:hover {
@@ -1213,7 +1671,7 @@ document.head.appendChild(notificationStyle);
     box-shadow: 0 0 5px var(--primary-color);
     border-color: var(--primary-color);
 }
-/* Scrollbar Styles */
+/* Scrollbar Styles for Session List */
 .sessions-list::-webkit-scrollbar {
     width: 12px;
 }
@@ -1238,185 +1696,7 @@ document.head.appendChild(notificationStyle);
     scrollbar-color: var(--primary-color) var(--background-color);
 }
 
-/* Range Slider Styles */
-input[type="range"] {
-    -webkit-appearance: none;
-    width: 100%;
-    background: transparent;
-}
-
-input[type="range"]:focus {
-    outline: none;
-}
-
-input[type="range"]::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 8px;
-    cursor: pointer;
-    background: var(--border-color);
-    border-radius: 4px;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-    border: 2px solid var(--primary-color);
-    height: 20px;
-    width: 20px;
-    border-radius: 50%;
-    background: var(--background-color);
-    cursor: pointer;
-    -webkit-appearance: none;
-    margin-top: -6px;
-}
-
-input[type="range"]:focus::-webkit-slider-runnable-track {
-    background: var(--primary-color);
-}
-
-input[type="range"]::-moz-range-track {
-    width: 100%;
-    height: 8px;
-    cursor: pointer;
-    background: var(--border-color);
-    border-radius: 4px;
-}
-
-input[type="range"]::-moz-range-thumb {
-    border: 2px solid var(--primary-color);
-    height: 20px;
-    width: 20px;
-    border-radius: 50%;
-    background: var(--background-color);
-    cursor: pointer;
-}
-
-input[type="range"]::-ms-track {
-    width: 100%;
-    height: 8px;
-    cursor: pointer;
-    background: transparent;
-    border-color: transparent;
-    color: transparent;
-}
-
-input[type="range"]::-ms-fill-lower {
-    background: var(--border-color);
-    border-radius: 4px;
-}
-
-input[type="range"]::-ms-fill-upper {
-    background: var(--border-color);
-    border-radius: 4px;
-}
-
-input[type="range"]::-ms-thumb {
-    border: 2px solid var(--primary-color);
-    height: 20px;
-    width: 20px;
-    border-radius: 50%;
-    background: var(--background-color);
-    cursor: pointer;
-}
-
-input[type="range"]:focus::-ms-fill-lower {
-    background: var(--primary-color);
-}
-
-input[type="range"]:focus::-ms-fill-upper {
-    background: var(--primary-color);
-}
-
-#category-sidebar {
-  position: absolute;
-  left: 0px;
-  top: 80px; /* Position below the control panel */
-  width: 180px;
-  background-color: rgba(0, 0, 0, 0.8);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-  z-index: 999;
-  font-family: 'Share Tech Mono', monospace;
-  padding: 10px;
-  overflow-y: auto;
-  max-height: calc(100vh - 180px);
-}
-
-.category-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 5px;
-  border-bottom: 1px solid rgba(0, 255, 0, 0.2);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.category-item:hover {
-  background-color: var(--hover-color);
-}
-
-.category-item.active {
-  background-color: rgba(0, 50, 0, 0.8);
-  border-left: 3px solid var(--primary-color);
-  box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3);
-}
-
-.category-name {
-  font-size: 18px;
-}
-
-.category-count {
-  background-color: var(--hover-color);
-  color: var(--text-color);
-  border-radius: 12px;
-  padding: 2px 8px;
-  font-size: 18px;
-  min-width: 25px;
-  text-align: center;
-}
-
-/* Responsive design for mobile */
-@media screen and (max-width: 768px) {
-  #category-sidebar {
-    top: 0px;
-    bottom: auto; /* Positioned higher above control panel */
-    left: 0px;
-    width: 130px; /* Increased width */
-    max-height: calc(100vh - 350px);
-	box-shadow: 0 0 15px rgba(0, 255, 0, 0.6);
-    font-size: 14px; /* Larger font */
-    z-index: 998; /* Ensure it's below zoom controls but above map */
-    background-color: rgba(0, 0, 0, 0.9); /* Darker background for better contrast */
-    border: 2px solid var(--border-color); /* More prominent border */
-  }
-  
-  .category-header {
-    font-size: 18px; /* Larger header font */
-    padding: 10px 0;
-  }
-  
-  .category-item {
-    padding: 10px 8px; /* More padding for easier tapping */
-    margin-bottom: 2px;
-  }
-  
-  .category-name {
-    font-size: 14px; /* Larger text */
-  }
-  
-  .category-count {
-    font-size: 16px;
-    min-width: 25px;
-    padding: 2px 8px;
-    font-weight: bold;
-  }
-
-  /* Make sure the bottom controls don't overlap with the sidebar */
-  #control-panel {
-    z-index: 997;
-  }
-}
+/* Category Badge Style */
 .category-badge {
   background-color: var(--hover-color);
   color: #00ccff;
@@ -1425,166 +1705,9 @@ input[type="range"]:focus::-ms-fill-upper {
   font-size: 12px;
   margin-left: 5px;
   display: inline-block;
+  vertical-align: middle; /* Align with text */
 }
 
-.leaflet-control-zoom {
-  position: absolute;
-  right: 10px;
-  left: auto !important;
-  top: 80px !important; /* Keep it below the control panel */
-}
-
-@media screen and (max-width: 768px) {
-  .leaflet-control-zoom {
-    display: none !important;
-  }
-}
-/* Summary Bar Styles */
-#summary-bar {
-  position: absolute;
-  top: 74px; /* Position it just below the control panel */
-  left: 222px;
-  right: 222px;
-  height: 40px;
-  background-color: rgba(0, 0, 0, 0.8);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-  z-index: 999;
-  overflow: hidden;
-  font-family: 'Share Tech Mono', monospace;
-}
-
-.ticker-wrap {
-  width: 100%;
-  height: 115%;
-  overflow: hidden;
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.ticker {
-  display: inline-flex;
-  white-space: nowrap;
-  padding-right: 100%;
-  animation-iteration-count: infinite;
-  animation-timing-function: linear;
-  animation-name: ticker;
-  animation-duration: 30s; /* Adjust speed here */
-}
-
-/* Make sure we duplicate content for seamless loop */
-.ticker-item {
-  display: inline-block;
-  padding: 0 20px;
-  color: var(--text-color);
-  font-size: 21px;
-  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
-}
-
-.summary-highlight {
-  color: #00ccff;
-  font-weight: bold;
-}
-
-@keyframes ticker {
-  0% {
-    transform: translate3d(0, 0, 0);
-  }
-  100% {
-    transform: translate3d(-100%, 0, 0);
-  }
-}
-
-/* Mobile responsiveness */
-@media screen and (max-width: 768px) {
-  #summary-bar {
-    top: 0px;
-    left: 10px;
-    right: 10px;
-    height: 50px;
-  }
-  
-  .ticker-item {
-    font-size: 18px;
-  }
-  
-  #category-sidebar {
-    top: 110px;
-  }
-  
-  #map {
-    height: calc(100vh - 170px);
-  }
-}
-/* Make the attribution stay at the bottom but go under the control panel */
-@media screen and (max-width: 768px) {
-    .leaflet-control-attribution {
-        display: none !important;
-    }
-    
-    /* Make sure control panel stays above the attribution */
-    #control-panel {
-        z-index: 997; /* This is already set in your code but making sure it's higher */
-    }
-}
-
-/* For the call banner position */
-#new-call-banner {
-    top: 130px !important;
-}
-/* Hide map scale on mobile */
-@media screen and (max-width: 768px) {
-    .leaflet-control-scale {
-        display: none !important;
-    }
-}
-
-/* Style zoom buttons to match theme */
-.leaflet-control-zoom {
-    border: none !important;
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5) !important;
-}
-
-.leaflet-control-zoom a {
-    background-color: #000000 !important; /* Black background */
-    color: #00ff00 !important; /* Green text */
-    border: 1px solid #00ff00 !important; /* Green border */
-    font-family: 'Share Tech Mono', monospace !important;
-    transition: all 0.3s !important;
-}
-
-.leaflet-control-zoom a:hover {
-    background-color: #00ff00 !important; /* Green background on hover */
-    color: #000000 !important; /* Black text on hover */
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.7) !important;
-}
-
-/* Style the zoom in button */
-.leaflet-control-zoom-in {
-    border-bottom: 1px solid #00ff00 !important;
-}
-
-/* Hide attribution on mobile */
-@media screen and (max-width: 768px) {
-    .leaflet-control-attribution {
-        display: none !important;
-    }
-}
-.leaflet-control-scale {
-        display: none !important;
-}
-.leaflet-control-attribution {
-        z-index: 996 !important; /* Lower z-index than control panel */
-        background-color: rgba(0, 0, 0, 0.7) !important;
-        color: var(--text-color) !important;
-        border: 1px solid var(--border-color);
-        font-size: 10px !important;
-        padding: 2px 5px !important;
-        border-radius: 3px !important;
-}
 /* Pulsing icon CSS */
 .leaflet-pulsing-icon {
     border-radius: 1%;
@@ -1599,63 +1722,51 @@ input[type="range"]:focus::-ms-fill-upper {
     width: 300%;
     position: absolute;
     margin: -100% 0 0 -100%;
+    box-shadow: 0 0 6px 2px red; /* Default color set in JS */
     -webkit-animation: pulsate 1s ease-out;
     animation: pulsate 1s ease-out;
     -webkit-animation-iteration-count: infinite;
     animation-iteration-count: infinite;
     -webkit-animation-delay: 1.1s;
     animation-delay: 1.1s;
+    opacity: 0; /* Start invisible */
 }
 
 @-webkit-keyframes pulsate {
     0% {
-        -webkit-transform: scale(0,0);
-        transform: scale(0,0);
-        opacity: 1;
-        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
-        filter: alpha(opacity=0);
+        -webkit-transform: scale(0.1, 0.1);
+        transform: scale(0.1, 0.1);
+        opacity: 0;
     }
     50% {
         opacity: 1;
-        -ms-filter: none;
-        -webkit-filter: none;
-        filter: none;
     }
     100% {
-        -webkit-transform: scale(1.9,1.9);
-        transform: scale(1.9,1.9);
+        -webkit-transform: scale(1.2, 1.2);
+        transform: scale(1.2, 1.2);
         opacity: 0;
-        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
-        filter: alpha(opacity=0);
     }
 }
 
 @keyframes pulsate {
-    0% {
-        -webkit-transform: scale(0,0);
-        transform: scale(0,0);
-        opacity: 1;
-        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
-        filter: alpha(opacity=0);
+     0% {
+        -webkit-transform: scale(0.1, 0.1);
+        transform: scale(0.1, 0.1);
+        opacity: 0;
     }
     50% {
         opacity: 1;
-        -ms-filter: none;
-        -webkit-filter: none;
-        filter: none;
     }
     100% {
-        -webkit-transform: scale(1.9,1.9);
-        transform: scale(1.9,1.9);
+        -webkit-transform: scale(1.2, 1.2);
+        transform: scale(1.2, 1.2);
         opacity: 0;
-        -ms-filter: "progid:DXImageTransform.Microsoft.Alpha(Opacity=0)";
-        filter: alpha(opacity=0);
     }
 }
 /* Checkbox group styles */
 .controls-checkbox-group {
     display: flex;
-    flex-direction: column;
+    flex-direction: column; /* Default desktop layout */
     margin-right: 10px;
 }
 
@@ -1667,6 +1778,7 @@ input[type="range"]:focus::-ms-fill-upper {
     color: var(--text-color);
     font-family: 'Share Tech Mono', monospace;
     transition: all 0.3s;
+    font-size: 12px; /* Slightly smaller font */
 }
 
 .controls-checkbox-group label:hover {
@@ -1677,14 +1789,15 @@ input[type="range"]:focus::-ms-fill-upper {
     margin-right: 5px;
     appearance: none;
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 14px; /* Smaller checkbox */
+    height: 14px;
     background-color: var(--background-color);
     border: 1px solid var(--border-color);
     border-radius: 3px;
     cursor: pointer;
     position: relative;
     vertical-align: middle;
+    top: -1px; /* Align better */
 }
 
 .controls-checkbox-group input[type="checkbox"]:checked {
@@ -1696,7 +1809,7 @@ input[type="range"]:focus::-ms-fill-upper {
     content: '✓';
     position: absolute;
     color: var(--primary-color);
-    font-size: 12px;
+    font-size: 10px; /* Smaller checkmark */
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
@@ -1707,20 +1820,8 @@ input[type="range"]:focus::-ms-fill-upper {
     box-shadow: 0 0 5px var(--primary-color);
 }
 
-/* Mobile responsiveness */
-@media screen and (max-width: 768px) {
-    .controls-checkbox-group {
-        flex-direction: row;
-        justify-content: space-between;
-        width: 100%;
-        margin-bottom: 10px;
-    }
+/* Mobile responsiveness for checkboxes is handled within #control-panel mobile rules */
 
-    .controls-checkbox-group label {
-        font-size: 12px;
-        margin-bottom: 0;
-    }
-}
 /* Address search bar styles */
 .address-search-banner {
   position: fixed;
@@ -1736,6 +1837,19 @@ input[type="range"]:focus::-ms-fill-upper {
   box-shadow: 0 0 10px var(--primary-color);
   z-index: 2000;
   animation: slideDown 0.3s ease-out;
+}
+
+#address-search-input {
+    width: 100%;
+    max-width: 500px;
+    padding: 8px 10px;
+    background-color: #000;
+    color: #00ff00;
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    box-sizing: border-box; /* Add box-sizing */
 }
 
 /* Google Autocomplete dropdown theming */
@@ -1784,14 +1898,14 @@ input[type="range"]:focus::-ms-fill-upper {
   border: 1px solid rgba(0, 255, 0, 0.3);
 }
 
-/* Mobile responsiveness */
+/* Mobile responsiveness for address search */
 @media screen and (max-width: 768px) {
   .address-search-banner {
     padding: 10px;
   }
-  
+
   #address-search-input {
-    font-size: 14px !important;
+    font-size: 14px !important; /* Keep readable size */
     padding: 6px 8px !important;
   }
 

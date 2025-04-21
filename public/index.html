@@ -165,6 +165,7 @@
 </head>
 
 <body>
+  <button id="sidebar-toggle-btn" aria-label="Toggle Category Sidebar">☰ Categories</button>
   <div id="map"></div>
 
   <div id="category-sidebar">
@@ -173,7 +174,7 @@
   </div>
 
   <div id="control-panel">
-    <div class="left-controls">
+     <div class="left-controls">
       <select id="time-filter">
         <option value="1">Last 1 hour</option>
         <option value="3">Last 3 hours</option>
@@ -185,7 +186,7 @@
         <option value="custom">Custom range</option>
       </select>
       <button id="toggle-mode">Day/Night</button>
-    </div>
+      </div>
 
     <div id="new-call-banner" class="hidden">
       New call from: <span id="talkgroup-name"></span><span class="ellipsis"></span>
@@ -226,14 +227,12 @@
         </div>
       </div>
     </div>
-  </div>
+     </div>
 
   <div id="summary-bar">
     <div class="ticker-wrap"><div class="ticker"></div></div>
   </div>
-
-  <!-- Modals -->
-  <div id="custom-time-modal" class="modal">
+<div id="custom-time-modal" class="modal">
     <div class="modal-content">
       <h2>Select Custom Time Range</h2>
       <div class="form-group"><label>Start Date:</label><input type="date" id="custom-start-date" /></div>
@@ -241,8 +240,8 @@
       <div class="form-group"><label>End Date:</label><input type="date" id="custom-end-date" /></div>
       <div class="form-group"><label>End Time:</label><input type="time" id="custom-end-time" /></div>
       <div class="modal-buttons">
-        <button onclick="applyCustomTimeFilter()">Apply</button>
-        <button onclick="document.getElementById('custom-time-modal').style.display='none'">Cancel</button>
+        <button onclick="applyCustomTimeFilter()" class="confirm-btn">Apply</button>
+        <button type="button" class="cancel-btn" onclick="document.getElementById('custom-time-modal').style.display='none'">Cancel</button>
       </div>
     </div>
   </div>
@@ -255,7 +254,7 @@
         <div class="form-group"><label>Password:</label><input type="password" id="new-password" required /></div>
         <div class="modal-buttons">
           <button type="submit" class="confirm-btn">Add User</button>
-          <button type="button" class="cancel-btn">Cancel</button>
+          <button type="button" class="cancel-btn" onclick="document.getElementById('add-user-modal').style.display='none'">Cancel</button>
         </div>
       </form>
     </div>
@@ -264,8 +263,10 @@
   <div id="view-users-modal" class="modal">
     <div class="modal-content">
       <h2>Manage Users</h2>
-      <div id="users-list" class="users-list"></div>
-      <div class="modal-buttons"><button class="cancel-btn">Close</button></div>
+      <div id="users-list" class="users-list">Loading...</div>
+      <div class="modal-buttons">
+          <button type="button" class="cancel-btn" onclick="document.getElementById('view-users-modal').style.display='none'">Close</button>
+        </div>
     </div>
   </div>
 
@@ -276,18 +277,16 @@
         <label for="user-dropdown">Select User:</label>
         <select id="user-dropdown" class="styled-select"></select>
       </div>
-      <div id="sessions-list" class="sessions-list"></div>
-      <div class="modal-buttons"><button class="cancel-btn">Close</button></div>
+      <div id="sessions-list" class="sessions-list">Loading...</div>
+      <div class="modal-buttons">
+          <button type="button" class="cancel-btn" onclick="document.getElementById('sessions-modal').style.display='none'">Close</button>
+        </div>
     </div>
   </div>
-
-  <!-- Audio player container -->
   <div id="audio-container" style="display: none;"></div>
 
-  <!-- Load config then app -->
   <script src="config.js"></script>
 
-  <!-- Dynamically load Google Maps JS API -->
   <script>
     const gKey = window?.appConfig?.geocoding?.googleApiKey;
     if (gKey) {
