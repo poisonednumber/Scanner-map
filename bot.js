@@ -665,6 +665,7 @@ app.get('/audio/:id', (req, res) => {
 });
 
 // Function to start the transcription process
+// Function to start the transcription process
 function startTranscriptionProcess() {
   if (transcriptionProcess) {
     // Process already running
@@ -718,16 +719,36 @@ function startTranscriptionProcess() {
       } else if (response.error) {
         logger.error(`Transcription error: ${response.error}`);
         
-        // If the error is about a file not existing, find and remove that item from the queue
-        if (response.error.includes("does not exist") && response.id) {
-          const pendingItem = transcriptionQueue.find(item => item.id === response.id);
-          if (pendingItem && pendingItem.callback) {
-            // Execute callback with empty string to continue the flow
-            pendingItem.callback("");
+        // Get the current item from the queue (should be the one we're processing)
+        const currentItem = transcriptionQueue[0];
+        
+        // Handle specific error types
+        if (response.error.includes("Invalid data") || 
+            response.error.includes("corrupt") ||
+            response.error.includes("does not exist")) {
+          
+          if (currentItem && currentItem.id === response.id) {
+            // Execute callback with empty string for corrupted files
+            if (currentItem.callback) {
+              currentItem.callback("");
+            }
             
             // Remove this item from the queue
-            transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
-            logger.info(`Removed non-existent file from queue: ID ${response.id}`);
+            transcriptionQueue.shift();
+            logger.info(`Removed problematic file from queue: ID ${response.id}`);
+          }
+        } else if (currentItem && currentItem.retries < currentItem.maxRetries) {
+          // For errors that might be transient, try again
+          currentItem.retries++;
+          logger.info(`Retrying transcription for ID ${response.id}, attempt ${currentItem.retries}`);
+          // Don't remove from queue, just reset processing flag to retry
+        } else {
+          // We've exhausted retries or don't have a matching item, give up
+          if (currentItem && currentItem.callback) {
+            currentItem.callback("");
+          }
+          if (currentItem) {
+            transcriptionQueue.shift();
           }
         }
         
@@ -1055,6 +1076,7 @@ setInterval(cleanupOldAudioFiles, 24 * 60 * 60 * 1000);
 } */
 
 // Function to transcribe audio
+// Function to transcribe audio
 function transcribeAudio(filePath, callback) {
   // First check if the file exists before attempting transcription
   if (!fs.existsSync(filePath)) {
@@ -1062,6 +1084,23 @@ function transcribeAudio(filePath, callback) {
     if (callback) {
       callback(""); // Return empty string for non-existent files
     }
+    return;
+  }
+  
+  // Add file validation step
+  try {
+    // Check file size - skip files that are too small or too large
+    const stats = fs.statSync(filePath);
+    if (stats.size < 1000) { // Less than 1KB
+      logger.warn(`Audio file too small, likely corrupted: ${filePath} (${stats.size} bytes)`);
+      if (callback) callback("");
+      return;
+    }
+    
+    // You could add additional validation here if needed
+  } catch (error) {
+    logger.error(`Error validating audio file: ${error.message}`);
+    if (callback) callback("");
     return;
   }
   
@@ -1078,11 +1117,13 @@ function transcribeAudio(filePath, callback) {
     }
   };
   
-  // Add to queue
+  // Add to queue with retry mechanism
   transcriptionQueue.push({
     id: requestId,
     path: filePath,
-    callback: processCallback  // Use the wrapper callback
+    callback: processCallback,  // Use the wrapper callback
+    retries: 0,    // Track retry attempts
+    maxRetries: 2  // Maximum number of retries
   });
   
   // Try to process
