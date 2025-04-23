@@ -73,6 +73,10 @@ This project can be installed on Windows or Linux. Automated installation script
    - (If Auth Enabled) Run `node init-admin.js`.
 6. **Run:** Follow the "How to Run" instructions provided by the script.
 
+run bot.js in one terminal 
+and webserver.js in another
+
+
 ### 🪟 Windows Installation
 
 1. **Download the Script:** Save the Windows installation script (install_scanner_map.ps1) to your Windows machine.
@@ -115,6 +119,9 @@ This project can be installed on Windows or Linux. Automated installation script
    - (If Skipped) Run `node import_csv.js` after placing talkgroups.csv.
    - (If Auth Enabled) Run `node init-admin.js`.
 8. **Run:** Follow the "How to Run" instructions provided by the script.
+
+run bot.js in one terminal 
+and webserver.js in another
 
 ## ⚙️ Configuration Details
 
