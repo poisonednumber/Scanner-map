@@ -73,8 +73,8 @@ This project can be installed on Windows or Linux. Automated installation script
    - (If Auth Enabled) Run `node init-admin.js`.
 6. **Run:** Follow the "How to Run" instructions provided by the script.
 
-run bot.js in one terminal 
-and webserver.js in another
+   run bot.js in one terminal 
+   and webserver.js in another
 
 
 ### 🪟 Windows Installation
@@ -120,8 +120,8 @@ and webserver.js in another
    - (If Auth Enabled) Run `node init-admin.js`.
 8. **Run:** Follow the "How to Run" instructions provided by the script.
 
-run bot.js in one terminal 
-and webserver.js in another
+   run bot.js in one terminal 
+   and webserver.js in another
 
 ## ⚙️ Configuration Details
 
