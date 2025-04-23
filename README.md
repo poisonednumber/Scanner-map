@@ -86,9 +86,11 @@ This project can be installed on Windows or Linux. Automated installation script
    # Example: If saved to Downloads
    cd $HOME\Downloads
    ```
-5. **Run the Script:**
+5. **Run the Script (you may need to rerun this after 1st full install to finish!:**
    ```powershell
    .\install_scanner_map.ps1
+
+   or right click and run the .bat file as admin
    ```
 6. **Follow Prompts:** The script will guide you through:
    - Installing prerequisites using winget (Node.js, Python, Git, VS Build Tools, FFmpeg). Ensure these are added to your system PATH during their installations.
