@@ -1403,9 +1403,9 @@ function sendTranscriptionMessage(
   transcriptionText,
   systemName,
   source,
-  audioID,
+  audioID, // This is the transcription ID
   talkGroupGroup,
-  callback
+  callback // Callback to pass the message URL back
 ) {
   // Get the full talkgroup name and county from the database
   db.get(
@@ -1414,27 +1414,27 @@ function sendTranscriptionMessage(
     (err, row) => {
       if (err) {
         logger.error('Error fetching talkgroup info:', err);
-        if (callback) callback();
+        if (callback) callback(); // Ensure callback is called even on error
         return;
       }
 
       if (!row) {
         logger.error(`No talk group found for ID: ${talkGroupID}`);
-        if (callback) callback();
+        if (callback) callback(); // Ensure callback is called even on error
         return;
       }
 
-      const fullTalkGroupName = row.alpha_tag || talkGroupName;
-      const categoryName = row.county || 'Uncategorized';
+      const fullTalkGroupName = row.alpha_tag || talkGroupName || `TG ${talkGroupID}`; // Use provided name as fallback
+      const categoryName = row.county || 'Uncategorized'; // Use county for category
 
-      // Determine the channel name (full talk group name)
+      // Determine the channel name (full talk group name, sanitized)
       const channelName = getChannelName(fullTalkGroupName);
 
       // Get or create the category
       getOrCreateCategory(categoryName, (category) => {
         if (!category) {
           logger.error('Failed to get or create category.');
-          if (callback) callback();
+          if (callback) callback(); // Ensure callback is called even on error
           return;
         }
 
@@ -1442,131 +1442,153 @@ function sendTranscriptionMessage(
         getOrCreateChannel(channelName, category.id, (channel) => {
           if (!channel) {
             logger.error('Failed to get or create channel.');
-            if (callback) callback();
+            if (callback) callback(); // Ensure callback is called even on error
             return;
           }
 
           // Look up the audio_id from the database for this transcription
-          db.get('SELECT id FROM audio_files WHERE transcription_id = ?', [audioID], (err, row) => {
-            // Use transcription ID as fallback if audio ID not found
-            const actualAudioID = (err || !row) ? audioID : row.id;
-            
-            // Create a URL for the audio file using the domain from the environment variable
-            const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${actualAudioID}`;
-            
-            // Log the audioID and URL for debugging
-            logger.info(`Transcription ID: ${audioID}, Audio ID: ${actualAudioID}, URL: ${audioUrl}`);
+          // Note: We use transcription ID (`audioID` parameter) for the URL now
+          // as audio_files might get cleaned up.
+          // The audio server route /audio/:id expects the transcription ID.
+          const audioUrl = `http://${PUBLIC_DOMAIN}/audio/${audioID}`;
 
-            // Format source display name based on source format
-            let sourceDisplay;
-            
-            if (!source || source === 'Unknown') {
-              sourceDisplay = 'User-Unknown';
-            } else if (source.startsWith('TR-')) {
-              // For our auto-generated TrunkRecorder IDs
-              sourceDisplay = `TrunkRec-${source.substring(3)}`;
-            } else if (/^\d+$/.test(source)) {
-              // For numeric source IDs from TrunkRecorder
-              sourceDisplay = `Unit-${source}`;
-            } else {
-              // Default format
-              sourceDisplay = `ID-${source}`;
-            }
-            
-            // Generate the transcription line with properly formatted source and explicit ID marker
-            const transcriptionLine = `**${sourceDisplay}:** ${transcriptionText} [Audio](${audioUrl})`;
+          // Log the ID and URL for debugging
+          logger.info(`Creating link for Transcription ID: ${audioID}, Audio URL: ${audioUrl}`);
 
-            // Check if we have a recent message for this channel
-            const cacheKey = channel.id;
-            const cachedMessage = messageCache.get(cacheKey);
-            const currentTime = Date.now();
+          // Format source display name based on source format
+          let sourceDisplay;
+          if (!source || source === 'Unknown') {
+            sourceDisplay = 'User-Unknown';
+          } else if (source.startsWith('TR-')) {
+            sourceDisplay = `TrunkRec-${source.substring(3)}`;
+          } else if (/^\d+$/.test(source)) {
+            sourceDisplay = `Unit-${source}`;
+          } else {
+            sourceDisplay = `ID-${source}`;
+          }
 
-            if (cachedMessage && currentTime - cachedMessage.timestamp < MESSAGE_COOLDOWN) {
-              // Update existing message
-              // Add the new transcription to the existing content
-              const updatedTranscription = cachedMessage.transcriptions + '\n\n' + transcriptionLine;
-              
-              // Update the embed with the new combined transcriptions
+          // Generate the transcription line with properly formatted source and audio link
+          // Ensure transcriptionText itself is handled correctly (e.g., no excessive length initially)
+          const transcriptionLine = `**${sourceDisplay}:** ${transcriptionText} [Audio](${audioUrl})`;
+
+          // --- Start Modified Block for Length Check ---
+
+          const cacheKey = channel.id;
+          const cachedMessage = messageCache.get(cacheKey);
+          const currentTime = Date.now();
+          const MAX_DESC_LENGTH = 4096; // Discord embed description limit
+
+          // Check if we have a recent message for this channel
+          if (cachedMessage && currentTime - cachedMessage.timestamp < MESSAGE_COOLDOWN) {
+            // Calculate potential new length BEFORE concatenating
+            const potentialNewTranscription = cachedMessage.transcriptions + '\n\n' + transcriptionLine;
+
+            if (potentialNewTranscription.length <= MAX_DESC_LENGTH) {
+              // It fits! Update the existing message
+              const updatedTranscription = potentialNewTranscription;
               const embed = cachedMessage.message.embeds[0];
-              const newEmbed = EmbedBuilder.from(embed)
-                .setDescription(updatedTranscription)
-                .setTimestamp(); // Update timestamp to current time
 
-              // Edit the message with the updated embed
-              cachedMessage.message.edit({ embeds: [newEmbed] })
-                .then((editedMsg) => {
-                  // Create or update the transcription IDs array
-                  const transcriptionIds = cachedMessage.transcriptionIds || [];
-                  if (!transcriptionIds.includes(audioID)) {
-                    transcriptionIds.push(audioID);
-                  }
-                  
-                  // Update the cache with the new data
-                  messageCache.set(cacheKey, {
-                    message: editedMsg,
-                    timestamp: currentTime,
-                    transcriptions: updatedTranscription,
-                    url: editedMsg.url,  // Store the message URL
-                    transcriptionIds: transcriptionIds  // Keep a list of transcription IDs in this message
+              // Use try-catch around embed modification as belt-and-suspenders
+              try {
+                const newEmbed = EmbedBuilder.from(embed)
+                  .setDescription(updatedTranscription) // Safe to set now
+                  .setTimestamp();
+
+                cachedMessage.message.edit({ embeds: [newEmbed] })
+                  .then((editedMsg) => {
+                    // Update the cache with the new combined data
+                    const transcriptionIds = cachedMessage.transcriptionIds || [];
+                    if (!transcriptionIds.includes(audioID)) {
+                      transcriptionIds.push(audioID);
+                    }
+                    messageCache.set(cacheKey, {
+                      message: editedMsg,
+                      timestamp: currentTime,
+                      transcriptions: updatedTranscription, // Store the combined text
+                      url: editedMsg.url,
+                      transcriptionIds: transcriptionIds
+                    });
+                    logger.info(`Updated message with transcription ID ${audioID}, URL: ${editedMsg.url}`);
+                    if (callback) {
+                      callback(editedMsg.url); // Pass back the message URL
+                    }
+                  })
+                  .catch((err) => {
+                    logger.error('Error editing message:', err);
+                    // If editing fails, clear cache and send a new message as fallback
+                    messageCache.delete(cacheKey);
+                    sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLine, talkGroupID, audioID, callback);
                   });
-                  
-                  logger.info(`Updated message with transcription ID ${audioID}, URL: ${editedMsg.url}`);
-                  
-                  if (callback) {
-                    callback(editedMsg.url);  // Pass back the message URL
-                  }
-                })
-                .catch((err) => {
-                  logger.error('Error editing message:', err);
-                  if (callback) callback();
-                });
+
+              } catch (embedError) {
+                 // This catch block handles potential errors during .from() or .setDescription() itself
+                 logger.error('Error modifying embed description (pre-edit):', embedError);
+                 messageCache.delete(cacheKey); // Clear cache entry
+                 sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLine, talkGroupID, audioID, callback);
+              }
+
             } else {
-              // Create a new message
-              const listenLiveButton = new ButtonBuilder()
-                .setCustomId(`listen_live_${talkGroupID}`)
-                .setLabel('🎧 Listen Live')
-                .setStyle(ButtonStyle.Primary);
-
-              const row = new ActionRowBuilder().addComponents(listenLiveButton);
-
-              // Create the embed for a new message
-              const embed = new EmbedBuilder()
-                .setTitle(fullTalkGroupName)
-                .setDescription(transcriptionLine)
-                .setTimestamp()
-                .setColor(0x00ff00);
-
-              // Send the new message
-              channel.send({
-                embeds: [embed],
-                components: [row],
-              })
-                .then((msg) => {
-                  // Cache the new message with transcription ID
-                  messageCache.set(cacheKey, {
-                    message: msg,
-                    timestamp: currentTime,
-                    transcriptions: transcriptionLine,
-                    url: msg.url,  // Store the message URL
-                    transcriptionIds: [audioID]  // Initialize with this transcription ID
-                  });
-                  
-                  logger.info(`Created new message with transcription ID ${audioID}, URL: ${msg.url}`);
-                  
-                  if (callback) {
-                    callback(msg.url);  // Pass back the message URL
-                  }
-                })
-                .catch((err) => {
-                  logger.error('Error sending transcription message:', err);
-                  if (callback) callback();
-                });
+              // Combined content is too long, send a NEW message instead of editing
+              logger.info(`Combined description too long (${potentialNewTranscription.length} > ${MAX_DESC_LENGTH}). Sending new message.`);
+              // Invalidate the cache for this channel so the next message *is* new
+              messageCache.delete(cacheKey);
+              // Call the refactored function to send a new message
+              sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLine, talkGroupID, audioID, callback);
             }
-          });
+          } else {
+             // No recent cached message OR the previous attempt decided to send a new one
+             // Call the refactored function to send a new message
+             sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLine, talkGroupID, audioID, callback);
+          }
+
+          // --- End Modified Block ---
         });
       });
     }
   );
+}
+
+//function to handle sending a fresh message
+function sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLine, talkGroupID, audioID, callback) {
+    const listenLiveButton = new ButtonBuilder()
+      .setCustomId(`listen_live_${talkGroupID}`)
+      .setLabel('🎧 Listen Live')
+      .setStyle(ButtonStyle.Primary);
+
+    const row = new ActionRowBuilder().addComponents(listenLiveButton);
+
+    // Create the embed for a new message
+    const embed = new EmbedBuilder()
+      .setTitle(fullTalkGroupName)
+      .setDescription(transcriptionLine) // Description is just the single new line here
+      .setTimestamp()
+      .setColor(0x00ff00);
+
+    // Send the new message
+    channel.send({
+      embeds: [embed],
+      components: [row],
+    })
+      .then((msg) => {
+        const cacheKey = channel.id;
+        const currentTime = Date.now();
+        // Cache the new message, starting fresh
+        messageCache.set(cacheKey, {
+          message: msg,
+          timestamp: currentTime,
+          transcriptions: transcriptionLine, // Start with just the new line
+          url: msg.url,
+          transcriptionIds: [audioID] // Initialize with this transcription ID
+        });
+        logger.info(`Created new message with transcription ID ${audioID}, URL: ${msg.url}`);
+        if (callback) {
+          callback(msg.url); // Pass back the message URL
+        }
+      })
+      .catch((err) => {
+        logger.error('Error sending new transcription message:', err);
+        if (callback) callback();
+      });
 }
 
 // Add a cleanup function to prevent memory leaks
@@ -2744,17 +2766,19 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  // Handle Slash Commands
   if (interaction.isCommand()) {
     const { commandName, options } = interaction;
 
     if (commandName === 'alert') {
+      // --- Start Alert Command Logic (Existing - Unchanged) ---
       const subcommand = interaction.options.getSubcommand();
       const keyword = options.getString('keyword');
       const talkGroupInput = options.getString('talkgroup');
 
       if (subcommand === 'add') {
         if (!keyword) {
-          return interaction.reply('Please provide a keyword to add.');
+          return interaction.reply({ content: 'Please provide a keyword to add.', ephemeral: true }); // Added ephemeral
         }
 
         let talkGroupID = null;
@@ -2765,36 +2789,37 @@ client.on('interactionCreate', async (interaction) => {
             [talkGroupInput],
             (err, row) => {
               if (err) {
-                logger.error('Database error:', err);
-                return interaction.reply('Error adding keyword.');
+                logger.error('Database error adding keyword:', err);
+                return interaction.reply({ content: 'Error adding keyword due to database issue.', ephemeral: true }); // Added ephemeral
               } else if (row) {
                 talkGroupID = row.id;
-                addGlobalKeyword(keyword, talkGroupID);
+                addGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
               } else {
-                return interaction.reply(`Talk group "${talkGroupInput}" not found.`);
+                return interaction.reply({ content: `Talk group "${talkGroupInput}" not found.`, ephemeral: true }); // Added ephemeral
               }
             }
           );
         } else {
-          addGlobalKeyword(keyword, talkGroupID);
+          addGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
         }
 
-        function addGlobalKeyword(keyword, talkGroupID) {
+        // Modified function to reply to interaction
+        function addGlobalKeyword(keyword, talkGroupID, interaction) {
           db.run(
             `INSERT OR IGNORE INTO global_keywords (keyword, talk_group_id) VALUES (?, ?)`,
             [keyword, talkGroupID],
             function (err) {
               if (err) {
-                logger.error(err.message);
-                return interaction.reply('Error adding keyword.');
+                logger.error('Error inserting keyword:', err.message);
+                return interaction.reply({ content: 'Error adding keyword.', ephemeral: true }); // Added ephemeral
               }
-              interaction.reply(`✅ Keyword "${keyword}" added for alerts.`);
+              interaction.reply({ content: `✅ Keyword "${keyword}" added for alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ''}.`, ephemeral: true }); // Added ephemeral and TG info
             }
           );
         }
       } else if (subcommand === 'remove') {
         if (!keyword) {
-          return interaction.reply('Please provide a keyword to remove.');
+          return interaction.reply({ content: 'Please provide a keyword to remove.', ephemeral: true }); // Added ephemeral
         }
 
         let talkGroupID = null;
@@ -2805,95 +2830,150 @@ client.on('interactionCreate', async (interaction) => {
             [talkGroupInput],
             (err, row) => {
               if (err) {
-                logger.error('Database error:', err);
-                return interaction.reply('Error removing keyword.');
+                logger.error('Database error removing keyword:', err);
+                return interaction.reply({ content: 'Error removing keyword due to database issue.', ephemeral: true }); // Added ephemeral
               } else if (row) {
                 talkGroupID = row.id;
-                removeGlobalKeyword(keyword, talkGroupID);
+                removeGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
               } else {
-                return interaction.reply(`Talk group "${talkGroupInput}" not found.`);
+                return interaction.reply({ content: `Talk group "${talkGroupInput}" not found.`, ephemeral: true }); // Added ephemeral
               }
             }
           );
         } else {
-          removeGlobalKeyword(keyword, talkGroupID);
+          // If no talkgroup specified, try removing global keyword (talk_group_id IS NULL)
+          removeGlobalKeyword(keyword, null, interaction); // Pass interaction, explicit null for global
         }
 
-        function removeGlobalKeyword(keyword, talkGroupID) {
-          db.run(
-            `DELETE FROM global_keywords WHERE keyword = ? AND (talk_group_id = ? OR talk_group_id IS NULL)`,
-            [keyword, talkGroupID],
-            function (err) {
-              if (err) {
-                logger.error(err.message);
-                return interaction.reply('Error removing keyword.');
-              }
-              interaction.reply(`🗑️ Keyword "${keyword}" removed from alerts.`);
+        // Modified function to reply to interaction
+        function removeGlobalKeyword(keyword, talkGroupID, interaction) {
+          // Adjust query based on whether talkGroupID is provided
+          const sql = talkGroupID
+            ? `DELETE FROM global_keywords WHERE keyword = ? AND talk_group_id = ?`
+            : `DELETE FROM global_keywords WHERE keyword = ? AND talk_group_id IS NULL`;
+          const params = talkGroupID ? [keyword, talkGroupID] : [keyword];
+
+          db.run(sql, params, function (err) {
+            if (err) {
+              logger.error('Error deleting keyword:', err.message);
+              return interaction.reply({ content: 'Error removing keyword.', ephemeral: true }); // Added ephemeral
             }
-          );
+            if (this.changes > 0) {
+               interaction.reply({ content: `🗑️ Keyword "${keyword}" removed from alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ' (global)'}.`, ephemeral: true }); // Added ephemeral and scope
+            } else {
+               interaction.reply({ content: `Keyword "${keyword}" not found for the specified scope.`, ephemeral: true}); // Added ephemeral and better message
+            }
+          });
         }
       } else if (subcommand === 'list') {
-        db.all(`SELECT keyword, talk_group_id FROM global_keywords`, [], (err, rows) => {
+        db.all(`SELECT keyword, talk_group_id FROM global_keywords ORDER BY talk_group_id, keyword`, [], (err, rows) => {
           if (err) {
             logger.error('Error fetching keywords:', err.message);
-            return interaction.reply('Error fetching keywords.');
+            return interaction.reply({ content: 'Error fetching keywords.', ephemeral: true }); // Added ephemeral
           }
 
           if (rows.length === 0) {
-            return interaction.reply('❌ No global keywords set.');
+            return interaction.reply({ content: '❌ No global keywords set.', ephemeral: true }); // Added ephemeral
           }
 
-          let reply = '📝 **Global Keywords:**\n';
-          let count = 0;
-          rows.forEach((row) => {
+          // Use Promise.all to handle async talk group lookups cleanly
+          Promise.all(rows.map(async (row) => {
             if (row.talk_group_id) {
-              // Get talk group name
-              db.get(
-                `SELECT alpha_tag FROM talk_groups WHERE id = ?`,
-                [row.talk_group_id],
-                (err, tgRow) => {
-                  if (tgRow) {
-                    reply += `- **${row.keyword}** (Talk Group: ${tgRow.alpha_tag})\n`;
-                  } else {
-                    reply += `- **${row.keyword}**\n`;
-                  }
-                  count++;
-                  if (count === rows.length) {
-                    interaction.reply(reply);
-                  }
-                }
-              );
-            } else {
-              reply += `- **${row.keyword}**\n`;
-              count++;
-              if (count === rows.length) {
-                interaction.reply(reply);
+              try {
+                const tgRow = await new Promise((resolve, reject) => {
+                  db.get(`SELECT alpha_tag FROM talk_groups WHERE id = ?`, [row.talk_group_id], (err, tgRow) => {
+                    if (err) reject(err);
+                    else resolve(tgRow);
+                  });
+                });
+                const tgName = tgRow ? tgRow.alpha_tag : `TG ${row.talk_group_id} (Not Found)`;
+                return `- **${row.keyword}** (Talk Group: ${tgName})`;
+              } catch (dbErr) {
+                 logger.error('Error fetching talk group name during list:', dbErr);
+                 return `- **${row.keyword}** (Talk Group ID: ${row.talk_group_id} - Error looking up name)`;
               }
+            } else {
+              return `- **${row.keyword}** (Global)`;
             }
+          })).then(lines => {
+             const reply = '📝 **Global Keywords:**\n' + lines.join('\n');
+             // Handle potential message length limits
+             if (reply.length > 2000) {
+                 interaction.reply({ content: 'Too many keywords to display. Please refine your query or manage via database.', ephemeral: true });
+             } else {
+                 interaction.reply({ content: reply, ephemeral: true }); // Added ephemeral
+             }
           });
         });
       }
+      // --- End Alert Command Logic ---
+
     } else if (commandName === 'summary') {
+      // --- Start Summary Command Logic (Existing - Unchanged) ---
       const subcommand = interaction.options.getSubcommand();
-      
+
       if (subcommand === 'refresh') {
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-        await updateSummaryEmbed();
-        await interaction.editReply('✅ Summary has been refreshed!');
+        // Defer ephemerally FIRST
+        await interaction.deferReply({ ephemeral: true }); // Changed flags to ephemeral: true
+        try {
+            await updateSummaryEmbed();
+            await interaction.editReply('✅ Summary has been refreshed!');
+        } catch (error) {
+            logger.error("Error during manual summary refresh:", error);
+            await interaction.editReply('❌ Failed to refresh summary. Please check logs.').catch(console.error); // Catch potential edit error
+        }
       }
+      // --- End Summary Command Logic ---
     }
+    // Handle other commands if you add more...
+
+  // Handle Button Interactions
   } else if (interaction.isButton()) {
     const customId = interaction.customId;
 
-    if (customId.startsWith('listen_live_')) {
-      const talkGroupID = customId.replace('listen_live_', '');
-      handleListenLive(interaction, talkGroupID);
-    } else if (customId === 'refresh_summary') {
-      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-      await updateSummaryEmbed();
-      await interaction.editReply('✅ Summary has been refreshed!');
+    // --- ADDED: Try block for button handling ---
+    try {
+      if (customId.startsWith('listen_live_')) {
+        const talkGroupID = customId.replace('listen_live_', '');
+        // handleListenLive should ideally contain its own deferReply and error handling
+        await handleListenLive(interaction, talkGroupID);
+
+      } else if (customId === 'refresh_summary') {
+        // Defer ephemerally FIRST
+        // Note: Using ephemeral: true is generally better for status updates like this.
+        await interaction.deferReply({ ephemeral: true }); // Changed flags to ephemeral: true
+
+        // Then run the potentially slow operation
+        await updateSummaryEmbed();
+
+        // Then edit the reply
+        await interaction.editReply('✅ Summary has been refreshed!');
+      }
+      // Handle other buttons if you add more...
+
+    } catch (error) {
+      // --- ADDED: Catch block for button handling ---
+      logger.error(`Error handling button interaction ${customId}:`, error);
+      try {
+        // Attempt to inform the user ephemerally that something went wrong
+        const errorMessage = (error.code === 10062)
+         ? '❌ This interaction has expired. Please try the command again or use a newer message.'
+         : '❌ There was an error processing your request.';
+
+        if (interaction.deferred || interaction.replied) {
+          // If we already deferred or replied, use followUp
+          await interaction.followUp({ content: errorMessage, ephemeral: true });
+        } else {
+          // Otherwise, try to reply (less likely path if deferReply failed, but included for safety)
+          await interaction.reply({ content: errorMessage, ephemeral: true });
+        }
+      } catch (followUpError) {
+        // Log if sending the error message itself fails
+        logger.error(`Failed to send error follow-up/reply for interaction ${interaction.id}:`, followUpError);
+      }
     }
   }
+  // Handle other interaction types (select menus, modals) if needed...
 });
 
 // Global Error Handler for Express
