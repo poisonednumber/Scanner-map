@@ -12,7 +12,10 @@ const {
   API_KEY_FILE,
   OLLAMA_URL, 
   OLLAMA_MODEL,
-  SUMMARY_LOOKBACK_HOURS  
+  SUMMARY_LOOKBACK_HOURS,
+  TRANSCRIPTION_MODE,
+  FASTER_WHISPER_SERVER_URL,
+  WHISPER_MODEL
 } = process.env;
 
 // Now initialize derived variables
@@ -30,6 +33,8 @@ const winston = require('winston');
 const moment = require('moment-timezone');
 const TALK_GROUPS = {};
 const readline = require('readline');
+const effectiveTranscriptionMode = TRANSCRIPTION_MODE || 'local'; // Default to local
+const FormData = require('form-data');
 let summaryChannel;
 const SUMMARY_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
 let lastSummaryUpdate = 0;
@@ -45,80 +50,20 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
   ? mappedTalkGroupsString.split(',').map(id => id.trim())
   : [];
 
-// Logger setup
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp({
-      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
-    }),
-    winston.format.printf(({ timestamp, level, message }) => {
-      // Define patterns that should be yellow
-      if (message.includes('Talk Group') || 
-          message.includes('Incoming Request')) {
-        // ANSI yellow color code
-        return `${timestamp} \x1b[33m[${level.toUpperCase()}] ${message}\x1b[0m`;
-      }
-      
-      // Define patterns that should be green
-      if (message.includes('Extracted Address') || 
-          message.includes('Geocoded Address')) {
-        // ANSI green color code
-        return `${timestamp} \x1b[32m[${level.toUpperCase()}] ${message}\x1b[0m`;
-      }
-      
-      // Cyan color only for the actual transcription text
-      if (message.includes('Transcription process output')) {
-        try {
-          const jsonStartIndex = message.indexOf('{');
-          if (jsonStartIndex !== -1) {
-            const prefix = message.substring(0, jsonStartIndex);
-            const jsonPart = message.substring(jsonStartIndex);
-            const parsedJson = JSON.parse(jsonPart);
-            
-            if (parsedJson.transcription) {
-              // Apply cyan color only to the transcription value
-              return `${timestamp} [${level.toUpperCase()}] ${prefix}${jsonPart.replace(
-                `"transcription": "${parsedJson.transcription}"`, 
-                `"transcription": "\x1b[36m${parsedJson.transcription}\x1b[0m"`
-              )}`;
-            }
-          }
-        } catch (e) {
-          // If there's an error parsing JSON, fall back to normal formatting
-        }
-      }
-      
-      // White color for other info messages
-      if (level === 'info') {
-        return `${timestamp} \x1b[37m[${level.toUpperCase()}] ${message}\x1b[0m`;
-      }
-      
-      // Default colors for other log levels
-      const colors = {
-        error: '\x1b[31m', // red
-        warn: '\x1b[33m',  // yellow
-        debug: '\x1b[36m'  // cyan
-      };
-      const color = colors[level] || '\x1b[37m'; // default to white
-      return `${timestamp} ${color}[${level.toUpperCase()}] ${message}\x1b[0m`;
-    })
-  ),
-  transports: [
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'combined.log' }),
-    new winston.transports.Console()
-  ]
-});
+// (Replace the entire logger setup section in your bot.js with this)
 
-// Override logger.info to only allow specific messages
-const originalInfo = logger.info.bind(logger);
+// (Paste this entire block where the old logger setup was)
+
+// --- Whitelist Filtering & Logger Setup ---
+
+// Whitelist patterns for console INFO messages
 const allowedPatterns = [
   // Core dispatch information
   /^--- Incoming Request ---$/,
   /^Talk Group: .+ - .+$/,
   /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/,
-  
+  /^Extracted Address:/,
+
   // Startup & shutdown messages
   /^Shutting down gracefully...$/,
   /^Express server closed.$/,
@@ -127,8 +72,9 @@ const allowedPatterns = [
   /^Loaded \d+ talk groups from environment variables$/,
   /^Using upload directory: .+$/,
   /^Loaded \d+ API keys.$/,
-  /^Starting persistent transcription process...$/,
-  /^Transcription process spawned, waiting for ready signal...$/,
+  /^Starting persistent transcription process \(local mode\)...$/,
+  /^Local transcription process spawned, waiting for ready signal...$/,
+  /^Local transcription service ready$/,
   /^Bot server is running on port \d+$/,
   /^Connected to SQLite database.$/,
   /^Using talk groups from environment variables. Found \d+ talk groups$/,
@@ -136,44 +82,127 @@ const allowedPatterns = [
   /^Logged in as .+!$/,
   /^Started refreshing application \(\/\) commands.$/,
   /^Successfully reloaded application \(\/\) commands.$/,
-  /^Summary channel is ready.$/
+  /^Summary channel is ready.$/,
+  /^Initializing local transcription process...$/,
+  /^Transcription mode set to 'remote'/,
+  /^FATAL: TRANSCRIPTION_MODE is remote, but FASTER_WHISPER_SERVER_URL is not set!/,
+
+  // Transcription Text - KEEP THIS
+  /^Transcription Text:/,
+
+  // Essential Processing Messages (Uncomment the ones you want to see)
+  // /^Received SDRTrunk audio:/,
+  // /^Received TrunkRecorder audio:/,
+  // /^Saved audio blob for transcription ID/,
+  // /^Initiating transcription for/, // <--- COMMENTED OUT THIS LINE
+  // /^Updated DB transcription for ID/,
+  // /^Successfully processed:/,
+  // /^Sent alert message/,
+  // /^Playing audio for talk group/,
+  // /^Updated summary embed message/,
+  // /^Created new summary embed message/,
+  // /^Requesting remote model:/,
+  // /^Sending remote transcription request for/,
+  // /^Received remote transcription for/,
+
+  // Add specific essential INFO messages you *do* want to see below:
+  /^Example essential message pattern$/,
+
 ];
 
-logger.info = function (...args) {
-  const message = args.join(' ');
-  
-  // Check for transcription output and simplify it
-  if (message.startsWith('Transcription process output: {"id":')) {
-    try {
-      // Extract just the transcription part
-      const match = message.match(/Transcription process output: {"id": "[^"]+", "transcription": "([^"]+)"}/);
-      if (match && match[1]) {
-        // Print the transcription text in cyan color
-        const timestamp = new Date().toLocaleString('en-US', {
-          month: '2-digit',
-          day: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-          fractionalSecondDigits: 3
-        }).replace(',', '');
-        
-        // Using ANSI cyan color code for the transcription text
-        console.log(`${timestamp} [INFO] Transcription: \x1b[36m${match[1]}\x1b[0m`);
-        return;
-      }
-    } catch (e) {
-      // If parsing fails, fall back to normal logging behavior
+// Custom Winston format to filter INFO messages based on allowedPatterns
+const infoFilter = winston.format((info, opts) => {
+  // Only filter 'info' level messages
+  if (info.level === 'info') {
+    // Check if the message matches any allowed pattern
+    const allow = opts.allowedPatterns.some(pattern => pattern.test(info.message));
+    // If it doesn't match any pattern, filter it out by returning false
+    if (!allow) {
+      return false;
     }
   }
-  
-  const shouldLog = allowedPatterns.some((pattern) => pattern.test(message));
-  if (shouldLog) {
-    originalInfo(...args);
-  }
-};
+  // If it's not 'info' level OR it matched a pattern, pass it through
+  return info;
+});
+
+// Logger setup
+const logger = winston.createLogger({
+  level: 'info', // Log info and above to files
+  format: winston.format.combine(
+    // Default format for files (timestamp + standard json/logfmt)
+    winston.format.timestamp({
+      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+    }),
+    winston.format.errors({ stack: true }), // Log stack traces for errors
+    winston.format.splat(),
+    winston.format.json() // Log to files as JSON
+  ),
+  transports: [
+    // File transports log everything (info and above) as JSON
+    new winston.transports.File({
+        filename: 'error.log',
+        level: 'error', // Only errors
+        format: winston.format.json()
+    }),
+    new winston.transports.File({
+        filename: 'combined.log', // Info, warn, error
+        format: winston.format.json()
+     }),
+
+    // Console transport has special filtering and coloring
+    new winston.transports.Console({
+      level: 'info', // Process info and above for the console
+      format: winston.format.combine(
+        // 1. Add timestamp
+        winston.format.timestamp({
+          format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+        }),
+        // 2. Apply the custom info whitelist filter *for console only*
+        infoFilter({ allowedPatterns }), // Pass the patterns here
+        // 3. Apply coloring/printf format
+        winston.format.printf(({ timestamp, level, message, ...meta }) => {
+            let color = '\x1b[37m'; // Default white
+            let formattedMessage = message;
+
+            // Apply colors based on level first
+             if (level === 'error') {
+               color = '\x1b[31m'; // Red
+             } else if (level === 'warn') {
+               color = '\x1b[33m'; // Yellow
+             } else if (level === 'debug') { // Debug messages will still be colored if level is set lower
+               color = '\x1b[36m'; // Cyan
+             }
+
+            // Apply specific content colors (if message is a string)
+            if (typeof message === 'string') {
+                if (message.includes('Talk Group:') || message.includes('Incoming Request')) {
+                    color = '\x1b[33m'; // Yellow overrides level color
+                } else if (message.includes('Extracted Address') || message.includes('Geocoded Address')) {
+                    color = '\x1b[32m'; // Green overrides level color
+                }
+
+                // Handle Transcription Text coloring separately
+                const transcriptionPrefix = 'Transcription Text:';
+                if (message.startsWith(transcriptionPrefix)) {
+                    const actualText = message.substring(transcriptionPrefix.length).trim();
+                    // Format: Timestamp [LEVEL] Prefix (Default Color) ActualText (Cyan)
+                    formattedMessage = `\x1b[37m${transcriptionPrefix}\x1b[0m \x1b[36m${actualText}\x1b[0m`;
+                    // Return directly without applying default level color to the whole line
+                     return `${timestamp} [${level.toUpperCase()}] ${formattedMessage}`;
+                }
+            }
+
+            // Fallback for other messages that passed the filter
+            // If it's an error object, stringify it
+            if (typeof formattedMessage !== 'string') {
+                 formattedMessage = JSON.stringify(formattedMessage);
+            }
+            return `${timestamp} ${color}[${level.toUpperCase()}]\x1b[0m ${color}${formattedMessage}\x1b[0m`;
+        })
+      ) // End of combine for Console
+    })
+  ]
+});
 
 const {
   Client,
@@ -667,155 +696,158 @@ app.get('/audio/:id', (req, res) => {
 // Function to start the transcription process
 // Function to start the transcription process
 function startTranscriptionProcess() {
+  // *** ADD THIS CHECK AT THE TOP ***
+  if (effectiveTranscriptionMode !== 'local') {
+    logger.info('Transcription mode is not local, skipping Python process start.');
+    return; // Don't start if mode is remote
+  }
+  // *** END ADDED CHECK ***
+
   if (transcriptionProcess) {
-    // Process already running
-    logger.info('Transcription process already running, reusing existing process');
+    logger.info('Local transcription process already running, reusing existing process');
     return;
   }
 
-  logger.info('Starting persistent transcription process...');
-  
+  logger.info('Starting persistent transcription process (local mode)...'); // Updated log message
+
   // Spawn the Python process
-  transcriptionProcess = spawn('python', ['transcribe.py']);
-  
+  transcriptionProcess = spawn('python', ['transcribe.py']); // Assumes transcribe.py is in the same directory
+
   // Create interface to read line-by-line from stdout
   const rl = readline.createInterface({
     input: transcriptionProcess.stdout,
     crlfDelay: Infinity
   });
-  
-  // Handle each line of output
+
+  // Handle each line of output (EXISTING LOGIC - check if matches your current version)
   rl.on('line', (line) => {
     try {
-      logger.info(`Transcription process output: ${line}`);
+      // Check if line is empty or just whitespace before parsing
+      if (!line || line.trim() === '') {
+          // logger.debug('Received empty line from transcription process, skipping.');
+          return;
+      }
+
+      logger.info(`Local transcription process output: ${line}`);
       const response = JSON.parse(line);
-      
+
       if (response.ready) {
-        logger.info('Transcription service ready');
-        // Process any waiting transcriptions
-        processNextTranscription();
+        logger.info('Local transcription service ready');
+        processNextTranscription(); // Process queue on ready
       } else if (response.id && response.transcription !== undefined) {
-        logger.info(`Received transcription for ID: ${response.id} (${response.transcription.length} chars)`);
-        
-        // Find the callback for this ID
-        const pendingItem = transcriptionQueue.find(item => item.id === response.id);
-        if (pendingItem && pendingItem.callback) {
-          logger.info(`Found callback for ID: ${response.id}, executing`);
-          // Even if the transcription is empty, we still execute the callback
-          pendingItem.callback(response.transcription);
-          
-          // Remove this item from the queue
-          transcriptionQueue = transcriptionQueue.filter(item => item.id !== response.id);
-          
-          // Process next item - VERY IMPORTANT - this allows the queue to continue
-          isProcessingTranscription = false;
-          processNextTranscription();
+        logger.info(`Received local transcription for ID: ${response.id}`);
+
+        // Find the item and its callback in the queue
+        const pendingItemIndex = transcriptionQueue.findIndex(item => item.id === response.id);
+
+        if (pendingItemIndex !== -1) {
+            const pendingItem = transcriptionQueue[pendingItemIndex];
+            logger.info(`Found callback for local transcription ID: ${response.id}, executing`);
+
+            // Execute the callback defined in handleNewAudio
+            if (pendingItem.callback) {
+                pendingItem.callback(response.transcription);
+            } else {
+                 logger.error(`No callback function found for local transcription ID: ${response.id}`);
+            }
+
+            // Remove this item from the queue
+            transcriptionQueue.splice(pendingItemIndex, 1);
+
+            // Process next item
+            isProcessingTranscription = false;
+            processNextTranscription();
         } else {
-          logger.error(`No callback found for transcription ID: ${response.id}`);
-          // Even if no callback, we should still reset the flag to allow processing to continue
+          logger.error(`No pending item found for local transcription ID: ${response.id}`);
+          // Still allow queue to continue if an unexpected ID comes back
           isProcessingTranscription = false;
           processNextTranscription();
         }
       } else if (response.error) {
-        logger.error(`Transcription error: ${response.error}`);
-        
-        // Get the current item from the queue (should be the one we're processing)
-        const currentItem = transcriptionQueue[0];
-        
-        // Handle specific error types
-        if (response.error.includes("Invalid data") || 
-            response.error.includes("corrupt") ||
-            response.error.includes("does not exist")) {
-          
-          if (currentItem && currentItem.id === response.id) {
-            // Execute callback with empty string for corrupted files
-            if (currentItem.callback) {
-              currentItem.callback("");
-            }
-            
-            // Remove this item from the queue
-            transcriptionQueue.shift();
-            logger.info(`Removed problematic file from queue: ID ${response.id}`);
-          }
-        } else if (currentItem && currentItem.retries < currentItem.maxRetries) {
-          // For errors that might be transient, try again
-          currentItem.retries++;
-          logger.info(`Retrying transcription for ID ${response.id}, attempt ${currentItem.retries}`);
-          // Don't remove from queue, just reset processing flag to retry
-        } else {
-          // We've exhausted retries or don't have a matching item, give up
-          if (currentItem && currentItem.callback) {
-            currentItem.callback("");
-          }
-          if (currentItem) {
-            transcriptionQueue.shift();
-          }
-        }
-        
-        // Still allow queue to continue
-        isProcessingTranscription = false;
-        processNextTranscription();
+         logger.error(`Local transcription error for ID ${response.id}: ${response.error}`);
+
+         const pendingItemIndex = transcriptionQueue.findIndex(item => item.id === response.id);
+         if (pendingItemIndex !== -1) {
+             const pendingItem = transcriptionQueue[pendingItemIndex];
+             // Execute callback with empty string on error
+             if (pendingItem.callback) {
+                 pendingItem.callback(""); // Indicate failure
+             }
+             // Remove problematic item from queue
+             transcriptionQueue.splice(pendingItemIndex, 1);
+             logger.info(`Removed item with error from local queue: ID ${response.id}`);
+         } else {
+              logger.error(`Received error for unknown local transcription ID: ${response.id}`);
+         }
+
+         // Allow queue to continue
+         isProcessingTranscription = false;
+         processNextTranscription();
+
       } else {
-        logger.warn(`Unrecognized response from transcription process: ${line}`);
-        // IMPORTANT: Reset the processing flag so we don't stall
+        logger.warn(`Unrecognized response from local transcription process: ${line}`);
+        // Reset flag just in case to prevent stall
         isProcessingTranscription = false;
         processNextTranscription();
       }
     } catch (err) {
-      logger.error(`Error parsing transcription process output: ${err.message}, line: ${line}`);
-      
-      // Still allow queue to continue in case of parsing errors
+      logger.error(`Error parsing local transcription process output: ${err.message}, line: ${line}`);
+      // Allow queue to continue on parsing error
       isProcessingTranscription = false;
       processNextTranscription();
     }
   });
-  
-  // Handle stderr
+
+  // Handle stderr (EXISTING LOGIC)
   transcriptionProcess.stderr.on('data', (data) => {
-    // Convert Buffer to string - important for full message
     const errorMsg = data.toString().trim();
-    //logger.error(`Transcription process stderr: ${errorMsg}`);
+    if (errorMsg) { // Avoid logging empty lines
+       // logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
+    }
   });
-  
-  // Handle process exit
+
+  // Handle process exit (EXISTING LOGIC - adjusted logging)
   transcriptionProcess.on('close', (code) => {
-    logger.error(`Transcription process exited with code ${code}`);
-    transcriptionProcess = null;
-    
-    // Clean up any pending items in the queue
+    logger.error(`Local transcription process exited with code ${code}`);
+    transcriptionProcess = null; // Reset process variable
+
+    // Handle any pending items (call callbacks with empty string)
     if (transcriptionQueue.length > 0) {
-      logger.warn(`${transcriptionQueue.length} transcription requests were pending when process exited`);
-      
-      // Execute callbacks with empty strings to prevent deadlocks
-      for (const item of transcriptionQueue) {
-        if (item.callback) {
-          item.callback("");
+        logger.warn(`${transcriptionQueue.length} local transcription requests were pending when process exited. Failing them.`);
+        for (const item of transcriptionQueue) {
+            if (item.callback) {
+                try {
+                    item.callback(""); // Indicate failure
+                } catch (callbackError) {
+                     logger.error(`Error executing pending callback on process exit for ID ${item.id}: ${callbackError.message}`);
+                }
+            }
         }
-      }
-      transcriptionQueue = [];
+        transcriptionQueue = []; // Clear the queue
     }
-    
-    // Reset the processing flag
-    isProcessingTranscription = false;
-    
-    // Restart the process after a delay if it crashes
-    if (code !== 0) {
-      logger.info('Will attempt to restart transcription process in 5 seconds...');
-      setTimeout(() => {
-        startTranscriptionProcess();
-      }, 5000);
+
+    isProcessingTranscription = false; // Reset processing flag
+
+    // Optional: Restart the process if it crashes and mode is still local
+    if (code !== 0 && effectiveTranscriptionMode === 'local') {
+      logger.info('Will attempt to restart local transcription process in 5 seconds...');
+      setTimeout(startTranscriptionProcess, 5000);
     }
   });
-  
-  // Handle process errors
+
+  // Handle process errors (EXISTING LOGIC - adjusted logging)
   transcriptionProcess.on('error', (err) => {
-    logger.error(`Failed to start transcription process: ${err.message}`);
+    logger.error(`Failed to start local transcription process: ${err.message}`);
     transcriptionProcess = null;
     isProcessingTranscription = false;
+    // Maybe try restarting after delay if mode is local?
+    if (effectiveTranscriptionMode === 'local') {
+        logger.info('Will attempt to restart local transcription process in 10 seconds due to spawn error...');
+        setTimeout(startTranscriptionProcess, 10000);
+    }
   });
-  
-  // Log that we've successfully started the process
-  logger.info('Transcription process spawned, waiting for ready signal...');
+
+  logger.info('Local transcription process spawned, waiting for ready signal...');
 }
 
 // Function to process the next transcription in the queue
@@ -853,11 +885,114 @@ function processNextTranscription() {
   }) + '\n');
 }
 
-// Function to handle new audio
+// *** NEW FUNCTION for Remote Transcription ***
+async function transcribeAudioRemotely(filePath, callback) {
+  // Ensure URL is configured for remote mode
+  if (!FASTER_WHISPER_SERVER_URL) {
+    logger.error('FATAL: FASTER_WHISPER_SERVER_URL is not configured for remote mode.');
+    if (callback) callback(""); // Fail gracefully
+    return;
+  }
+
+  // Check file existence
+  if (!fs.existsSync(filePath)) {
+    logger.warn(`Remote Transcription: Audio file does not exist: ${filePath}`);
+    if (callback) callback("");
+    return;
+  }
+
+  // Optional: Check file size (prevent sending tiny/empty files)
+  try {
+      const stats = fs.statSync(filePath);
+      if (stats.size < 1000) { // Example threshold: 1KB
+          logger.warn(`Remote Transcription: Audio file too small, skipping: ${filePath} (${stats.size} bytes)`);
+          if (callback) callback("");
+          return;
+      }
+  } catch (statError) {
+       logger.error(`Remote Transcription: Error getting file stats for ${filePath}: ${statError.message}`);
+       if (callback) callback(""); // Fail if stats cannot be read
+       return;
+  }
+
+
+  try {
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+    // Append model if specified in environment
+    if (WHISPER_MODEL) {
+      form.append('model', WHISPER_MODEL);
+      logger.info(`Requesting remote model: ${WHISPER_MODEL}`);
+    }
+    // Add other parameters if needed (e.g., language)
+    // form.append('language', 'en');
+
+    const apiEndpoint = `${FASTER_WHISPER_SERVER_URL}/v1/audio/transcriptions`;
+    const filenameForLog = path.basename(filePath);
+    logger.info(`Sending remote transcription request for ${filenameForLog} to ${apiEndpoint}`);
+
+    // Configure fetch options, including timeout (e.g., 120 seconds)
+    const fetchOptions = {
+         method: 'POST',
+         body: form,
+         headers: {
+             // Add Authorization header ONLY if your remote server requires it
+             // 'Authorization': `Bearer YOUR_SERVER_API_KEY_IF_NEEDED`,
+             ...form.getHeaders() // Necessary for form-data
+         },
+         // signal: AbortSignal.timeout(120000) // Requires Node 16+
+    };
+
+    // Use a manual timeout for broader Node version compatibility
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        logger.error(`Remote transcription request timed out after 120s for ${filenameForLog}`);
+        controller.abort();
+    }, 120000); // 120 seconds
+
+
+    fetchOptions.signal = controller.signal; // Assign the signal
+
+    const response = await fetch(apiEndpoint, fetchOptions);
+
+    clearTimeout(timeoutId); // Clear the timeout if fetch completes
+
+    if (!response.ok) {
+      let errorBody = `Status: ${response.status} ${response.statusText}`;
+      try {
+          errorBody = await response.text();
+      } catch (e) { /* ignore */ }
+      logger.error(`Remote transcription server error for ${filenameForLog}: ${errorBody}`);
+      if (callback) callback(""); // Indicate failure
+      return;
+    }
+
+    const result = await response.json();
+    // Assuming OpenAI compatible response { "text": "..." }
+    const transcriptionText = result.text || "";
+
+    logger.info(`Received remote transcription for ${filenameForLog} (${transcriptionText.length} chars)`);
+    if (callback) {
+      callback(transcriptionText);
+    }
+
+  } catch (error) {
+     if (error.name === 'AbortError') {
+         // Timeout already logged by the timeout handler
+         if (callback) callback(""); // Indicate failure on timeout
+     } else {
+        const filenameForLog = path.basename(filePath);
+        logger.error(`Error during remote transcription API call for ${filenameForLog}: ${error.message}`, { stack: error.stack });
+        if (callback) callback(""); // Indicate failure on other errors
+     }
+  }
+}
+
+// Function to handle new audio (routes to local or remote transcription)
 function handleNewAudio(audioData) {
   const {
-    filename,
-    path: tempPath,
+    filename, // The custom generated filename (e.g., with timestamp)
+    path: tempPath, // The temporary path where the file was saved
     talkGroupID,
     systemName,
     talkGroupName,
@@ -865,99 +1000,129 @@ function handleNewAudio(audioData) {
     source,
     frequency,
     talkGroupGroup,
+    // isTrunkRecorder // You might use this flag later if needed
   } = audioData;
 
-  // Double-check file extension before processing
+  // Double-check file extension before processing (keep this validation)
   if (isIgnoredFileType(filename)) {
-    logger.info(`Skipping processing of unsupported file: ${filename}`);
-    
-    // Delete the file to prevent it from taking up space
+    logger.info(`Skipping processing of unsupported file type: ${filename}`);
     fs.unlink(tempPath, (err) => {
-      if (err) logger.error(`Error deleting unsupported file ${filename}:`, err);
-      else logger.info(`Deleted unsupported file ${filename}`);
+      if (err) logger.error(`Error deleting unsupported file ${tempPath}:`, err);
+      else logger.info(`Deleted unsupported file: ${filename}`);
     });
-    
-    return;
-  }
-  
-  // Verify the file exists before proceeding
-  if (!fs.existsSync(tempPath)) {
-    logger.error(`Audio file doesn't exist: ${tempPath}`);
     return;
   }
 
+  // Verify the file exists before proceeding
+  if (!fs.existsSync(tempPath)) {
+    logger.error(`Audio file doesn't exist when starting handleNewAudio: ${tempPath}`);
+    return;
+  }
+
+  // Read file into buffer to store in DB (keep this)
   fs.readFile(tempPath, (err, fileBuffer) => {
     if (err) {
-      logger.error('Error reading audio file:', err);
+      logger.error(`Error reading audio file ${tempPath}:`, err);
+      // Consider deleting temp file if read fails
+       fs.unlink(tempPath, () => {});
       return;
     }
 
+    // Insert initial record into transcriptions table (keep this)
     db.run(
       `INSERT INTO transcriptions (talk_group_id, timestamp, transcription, audio_file_path, address, lat, lon) VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
-      [talkGroupID, new Date(parseInt(dateTime) * 1000).toISOString(), '', filename],
+      // Ensure dateTime is correctly parsed to ISO string if needed
+      [talkGroupID, new Date(parseInt(dateTime) * 1000).toISOString(), '', filename], // Store the custom filename, not temp path
       function (err) {
         if (err) {
-          logger.error('Error inserting transcription:', err);
+          logger.error(`Error inserting initial transcription record for ${filename}:`, err);
+          // If DB insert fails, delete the temp file
+          fs.unlink(tempPath, () => {});
           return;
         }
 
-        const transcriptionId = this.lastID;
+        const transcriptionId = this.lastID; // Get the ID from the database insert
 
+        // Insert audio data blob (keep this)
         db.run(
           `INSERT INTO audio_files (transcription_id, audio_data) VALUES (?, ?)`,
           [transcriptionId, fileBuffer],
           (err) => {
             if (err) {
-              logger.error('Error inserting audio data:', err);
+              logger.error(`Error inserting audio data for transcription ID ${transcriptionId}:`, err);
+              // If audio data fails, maybe delete the transcription record? And delete temp file.
+              db.run('DELETE FROM transcriptions WHERE id = ?', [transcriptionId], () => {});
+              fs.unlink(tempPath, () => {});
               return;
             }
 
-            logger.info(`Saved audio for transcription ID ${transcriptionId}`);
+            logger.info(`Saved audio blob for transcription ID ${transcriptionId}`);
 
-            // Use our new transcribeAudio function directly
-            transcribeAudio(tempPath, (transcriptionText) => {
-              if (!transcriptionText) {
-                logger.warn(`No transcription obtained for ID ${transcriptionId}`);
-                // Still update with empty transcription to avoid stalled records
-                updateTranscription(transcriptionId, "", () => {
-                  logger.info(`Updated with empty transcription for ID ${transcriptionId}`);
-                  
-                  // Clean up temp file even if transcription failed
-                  fs.unlink(tempPath, (err) => {
-                    if (err) logger.error('Error deleting temp file:', err);
-                    else logger.info(`Deleted temp file: ${filename}`);
+            // --- Define the common callback for processing results ---
+            const processingCallback = (transcriptionText) => {
+                // Use a local copy of tempPath to avoid closure issues if handleNewAudio is called again quickly
+                const currentTempPath = tempPath;
+                const currentFilename = filename; // Use the specific filename for this call
+
+                if (!transcriptionText) {
+                  logger.warn(`No transcription obtained for ID ${transcriptionId} (${currentFilename})`);
+                  updateTranscription(transcriptionId, "", () => {
+                    logger.info(`Updated DB with empty transcription for ID ${transcriptionId}`);
+                    // Clean up temp file even on failure
+                    fs.unlink(currentTempPath, (errUnlink) => {
+                      if (errUnlink) logger.error(`Error deleting temp file (after empty transcription) ${currentTempPath}:`, errUnlink);
+                      else logger.info(`Deleted temp file (after empty transcription): ${path.basename(currentTempPath)}`);
+                    });
                   });
+                  return; // Stop processing if transcription is empty/failed
+                }
+                logger.info(`Transcription Text: ${transcriptionText}`);
+                // We got transcription text, update the database
+                updateTranscription(transcriptionId, transcriptionText, () => {
+                  logger.info(`Updated DB transcription for ID ${transcriptionId}`);
+
+                  // Now handle the logic that uses the transcription
+                  handleNewTranscription(
+                    transcriptionId, transcriptionText, talkGroupID, systemName,
+                    talkGroupName, source, talkGroupGroup, currentFilename // Pass original filename
+                  );
+
+                  // Clean up temp file after successful processing
+                   fs.unlink(currentTempPath, (errUnlink) => {
+                      if (errUnlink) logger.error(`Error deleting temp file (after successful transcription) ${currentTempPath}:`, errUnlink);
+                      else logger.info(`Deleted temp file (after successful transcription): ${path.basename(currentTempPath)}`);
+                   });
+                  logger.info(`Successfully processed: ${currentFilename}`);
                 });
-                return;
-              }
+            };
+            // --- End common callback definition ---
 
-              updateTranscription(transcriptionId, transcriptionText, () => {
-                logger.info(`Updated transcription for ID ${transcriptionId}`);
+            // --- Choose transcription method based on mode ---
+            logger.info(`Initiating transcription for ${filename} using mode: ${effectiveTranscriptionMode}`);
+            if (effectiveTranscriptionMode === 'remote') {
+                // Use the NEW remote function
+                transcribeAudioRemotely(tempPath, processingCallback);
 
-                handleNewTranscription(
-                  transcriptionId,
-                  transcriptionText,
-                  talkGroupID,
-                  systemName,
-                  talkGroupName,
-                  source,
-                  talkGroupGroup,
-                  filename
-                );
-
-                fs.unlink(tempPath, (err) => {
-                  if (err) logger.error('Error deleting temp file:', err);
-                  else logger.info(`Deleted temp file: ${filename}`);
+            } else { // Default or 'local' mode
+                // Queue the job for the existing LOCAL Python process
+                const localRequestId = uuidv4(); // Generate unique ID for Python process communication
+                logger.info(`Queueing local transcription request (ID: ${localRequestId}) for ${filename} (DB ID: ${transcriptionId})`);
+                transcriptionQueue.push({
+                   id: localRequestId, // ID for Python process comms
+                   path: tempPath,
+                   callback: processingCallback, // The common callback handles results
+                   retries: 0, // Keep retry logic if desired for local mode
+                   maxRetries: 2,
+                   dbTranscriptionId: transcriptionId // Store DB ID for potential error handling
                 });
-
-                logger.info(`Processed: ${filename}`);
-              });
-            });
-          }
-        );
-      }
-    );
-  });
+                processNextTranscription(); // Trigger the local queue processor
+            }
+            // --- End mode choice ---
+          } // End of db.run callback for audio_files insert
+        ); // End of db.run call for audio_files
+      } // End of db.run callback for transcriptions insert
+    ); // End of db.run call for transcriptions
+  }); // End of fs.readFile
 }
 
 // Helper function to validate individual fields
@@ -3003,7 +3168,19 @@ const server = app.listen(PORT_NUM, () => {
   client.login(DISCORD_TOKEN);
 });
 
-startTranscriptionProcess();
+// Conditionally start the local transcription process based on mode
+if (effectiveTranscriptionMode === 'local') {
+  logger.info('Initializing local transcription process...');
+  startTranscriptionProcess();
+} else {
+  logger.info(`Transcription mode set to '${effectiveTranscriptionMode}'. Local Python process will not be started.`);
+  // Optional: Add check for URL if mode is remote
+  if (effectiveTranscriptionMode === 'remote' && !FASTER_WHISPER_SERVER_URL) {
+       logger.error('FATAL: TRANSCRIPTION_MODE is remote, but FASTER_WHISPER_SERVER_URL is not set in .env!');
+       // Optionally exit if configuration is critically wrong
+       // process.exit(1);
+  }
+}
 
 // Handle process termination
 process.on('SIGINT', () => {

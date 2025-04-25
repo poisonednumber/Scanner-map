@@ -147,29 +147,77 @@ async function validateSession(token) {
 
 async function generateShortSummary(transcript) {
   try {
+    // --- NEW: Pre-check for ambiguity ---
+    // List of keywords that likely indicate a specific event type
+    const incidentKeywords = [
+      'emergency', 'injured', 'person down', 'disturbance', 'collision', 'crash', 'mvc',
+      'burglary', 'break in', 'assault', 'fire', 'smoke', 'flames', 'missing', 'medical',
+      'stolen', 'stop', 'unconscious', 'reckless', 'gun', 'weapon', 'shots fired',
+      'consciousness', 'breathing', 'difficulty breathing', 'fight', 'domestic',
+      'carbon monoxide', 'co', 'abduction', 'kidnapping', 'passed out', 'hazmat',
+      'alarm', 'hazard', 'intoxicated', 'drunk', 'bite', 'animal', 'assist', 'help',
+      'down', 'sick', 'hurt', 'attack', 'robbery', 'theft', 'accident', 'overdose', 'od',
+      'suspicious', 'trespassing', 'vehicle fire', 'cardiac', 'arrest', 'seizure'
+      // This list can be expanded based on common dispatch terms
+    ];
+
+    // Convert transcript to lowercase for case-insensitive matching
+    const lowerCaseTranscript = transcript.toLowerCase();
+
+    // Check if the transcript contains any of the specific incident keywords
+    const containsIncidentKeyword = incidentKeywords.some(keyword =>
+      lowerCaseTranscript.includes(keyword)
+    );
+
+    // Also check for very short transcripts that might lack context
+    // Adjust the word count threshold as needed
+    const wordCount = transcript.trim().split(/\s+/).length;
+    const isVeryShort = wordCount < 4;
+
+    // If no incident keyword is found OR the transcript is very short, classify as OTHER
+    if (!containsIncidentKeyword || isVeryShort) {
+      console.log(`Transcript "${transcript}" lacks specific keywords or is too short (${wordCount} words), defaulting to OTHER.`);
+      // Return 'OTHER' directly, bypassing the AI call
+      return 'OTHER';
+    }
+    // --- END: Pre-check ---
+
     // Get environment variables for Ollama
     const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+    const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b'; // Or your preferred model
 
+    // Original list of categories for the AI
+    const categories = [
+      'Medical Emergency', 'Injured Person', 'Disturbance', 'Vehicle Collision',
+      'Burglary', 'Assault', 'Structure Fire', 'Missing Person', 'Medical Call',
+      'Building Fire', 'Stolen Vehicle', 'Service Call', 'Vehicle Stop',
+      'Unconscious Person', 'Reckless Driver', 'Person With A Gun',
+      'Altered Level of Consciousness', 'Breathing Problems', 'Fight',
+      'Carbon Monoxide', 'Abduction', 'Passed Out Person', 'Hazmat',
+      'Fire Alarm', 'Traffic Hazard', 'Intoxicated Person', 'Mvc', // Note: Mvc is often redundant with Vehicle Collision
+      'Animal Bite',
+      'Assist'
+    ];
+
+    // Refined prompt for the AI, explicitly mentioning the 'Other' case for ambiguity
     const prompt = `
-Categorize this first responder radio transmission into EXACTLY ONE of the following categories:
-- MEDICAL: Medical emergencies, injuries, ambulance calls, seizures, unresponsive persons
-- FIRE: Fire alarms, structure fires, smoke reported
-- TRAFFIC: Vehicle accidents, traffic incidents, parking issues, disabled vehicles
-- THEFT: Robbery, burglary, theft, stolen items
-- SUSPICIOUS: Suspicious persons, vehicles, or activities
-- DOMESTIC: Domestic disputes, family issues
-- ASSAULT: Fights, assaults, attacks, shootings, violent incidents
-- ALARM: Security alarms, panic alarms (not fire alarms)
-- WELFARE: Welfare checks, missing persons, suicide threats
-- ANIMAL: Animal-related calls, animal control
-- OTHER: Any transmission that doesn't fit the above categories
+You are an expert emergency service dispatcher categorizing radio transmissions.
+Analyze the following first responder radio transmission and categorize it into EXACTLY ONE of the categories listed below.
+Choose the category that best fits the main subject of the transmission.
+Focus on the primary reason for the dispatch if multiple events are mentioned.
 
-RESPOND WITH ONLY THE CATEGORY NAME (e.g., "MEDICAL") AND NOTHING ELSE.
+**IMPORTANT:** If the transmission primarily contains only location information (like an address and cross streets) OR if it lacks specific details to determine the nature of the event, respond with exactly 'Other'.
+
+It is CRUCIAL that your response is ONLY one of the category names from this list and nothing else.
+
+Categories:
+${categories.map(cat => `- ${cat}`).join('\n')}
+- Other (Use ONLY if no other category truly fits OR if the transmission lacks sufficient detail for specific categorization)
 
 Transmission: "${transcript}"
 
 Category:`;
+    // --- END REFINED PROMPT ---
 
     // Call the Ollama API
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -178,35 +226,46 @@ Category:`;
       body: JSON.stringify({
         model: OLLAMA_MODEL,
         prompt,
-        stream: false
+        stream: false,
+        options: {
+            // Lower temperature might make the AI less likely to guess creative categories
+            temperature: 0.3
+        }
       })
     });
 
     if (!response.ok) {
+      // Log the error and transcript for debugging, then throw
+      console.error(`HTTP error! status: ${response.status} for transcript: ${transcript}`);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const result = await response.json();
+
+    // Trim whitespace and convert to uppercase for consistency
     let category = result.response.trim().toUpperCase();
-    
-    // Validate the category is one of our defined categories
-    const validCategories = [
-      'MEDICAL', 'FIRE', 'TRAFFIC', 'THEFT', 'SUSPICIOUS', 
-      'DOMESTIC', 'ASSAULT', 'ALARM', 'WELFARE', 'ANIMAL', 'OTHER'
-    ];
-    
-    if (!validCategories.includes(category)) {
-      category = 'OTHER';
+
+    // Validate the AI's response against the known categories (including OTHER)
+    const validCategoriesUppercase = categories.map(cat => cat.toUpperCase());
+    validCategoriesUppercase.push('OTHER'); // Ensure 'OTHER' is always valid
+
+    if (!validCategoriesUppercase.includes(category)) {
+       // Log the unexpected response from the AI before defaulting
+       console.warn(`Ollama returned an unexpected or invalid category: "${result.response}". Defaulting to OTHER for transcript: "${transcript}"`);
+       category = 'OTHER';
     }
-    
-    console.log(`Categorized call as: "${category}"`);
+
+    //console.log(`Categorized call "${transcript}" as: "${category}"`);
+    // Return the determined category (uppercase)
     return category;
+
   } catch (error) {
-    console.error(`Error categorizing call: ${error.message}`);
+    // Log the error along with the transcript that caused it
+    console.error(`Error categorizing call: "${transcript}". Error: ${error.message}`);
+    // Fallback to 'OTHER' in case of any errors during the process
     return 'OTHER';
   }
 }
-
 
 function cleanupExpiredSessions() {
   if (authEnabled) {
