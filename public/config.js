@@ -64,7 +64,7 @@ const config = {
   // Audio settings
   audio: {
     notificationSound: '/notification-sound.mp3',
-    liveStreamUrl: 'https://radio.scannermap.net', // your rdio scanner site if perferred.
+    liveStreamUrl: 'https://example.com', // your rdio scanner site if perferred.
   },
   
   // Marker classification rules
