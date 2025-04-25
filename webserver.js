@@ -1040,6 +1040,63 @@ app.post('/api/log/correction', (req, res) => {
   });
 });
 
+// NEW Endpoint for logging deletions
+app.post('/api/log/deletion', (req, res) => {
+  const { callId, category, transcription, location, address, action } = req.body;
+
+  // Basic validation - check for essential fields
+  if (!callId || action !== 'marker_deletion') {
+    return res.status(400).json({ error: 'Missing required fields for deletion log' });
+  }
+
+  const logData = {
+    timestamp: new Date().toISOString(),
+    callId,
+    category: category || 'UNKNOWN',
+    transcription: transcription || 'N/A',
+    location: location || null,
+    address: address || 'N/A',
+    action
+  };
+
+  const logFilePath = path.join(logsDir, `deletions_${new Date().toISOString().split('T')[0]}.json`);
+
+  // Read existing logs for deletions
+  let existingLogs = [];
+  if (fs.existsSync(logFilePath)) {
+    try {
+      const fileContent = fs.readFileSync(logFilePath, 'utf8');
+      if (fileContent) { // Check if file is not empty
+           existingLogs = JSON.parse(fileContent);
+           if (!Array.isArray(existingLogs)) { // Ensure it's an array
+               console.warn('Deletion log file was not an array, resetting.');
+               existingLogs = [];
+           }
+       } else {
+           existingLogs = [];
+       }
+    } catch (err) {
+      console.error('Error reading deletion log file:', err);
+      existingLogs = []; // Reset if reading fails
+    }
+  }
+
+  // Add new log entry
+  existingLogs.push(logData);
+
+  // Write back to file
+  fs.writeFile(logFilePath, JSON.stringify(existingLogs, null, 2), (err) => {
+    if (err) {
+      console.error('Error writing to deletion log file:', err);
+      // Still return success to client, as the main operation (deletion) likely succeeded
+      // but log the server-side error.
+      return res.status(500).json({ error: 'Failed to write to deletion log' });
+    }
+    console.log(`Deletion logged successfully for callId: ${callId}`);
+    res.json({ success: true, message: 'Deletion logged.' });
+  });
+});
+
 // Get all talkgroups for selection UI
 app.get('/api/talkgroups', (req, res) => {
   db.all(
