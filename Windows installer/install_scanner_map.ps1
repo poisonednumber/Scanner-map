@@ -31,12 +31,15 @@ $DefaultGeoState = "ST"
 $DefaultGeoCountry = "US"
 $DefaultGeoCounties = "County1,County2"
 $DefaultWhisperModel = "large-v3"
+$DefaultTranscriptionMode = "local" # Default to local mode
+$DefaultWhisperServerUrl = "http://localhost:8000" # Default remote server URL
 $DefaultOllamaUrl = "http://localhost:11434"
 $DefaultOllamaModelEnv = $OllamaModel # Use the same model pulled earlier
 $DefaultMappedTgs = "1001,1002,2001,2002"
 $DefaultTimezone = "US/Eastern"
 $DefaultEnableAuth = "false"
 $DefaultTargetCities = "City1,City2,City3,City4"
+$DefaultSummaryLookbackHours = "1" # Added default summary hours
 
 # Initialize script-level variables
 $script:PyTorchDevice = "cpu" # Default to CPU
@@ -56,16 +59,13 @@ function Run-Command {
     Invoke-Command -ScriptBlock $Command
     if (-not $?) {
         Write-Warning "Warning: Command may have failed: $ErrorMessage"
-        # Don't exit, allow script to continue
     }
 }
 
 function Prompt-YesNo {
     param([string]$PromptMessage, [string]$Default = 'n')
-    # Create individual ChoiceDescription objects
     $choiceYes = New-Object System.Management.Automation.Host.ChoiceDescription("&Yes", "Confirm Yes.")
     $choiceNo = New-Object System.Management.Automation.Host.ChoiceDescription("&No", "Confirm No.")
-    # Put the objects into an array
     $choices = [System.Management.Automation.Host.ChoiceDescription[]]($choiceYes, $choiceNo)
     $options = [System.Management.Automation.Host.ChoiceDescription[]]$choices
     $result = $Host.UI.PromptForChoice("Confirmation", $PromptMessage, $options, $(if($Default -eq 'y') {0} else {1}))
@@ -90,40 +90,24 @@ function Prompt-Input {
 
 function Install-Prerequisites {
     Print-Message "Checking winget and installing prerequisites..."
-
-    # Check for winget
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Error "winget is not available. Please install the App Installer from the Microsoft Store."
         exit 1
     }
-
-    # Install Node.js LTS
     Write-Host "Installing/Upgrading Node.js LTS..."
     Run-Command { winget install --exact --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements } "Failed to install Node.js LTS."
-
-    # Install Python
     Write-Host "Installing/Upgrading Python 3.10+..."
-    Run-Command { winget install --exact --id Python.Python.3.11 --source winget --accept-package-agreements --accept-source-agreements } "Failed to install Python." # Using 3.11, adjust if needed
-
-    # Install Git
+    Run-Command { winget install --exact --id Python.Python.3.11 --source winget --accept-package-agreements --accept-source-agreements } "Failed to install Python."
     Write-Host "Installing/Upgrading Git..."
     Run-Command { winget install --exact --id Git.Git --source winget --accept-package-agreements --accept-source-agreements } "Failed to install Git."
-
-    # Install VS Build Tools (Can take a while)
     Write-Host "Installing/Upgrading Visual Studio Build Tools (This may take a significant amount of time)..."
     Run-Command { winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --accept-package-agreements --accept-source-agreements --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" } "Failed to install VS Build Tools."
-
-    # Install FFmpeg
     Write-Host "Installing/Upgrading FFmpeg..."
     Run-Command { winget install --exact --id Gyan.FFmpeg --source winget --accept-package-agreements --accept-source-agreements } "Failed to install FFmpeg."
-
     Write-Host "Verifying FFmpeg (check output manually)..."
-    Start-Sleep -Seconds 2 # Give PATH changes a moment
-    # Try running ffmpeg, suppress error output if not found yet
+    Start-Sleep -Seconds 2
     ffmpeg -version -hide_banner -loglevel error
     if (-not $?) { Write-Warning "ffmpeg command not found or failed. Ensure it's installed and in your PATH." }
-
-
     Print-Message "Base prerequisites installation attempted. Please ensure they were added to your system PATH."
 }
 
@@ -137,45 +121,37 @@ function Install-Ollama {
         try {
             Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile $ollamaInstaller -ErrorAction Stop
             Write-Host "Running Ollama installer (requires manual interaction)..."
-            Start-Process -FilePath $ollamaInstaller -ArgumentList "/SILENT" -Wait # Attempt silent install, may still show UI
-            # Add check if ollama command exists after install attempt
+            Start-Process -FilePath $ollamaInstaller -ArgumentList "/SILENT" -Wait
             Start-Sleep -Seconds 5
             if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
                  Write-Warning "Ollama installation may not have completed successfully or PATH not updated yet. Please check manually."
             }
         } catch {
-            $caughtError = $_ # Assign error record
+            $caughtError = $_
             Write-Error "Failed to download or run Ollama installer: $($caughtError.Exception.Message)"
             return
         } finally {
             if (Test-Path $ollamaInstaller) { Remove-Item $ollamaInstaller -Force }
         }
     }
-
     Write-Host "Pulling Ollama model: $OllamaModel (this may take a while)..."
-    # Check if ollama command exists before trying to pull
      if (Get-Command ollama -ErrorAction SilentlyContinue) {
-        ollama pull "$OllamaModel" # Run directly, user sees output
+        ollama pull "$OllamaModel"
      } else {
          Write-Warning "Cannot pull Ollama model because the 'ollama' command was not found. Please run 'ollama pull $OllamaModel' manually after installation."
      }
-
     Print-Message "Ollama installation attempted."
 }
 
-# Updated function: Provides links and instructions for manual NVIDIA component installation
 function Install-NvidiaComponents {
     Print-Message "NVIDIA GPU Components Check (CUDA/cuDNN/cuBLAS)"
-    # Simple check if nvidia-smi exists
     $nvidiaSmiPath = Join-Path $env:SystemRoot "System32\nvidia-smi.exe"
     if (-not (Test-Path $nvidiaSmiPath)) {
         Write-Host "NVIDIA driver not detected ($nvidiaSmiPath not found)."
         Write-Host "Skipping CUDA/cuDNN/cuBLAS steps. If you have an NVIDIA GPU, please install drivers first."
-        # Set reminder variable for .env
         $script:PyTorchDevice = "cpu"
         return
     }
-
     if (Prompt-YesNo "Do you intend to use an NVIDIA GPU for transcription (requires manual CUDA/cuDNN/cuBLAS installation)?") {
         Write-Host ""
         Write-Host "--- Manual NVIDIA Installation Required ---" -ForegroundColor Yellow
@@ -193,14 +169,10 @@ function Install-NvidiaComponents {
         Write-Host ""
         Write-Host "After manual installation, select the 'cuda' option when installing PyTorch below." -ForegroundColor Yellow
         Write-Host "------------------------------------------" -ForegroundColor Yellow
-
-        # Set reminder variable for .env
         $script:PyTorchDevice = "cuda"
         Print-Message "NVIDIA components require MANUAL installation."
-
     } else {
         Write-Host "Skipping NVIDIA components. PyTorch will be installed for CPU."
-        # Set reminder variable for .env
         $script:PyTorchDevice = "cpu"
     }
 }
@@ -225,15 +197,13 @@ function Clone-Repo {
     Print-Message "Repository cloned."
 }
 
-# New function to create .env file interactively
+# *** UPDATED FUNCTION ***
 function Create-EnvFile {
     Print-Message "Creating .env configuration file..."
     Set-Location $InstallDir
     $envFile = ".\.env"
-    # Use the script-scoped variable initialized earlier
     $script:ManualEditList.Clear() # Clear any previous values
 
-    # Check if .env already exists
     if (Test-Path $envFile) {
         if (-not (Prompt-YesNo "$envFile already exists. Overwrite it?")) {
             Write-Host "Skipping .env creation. Please configure manually."
@@ -243,12 +213,14 @@ function Create-EnvFile {
     }
 
     Write-Host "Please provide the following configuration values. Press Enter to accept the default."
-
-    # Use a helper function or inline logic to build the content
     $envContent = @()
 
     # --- Discord ---
-    $envContent += "# Discord Bot Configuration"
+    $envContent += "#################################################################"
+    $envContent += "##                       DISCORD BOT SETTINGS                  ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Discord Bot Token and Client ID (Required)"
     $discordToken = Read-Host -Prompt "Enter DISCORD_TOKEN"
     if ([string]::IsNullOrWhiteSpace($discordToken)) {
         $envContent += "DISCORD_TOKEN=your_discord_token_here # <<< MANUALLY EDIT REQUIRED"
@@ -256,91 +228,44 @@ function Create-EnvFile {
     } else {
         $envContent += "DISCORD_TOKEN=$discordToken"
     }
-    $clientId = Read-Host -Prompt "Enter CLIENT_ID"
-    if ([string]::IsNullOrWhiteSpace($clientId)) {
-        $envContent += "CLIENT_ID=your_client_id_here # <<< MANUALLY EDIT REQUIRED"
-        [void]$script:ManualEditList.Add("CLIENT_ID")
-    } else {
-        $envContent += "CLIENT_ID=$clientId"
-    }
+    # $clientId = Read-Host -Prompt "Enter CLIENT_ID" # Removed as it's not used in bot.js provided
     $envContent += ""
 
     # --- Server Ports ---
-    $envContent += "# Server Ports"
+    $envContent += "#################################################################"
+    $envContent += "##                  SERVER & NETWORK SETTINGS                  ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Port for incoming SDRTrunk/TrunkRecorder uploads"
     $botPort = Prompt-Input "Enter BOT_PORT (for SDRTrunk/TR)" $DefaultBotPort
     $envContent += "BOT_PORT=$botPort"
-    $apiKeyFile = Prompt-Input "Enter API_KEY_FILE path" $DefaultApiKeyFile
-    $envContent += "API_KEY_FILE=$apiKeyFile"
+    $envContent += ""
+    $envContent += "# Port for the web interface/API server"
     $webserverPort = Prompt-Input "Enter WEBSERVER_PORT (e.g., 80, 8080)" $DefaultWebserverPort
     $envContent += "WEBSERVER_PORT=$webserverPort"
+    $envContent += ""
+    $envContent += "# Public domain name or IP address used for creating audio playback links"
     $publicDomain = Prompt-Input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" $DefaultPublicDomain
     $envContent += "PUBLIC_DOMAIN=$publicDomain"
     $envContent += ""
-
-    # --- Geocoding ---
-    $envContent += "# Geocoding Configuration"
-    $googleMapsKey = Read-Host -Prompt "Enter GOOGLE_MAPS_API_KEY"
-    if ([string]::IsNullOrWhiteSpace($googleMapsKey)) {
-        $envContent += "GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here # <<< MANUALLY EDIT REQUIRED"
-        [void]$script:ManualEditList.Add("GOOGLE_MAPS_API_KEY")
-    } else {
-        $envContent += "GOOGLE_MAPS_API_KEY=$googleMapsKey"
-    }
-    $geoCity = Prompt-Input "Enter GEOCODING_CITY (Default City)" $DefaultGeoCity
-    $envContent += "GEOCODING_CITY=$geoCity"
-    $geoState = Prompt-Input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" $DefaultGeoState
-    $envContent += "GEOCODING_STATE=$geoState"
-    $geoCountry = Prompt-Input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" $DefaultGeoCountry
-    $envContent += "GEOCODING_COUNTRY=$geoCountry"
-    $geoCounties = Prompt-Input "Enter GEOCODING_TARGET_COUNTIES (Comma-separated)" $DefaultGeoCounties
-    $envContent += "GEOCODING_TARGET_COUNTIES=$geoCounties"
-    $envContent += ""
-
-    # --- Transcription ---
-    $envContent += "# Transcription Configuration"
-    $whisperModel = Prompt-Input "Enter WHISPER_MODEL (e.g., tiny, base, small, medium, large-v3)" $DefaultWhisperModel
-    $envContent += "WHISPER_MODEL=$whisperModel"
-    # Use the device determined earlier
-    $transcriptionDevice = Prompt-Input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" $script:PyTorchDevice
-    $envContent += "TRANSCRIPTION_DEVICE=$transcriptionDevice"
-    $envContent += ""
-
-    # --- LLM ---
-    $envContent += "# Local LLM Configuration"
-    $ollamaUrl = Prompt-Input "Enter OLLAMA_URL" $DefaultOllamaUrl
-    $envContent += "OLLAMA_URL=$ollamaUrl"
-    $ollamaModelEnv = Prompt-Input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" $DefaultOllamaModelEnv
-    $envContent += "OLLAMA_MODEL=$ollamaModelEnv"
-    $envContent += ""
-
-    # --- OpenAI (Optional) ---
-    $envContent += "# Optional: OpenAI Configuration (alternative to Ollama)"
-    $openaiKey = Read-Host -Prompt "Enter OPENAI_API_KEY (leave blank if using Ollama)"
-    if ([string]::IsNullOrWhiteSpace($openaiKey)) {
-        $envContent += "OPENAI_API_KEY= # <<< Optional: Add key here if using OpenAI"
-    } else {
-        $envContent += "OPENAI_API_KEY=$openaiKey"
-        [void]$script:ManualEditList.Add("OPENAI_API_KEY (if intended)")
-    }
-    $envContent += ""
-
-    # --- Talk Groups ---
-    $envContent += "# Talk Groups"
-    $mappedTgs = Prompt-Input "Enter MAPPED_TALK_GROUPS (Comma-separated IDs for address extraction)" $DefaultMappedTgs
-    $envContent += "MAPPED_TALK_GROUPS=$mappedTgs"
-    $envContent += ""
-
-    # --- Timezone ---
-    $envContent += "# Timezone"
-    $timezone = Prompt-Input "Enter TIMEZONE (e.g., US/Eastern, America/Chicago, UTC)" $DefaultTimezone
+    $envContent += "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
+    $timezone = Prompt-Input "Enter TIMEZONE" $DefaultTimezone
     $envContent += "TIMEZONE=$timezone"
     $envContent += ""
 
     # --- Authentication ---
-    $envContent += "# Authentication"
+    $envContent += "#################################################################"
+    $envContent += "##                   AUTHENTICATION & API KEYS                 ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
+    $apiKeyFile = Prompt-Input "Enter API_KEY_FILE path" $DefaultApiKeyFile
+    $envContent += "API_KEY_FILE=$apiKeyFile             # Edit and run GenApiKey.js to create/update keys"
+    $envContent += ""
+    $envContent += "# Enable/disable password authentication for the web interface"
     $enableAuth = Prompt-Input "Enable Webserver Authentication? (true/false)" $DefaultEnableAuth
-    $envContent += "ENABLE_AUTH=$enableAuth"
-    # Only ask for password if auth is enabled
+    $envContent += "ENABLE_AUTH=$enableAuth                 # Set to 'true' to enable password login"
+    $envContent += "# Password for web interface login (only used if ENABLE_AUTH=true)"
     if ($enableAuth -eq 'true') {
         $webserverPassword = Read-Host -Prompt "Enter WEBSERVER_PASSWORD (for web login)"
         if ([string]::IsNullOrWhiteSpace($webserverPassword)) {
@@ -350,35 +275,152 @@ function Create-EnvFile {
              $envContent += "WEBSERVER_PASSWORD=$webserverPassword"
         }
     } else {
-         $envContent += "WEBSERVER_PASSWORD= # Authentication disabled"
+         $envContent += "WEBSERVER_PASSWORD=                     # Run init-admin.js after changing this if auth is enabled"
     }
     $envContent += ""
 
-    # --- Talk Group Mappings (Manual Edit Required) ---
-    $envContent += "# Talk Groups mapping (format: ID=Location)"
+
+    # --- Transcription ---
+    $envContent += "#################################################################"
+    $envContent += "##                   TRANSCRIPTION SETTINGS                    ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Transcription Mode ---"
+    $envContent += "# Select 'local' (requires Python/CUDA setup) or 'remote' (uses API server)"
+    $transcriptionMode = Prompt-Input "Enter TRANSCRIPTION_MODE ('local' or 'remote')" $DefaultTranscriptionMode
+    $envContent += "TRANSCRIPTION_MODE=$transcriptionMode"
+    $envContent += ""
+    $envContent += "# --- Local Settings (Only used if TRANSCRIPTION_MODE=local) ---"
+    $envContent += "# faster-whisper model (e.g., tiny, base, small, medium, large-v3)"
+    $whisperModel = Prompt-Input "Enter WHISPER_MODEL" $DefaultWhisperModel
+    $envContent += "WHISPER_MODEL=$whisperModel"
+    $envContent += "# Device for local transcription ('cuda' or 'cpu')"
+    if ($transcriptionMode -eq 'local') {
+        $transcriptionDevice = Prompt-Input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" $script:PyTorchDevice
+        $envContent += "TRANSCRIPTION_DEVICE=$transcriptionDevice             # Ignored if mode is 'remote'"
+    } else {
+        $envContent += "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
+    }
+    $envContent += ""
+    $envContent += "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
+    $envContent += "# URL of your running faster-whisper-server/speaches API"
+    if ($transcriptionMode -eq 'remote') {
+        $whisperServerUrl = Prompt-Input "Enter FASTER_WHISPER_SERVER_URL" $DefaultWhisperServerUrl
+        $envContent += "FASTER_WHISPER_SERVER_URL=$whisperServerUrl # Ignored if mode is 'local'"
+    } else {
+        $envContent += "FASTER_WHISPER_SERVER_URL=$DefaultWhisperServerUrl # Ignored if mode is 'local'"
+    }
+    $envContent += ""
+
+    # --- Geocoding ---
+    $envContent += "#################################################################"
+    $envContent += "##                  GEOCODING & LOCATION SETTINGS              ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Geocoding API Keys ---"
+    $envContent += "# INSTRUCTIONS:"
+    $envContent += "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
+    $envContent += "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
+    $envContent += "# 3. You can comment out the unused key with a '#' to avoid confusion."
+    $envContent += ""
+    $envContent += "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
+    $googleMapsKey = Read-Host -Prompt "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ)"
+    if ([string]::IsNullOrWhiteSpace($googleMapsKey)) {
+        $envContent += "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
+        [void]$script:ManualEditList.Add("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
+    } else {
+        $envContent += "GOOGLE_MAPS_API_KEY=$googleMapsKey"
+    }
+    $envContent += ""
+    $envContent += "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
+    $locationIqKey = Read-Host -Prompt "Enter LOCATIONIQ_API_KEY (leave blank if using Google)"
+    if ([string]::IsNullOrWhiteSpace($locationIqKey)) {
+        $envContent += "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
+        [void]$script:ManualEditList.Add("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
+    } else {
+        $envContent += "LOCATIONIQ_API_KEY=$locationIqKey"
+    }
+    $envContent += ""
+    $envContent += "# --- Location Hints (Used by both providers) ---"
+    $envContent += "# Default location hints for the geocoder"
+    $geoCity = Prompt-Input "Enter GEOCODING_CITY (Default City)" $DefaultGeoCity
+    $envContent += "GEOCODING_CITY=$geoCity        # Default city"
+    $geoState = Prompt-Input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" $DefaultGeoState
+    $envContent += "GEOCODING_STATE=$geoState                    # Default state abbreviation (e.g., MD, VA)"
+    $geoCountry = Prompt-Input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" $DefaultGeoCountry
+    $envContent += "GEOCODING_COUNTRY=$geoCountry                  # Default country abbreviation"
+    $envContent += ""
+    $envContent += "# Target counties for address validation (comma-separated)"
+    $geoCounties = Prompt-Input "Enter GEOCODING_TARGET_COUNTIES" $DefaultGeoCounties
+    $envContent += "GEOCODING_TARGET_COUNTIES=$geoCounties"
+    $envContent += ""
+    $envContent += "# Target cities for address extraction hints (comma-separated)"
+    $targetCitiesList = Prompt-Input "Enter TARGET_CITIES_LIST" $DefaultTargetCities
+    $envContent += "TARGET_CITIES_LIST=$targetCitiesList"
+    $envContent += ""
+
+    # --- LLM & AI Summary ---
+    $envContent += "#################################################################"
+    $envContent += "##                LLM & AI SUMMARY SETTINGS                    ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Ollama Settings ---"
+    $envContent += "# URL for your running Ollama instance"
+    $ollamaUrl = Prompt-Input "Enter OLLAMA_URL" $DefaultOllamaUrl
+    $envContent += "OLLAMA_URL=$ollamaUrl"
+    $envContent += "# Ollama model used for address extraction and summarization"
+    $ollamaModelEnv = Prompt-Input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" $DefaultOllamaModelEnv
+    $envContent += "OLLAMA_MODEL=$ollamaModelEnv"
+    $envContent += ""
+    $envContent += "# --- OpenAI Settings (Optional Alternative) ---"
+    $envContent += "# API Key if using OpenAI instead of Ollama"
+    $openaiKey = Read-Host -Prompt "Enter OPENAI_API_KEY (leave blank if using Ollama)"
+    if ([string]::IsNullOrWhiteSpace($openaiKey)) {
+        $envContent += "OPENAI_API_KEY= # Leave blank if using Ollama"
+    } else {
+        $envContent += "OPENAI_API_KEY=$openaiKey"
+        [void]$script:ManualEditList.Add("OPENAI_API_KEY (if intended)")
+    }
+    $envContent += ""
+    $envContent += "# --- Summary Settings ---"
+    $envContent += "# How many hours back the AI summary should cover"
+    $summaryHours = Prompt-Input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" $DefaultSummaryLookbackHours
+    $envContent += "SUMMARY_LOOKBACK_HOURS=$summaryHours"
+    $envContent += ""
+
+    # --- Talk Groups ---
+    $envContent += "#################################################################"
+    $envContent += "##                     TALK GROUP MAPPINGS                     ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Address Extraction Mapping ---"
+    $envContent += "# Comma-separated list of Talk Group IDs where address extraction should be attempted"
+    $envContent += "# Recommend using dispatch talkgroups only."
+    $mappedTgs = Prompt-Input "Enter MAPPED_TALK_GROUPS" $DefaultMappedTgs
+    $envContent += "MAPPED_TALK_GROUPS=$mappedTgs"
+    $envContent += ""
+    $envContent += "# --- Location Descriptions for Mapped Talk Groups ---"
+    $envContent += "# REQUIRED: Add one line for EACH Talk Group ID listed in MAPPED_TALK_GROUPS above."
+    $envContent += "# Format: TALK_GROUP_<ID>=Location Description for LLM context"
+    $envContent += "# Example: TALK_GROUP_1234=Any Town or Area within Your County ST"
     $envContent += "# --- MANUALLY EDIT THE FOLLOWING SECTION ---"
-    $envContent += "# Add one line for EACH talk group ID listed in MAPPED_TALK_GROUPS above."
-    $envContent += "# Example format:"
-    $envContent += "# TALK_GROUP_1001=City1 or any town in County1 ST"
-    $envContent += "# TALK_GROUP_1002=City2 or any town in County1 ST"
-    $envContent += "# TALK_GROUP_2001=City3 or any town in County2 ST"
-    $envContent += "# TALK_GROUP_2002=City4 or any town in County2 ST"
+    # Split the mapped TGs and add commented out examples
+    $mappedTgs.Split(',') | ForEach-Object {
+        $tgId = $_.Trim()
+        if ($tgId -ne '') {
+            $envContent += "# TALK_GROUP_$($tgId)=<Location Description for $tgId>"
+        }
+    }
     $envContent += "# --- END MANUAL EDIT SECTION ---"
     [void]$script:ManualEditList.Add("TALK_GROUP_XXXX mappings")
     $envContent += ""
 
-    # --- Target Cities ---
-    $envContent += "# Target Cities (comma-separated list of cities in your target areas)"
-    $targetCitiesList = Prompt-Input "Enter TARGET_CITIES_LIST (Comma-separated)" $DefaultTargetCities
-    $envContent += "TARGET_CITIES_LIST=$targetCitiesList"
-    $envContent += ""
-
     # Write the content to the .env file
     try {
-        $envContent | Out-File -FilePath $envFile -Encoding utf8 -ErrorAction Stop
+        # Use Set-Content with -Encoding UTF8 for better compatibility
+        Set-Content -Path $envFile -Value ($envContent -join [Environment]::NewLine) -Encoding utf8 -ErrorAction Stop
         Print-Message ".env file created in $InstallDir"
     } catch {
-        # *** FIX APPLIED HERE ***
         $caughtError = $_
         Write-Error "Failed to write to ${envFile}: $($caughtError.Exception.Message)"
     }
@@ -388,11 +430,11 @@ function Create-EnvFile {
 function Install-NodeDeps {
     Print-Message "Installing Node.js dependencies..."
     Set-Location $InstallDir
-    # Attempt npm install
-    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser
+    # Attempt npm install - Added form-data
+    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
     if (-not $?) {
         Write-Warning "First npm install attempt failed. Trying again..."
-        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser
+        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
         if (-not $?) {
              Write-Warning "npm install failed again. Please check errors and try running 'npm install' manually in $InstallDir."
         }
@@ -403,11 +445,7 @@ function Install-NodeDeps {
 function Setup-PythonDeps {
     Print-Message "Installing Python dependencies..."
     Set-Location $InstallDir
-
-    # --- Option 1: Install Globally (Simpler for basic Windows use, but less isolated) ---
     Write-Host "Installing Python packages globally using pip..."
-
-    # Determine PyTorch command based on earlier choice
     $torchInstallCmd = ""
     if ($script:PyTorchDevice -eq "cuda") {
         Write-Host "Installing PyTorch with CUDA support (using latest CUDA 12.1 index URL, verify compatibility)..."
@@ -416,26 +454,9 @@ function Setup-PythonDeps {
         Write-Host "Installing CPU-only version of PyTorch..."
         $torchInstallCmd = "pip3 install torch torchvision torchaudio"
     }
-
     Run-Command { Invoke-Expression $torchInstallCmd } "Failed to install PyTorch."
-
     Write-Host "Installing faster-whisper and python-dotenv..."
     Run-Command { pip3 install faster-whisper python-dotenv } "Failed to install faster-whisper/python-dotenv."
-
-    # Optional: Install specific ctranslate2 version
-    # Write-Host "Check README if a specific ctranslate2 version is needed for your CUDA setup."
-    # Run-Command { pip3 install --force-reinstall ctranslate2==<version> } "Failed to install ctranslate2."
-
-    # --- Option 2: Using venv (Commented out - uncomment if preferred) ---
-    # Write-Host "Setting up Python virtual environment (.venv)..."
-    # Run-Command { python -m venv .venv } "Failed to create Python venv."
-    # Write-Host "Activating venv and installing packages..."
-    # Note: Activating venv within a script is complex. These pip commands assume it's active.
-    # Run-Command { & "$($InstallDir)\.venv\Scripts\pip.exe" install --upgrade pip } "Failed to upgrade pip in venv."
-    # Run-Command { & "$($InstallDir)\.venv\Scripts\pip.exe" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 } "Failed to install PyTorch in venv." # Adjust URL/CPU as needed
-    # Run-Command { & "$($InstallDir)\.venv\Scripts\pip.exe" install faster-whisper python-dotenv } "Failed to install other packages in venv."
-    # Write-Host "Remember to activate the venv manually before running: .\ .venv\Scripts\activate.ps1"
-
     Print-Message "Python dependency installation attempted."
 }
 
@@ -444,11 +465,10 @@ function Create-Dirs {
     Set-Location $InstallDir
     New-Item -ItemType Directory -Force -Path ".\audio" | Out-Null
     New-Item -ItemType Directory -Force -Path ".\data" | Out-Null
-    New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null # Added logs directory
+    New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null
     Print-Message "Directories created."
 }
 
-# Updated function to handle talk group import
 function Import-Talkgroups {
     Print-Message "Import Talk Group Data (Required)"
     Write-Host "This application requires talk group data exported from RadioReference.com."
@@ -458,23 +478,14 @@ function Import-Talkgroups {
     Write-Host "4. Save the file as 'talkgroups.csv' inside the '$InstallDir' directory."
     Write-Host "5. (Optional) Export frequencies as 'frequencies.csv' and save it in the same directory."
     Write-Host ""
-
     $talkgroupsFile = Join-Path $InstallDir "talkgroups.csv"
-
     while ($true) {
-        # *** FIX APPLIED HERE ***
-        # Create individual ChoiceDescription objects
         $choiceYes = New-Object System.Management.Automation.Host.ChoiceDescription("&Yes", "Confirm you have the file.")
         $choiceNo = New-Object System.Management.Automation.Host.ChoiceDescription("&No", "Indicate you do not have the file yet.")
         $choiceSkip = New-Object System.Management.Automation.Host.ChoiceDescription("&Skip", "Skip the import process for now.")
-
-        # Put the objects into an array
         $choices = [System.Management.Automation.Host.ChoiceDescription[]]($choiceYes, $choiceNo, $choiceSkip)
-
-        $options = [System.Management.Automation.Host.ChoiceDescription[]]$choices # This line might be redundant now, but harmless
-
+        $options = [System.Management.Automation.Host.ChoiceDescription[]]$choices
         $result = $Host.UI.PromptForChoice("Confirmation", "Have you downloaded and saved 'talkgroups.csv' to '$InstallDir'?", $options, 1) # Default to No
-
         switch ($result) {
             0 { # Yes
                 if (Test-Path $talkgroupsFile) {
@@ -482,27 +493,25 @@ function Import-Talkgroups {
                     Set-Location $InstallDir
                     Run-Command { node import_csv.js } "Talk group import script encountered an error. Check output."
                     Print-Message "Talk group import attempted."
-                    return # Exit the function
+                    return
                 } else {
                     Write-Warning "Error: '$talkgroupsFile' not found in '$InstallDir'."
                     Write-Warning "Please make sure the file is correctly named and placed."
-                    # Loop continues
                 }
             }
             1 { # No
                 Write-Host "Please download the file and place it in the directory, then run this script again or run 'node import_csv.js' manually later."
-                # Optionally pause here again if needed
-                # Read-Host "Press Enter when ready to continue..."
             }
             2 { # Skip
                 Write-Host "Skipping talk group import. You MUST run 'node import_csv.js' manually later after placing the file."
                 Print-Message "Talk group import skipped."
-                return # Exit the function
+                return
             }
         }
     }
 }
 
+# *** UPDATED FUNCTION ***
 function Manual-StepsReminder {
     Print-Message "--- MANUAL CONFIGURATION REQUIRED ---"
     Write-Host "The script has completed the automated steps and created a base .env file." -ForegroundColor Yellow
@@ -511,12 +520,18 @@ function Manual-StepsReminder {
     Write-Host "1.  '.env' file ('notepad .\.env'):" -ForegroundColor Green
     Write-Host "    - Verify all values entered during the script are correct."
     Write-Host "    - CRITICAL: Add your actual keys/tokens for:"
-    # List items that definitely need manual input based on the env creation function
     if ($script:ManualEditList -ne $null -and $script:ManualEditList.Count -gt 0) {
         Write-Host "      -> $($script:ManualEditList -join ', ')" -ForegroundColor Red
     } else {
          Write-Host "      -> (Review all placeholders like 'your_..._here')" -ForegroundColor Red
     }
+    # *** UPDATED REMINDERS ***
+    Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')." -ForegroundColor Yellow
+    Write-Host "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
+    Write-Host "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow
+    Write-Host "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup." -ForegroundColor Yellow
+    Write-Host "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct." -ForegroundColor Yellow
+    # *** END UPDATED REMINDERS ***
     Write-Host "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines." -ForegroundColor Red
     Write-Host ""
     Write-Host "2.  'public\config.js' ('notepad .\public\config.js'):" -ForegroundColor Green
@@ -537,7 +552,7 @@ function Manual-StepsReminder {
     Write-Host ""
     Write-Host "--- HOW TO RUN ---" -ForegroundColor Magenta
     Write-Host "1. Open PowerShell/CMD 1: cd $InstallDir"
-    Write-Host "   (If using venv, activate: .\.venv\Scripts\activate.ps1)"
+    Write-Host "   (If using venv for Python, activate it first)"
     Write-Host "   node bot.js"
     Write-Host "2. Open PowerShell/CMD 2: cd $InstallDir"
     Write-Host "   node webserver.js"
@@ -551,12 +566,12 @@ Install-Prerequisites
 Install-Ollama
 Install-NvidiaComponents # Will prompt user and provide links/guidance
 Clone-Repo
-Create-EnvFile # New step
+Create-EnvFile # Uses updated function
 Install-NodeDeps
 Setup-PythonDeps # Will use $script:PyTorchDevice set earlier
 Create-Dirs
-Import-Talkgroups # New interactive step
-Manual-StepsReminder
+Import-Talkgroups # Uses updated function
+Manual-StepsReminder # Uses updated function
 
 Print-Message "Installation script finished. Please complete the manual configuration steps."
 
