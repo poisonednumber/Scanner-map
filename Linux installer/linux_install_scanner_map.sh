@@ -2,7 +2,7 @@
 
 # Scanner Map Installation Script for Debian/Ubuntu-based Linux (e.g., Linux Mint)
 # --- IMPORTANT ---
-# 1. Run this script using: sudo bash install_scanner_map.sh
+# 1. Run this script using: sudo bash linux_install_scanner_map.sh
 # 2. This script assumes you are running a Debian/Ubuntu-based distribution.
 # 3. Read the prompts carefully, especially regarding NVIDIA/CUDA installation and .env creation.
 # 4. Manual configuration (.env, config.js, apikeys.json) is still required after running this script,
@@ -23,12 +23,16 @@ DEFAULT_GEO_STATE="ST"
 DEFAULT_GEO_COUNTRY="US"
 DEFAULT_GEO_COUNTIES="County1,County2"
 DEFAULT_WHISPER_MODEL="large-v3"
+DEFAULT_TRANSCRIPTION_MODE="local" # Default to local mode
+DEFAULT_WHISPER_SERVER_URL="http://localhost:8000" # Default remote server URL
 DEFAULT_OLLAMA_URL="http://localhost:11434"
 DEFAULT_OLLAMA_MODEL_ENV=$OLLAMA_MODEL # Use the same model pulled earlier
 DEFAULT_MAPPED_TGS="1001,1002,2001,2002"
 DEFAULT_TIMEZONE="US/Eastern"
 DEFAULT_ENABLE_AUTH="false"
 DEFAULT_TARGET_CITIES="City1,City2,City3,City4"
+DEFAULT_SUMMARY_LOOKBACK_HOURS="1" # Added default summary hours
+
 
 # --- Helper Functions ---
 print_message() {
@@ -43,24 +47,20 @@ run_command() {
   local status=$?
   if [ $status -ne 0 ]; then
     echo "Error: Command failed with status $status: $@" >&2
-    # Optionally exit on error: exit $status
-    # For this script, we'll try to continue
   fi
   return $status
 }
 
 prompt_yes_no() {
   local prompt_message="$1"
-  local default_value="${2:-n}" # Default to No if not specified
+  local default_value="${2:-n}"
   local response
-
   while true; do
-    # Use -r to prevent backslash interpretation, -p for prompt
     read -r -p "$prompt_message [Y/n]: " response
-    response=${response:-$default_value} # Default value if user presses Enter
+    response=${response:-$default_value}
     case "$response" in
-      [Yy]* ) return 0;; # Yes
-      [Nn]* ) return 1;; # No
+      [Yy]* ) return 0;;
+      [Nn]* ) return 1;;
       * ) echo "Please answer yes (y) or no (n).";;
     esac
   done
@@ -71,14 +71,11 @@ prompt_input() {
     local default_value="$2"
     local variable_name="$3"
     local user_input
-
-    # Display the prompt with the default value
     read -r -p "$prompt_message [$default_value]: " user_input
-
-    # If the user input is empty, use the default value
     if [[ -z "$user_input" ]]; then
         eval "$variable_name=\"$default_value\""
     else
+        user_input=$(echo "$user_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         eval "$variable_name=\"$user_input\""
     fi
 }
@@ -87,9 +84,8 @@ prompt_input() {
 
 install_prerequisites() {
   print_message "Updating package lists and installing prerequisites..."
-  run_command apt update || { echo "Failed to update apt lists. Check internet connection and permissions."; exit 1; }
-  # Added python3-venv here
-  run_command apt install -y git build-essential python3 python3-pip python3-venv ffmpeg nodejs npm curl gpg wget || { echo "Failed to install base packages."; exit 1; }
+  run_command apt-get update -y || { echo "Failed to update apt lists. Check internet connection and permissions."; exit 1; }
+  run_command apt-get install -y git build-essential python3 python3-pip python3-venv ffmpeg nodejs npm curl gpg wget || { echo "Failed to install base packages."; exit 1; }
   print_message "Base prerequisites installed."
 }
 
@@ -100,23 +96,19 @@ install_ollama() {
   else
       run_command curl -fsSL https://ollama.com/install.sh | sh || { echo "Failed to install Ollama."; return 1; }
   fi
-
   echo "Pulling Ollama model: $OLLAMA_MODEL (this may take a while)..."
   run_command ollama pull "$OLLAMA_MODEL" || echo "Warning: Failed to pull Ollama model. You may need to run 'ollama pull $OLLAMA_MODEL' manually later."
   print_message "Ollama installation attempted."
 }
 
-# Updated function: Provides links and instructions for manual NVIDIA component installation
 install_nvidia_components() {
   print_message "NVIDIA GPU Components Check (CUDA/cuDNN/cuBLAS)"
   if ! command -v nvidia-smi &> /dev/null; then
       echo "NVIDIA driver not detected (nvidia-smi command not found)."
       echo "Skipping CUDA/cuDNN/cuBLAS installation guidance. If you have an NVIDIA GPU, please install drivers first."
-      # Set reminder variable for .env
       export T_DEVICE="cpu"
       return 1
   fi
-
   if prompt_yes_no "Do you intend to use an NVIDIA GPU for transcription (requires manual CUDA/cuDNN/cuBLAS installation)?"; then
     echo ""
     echo "--- Manual NVIDIA Installation Required ---"
@@ -134,12 +126,10 @@ install_nvidia_components() {
     echo ""
     echo "After manual installation, make sure to select the 'cuda' option when installing PyTorch below."
     echo "------------------------------------------"
-    # Set reminder variable for .env
     export T_DEVICE="cuda"
     print_message "NVIDIA components require MANUAL installation."
   else
     echo "Skipping NVIDIA components. PyTorch will be installed for CPU."
-    # Set reminder variable for .env
     export T_DEVICE="cpu"
   fi
 }
@@ -149,27 +139,30 @@ clone_repo() {
   if [ -d "$INSTALL_DIR" ]; then
     echo "Directory $INSTALL_DIR already exists."
     if prompt_yes_no "Do you want to remove the existing directory and re-clone?"; then
-      run_command rm -rf "$INSTALL_DIR" || { echo "Failed to remove existing directory."; exit 1; }
+      rm -rf "$INSTALL_DIR" || sudo rm -rf "$INSTALL_DIR" || { echo "Failed to remove existing directory."; exit 1; }
     else
       echo "Skipping clone. Using existing directory."
-      cd "$INSTALL_DIR" || exit 1
+      cd "$INSTALL_DIR" || { echo "Failed to navigate to $INSTALL_DIR"; exit 1; }
       return 0
     fi
   fi
   run_command mkdir -p "$INSTALL_DIR" || { echo "Failed to create directory $INSTALL_DIR."; exit 1; }
-  cd "$INSTALL_DIR" || exit 1
-  run_command git clone "$GIT_REPO_URL" . || { echo "Failed to clone repository."; exit 1; }
+  local original_user=${SUDO_USER:-$(whoami)}
+  local original_group=$(id -gn "$original_user")
+  run_command chown "$original_user:$original_group" "$INSTALL_DIR"
+  cd "$INSTALL_DIR" || { echo "Failed to navigate to $INSTALL_DIR"; exit 1; }
+  sudo -u "$original_user" git clone "$GIT_REPO_URL" . || { echo "Failed to clone repository."; exit 1; }
+  run_command chown -R "$original_user:$original_group" "$INSTALL_DIR"
   print_message "Repository cloned."
 }
 
-# New function to create .env file interactively
+# *** UPDATED FUNCTION ***
 create_env_file() {
     print_message "Creating .env configuration file..."
     cd "$INSTALL_DIR" || exit 1
     local env_file=".env"
     local needs_manual_edit=() # Array to track items needing manual input
 
-    # Check if .env already exists
     if [ -f "$env_file" ]; then
         if ! prompt_yes_no "$env_file already exists. Overwrite it?"; then
             echo "Skipping .env creation. Please configure manually."
@@ -180,149 +173,234 @@ create_env_file() {
 
     echo "Please provide the following configuration values. Press Enter to accept the default."
 
+    # Helper to append to file
+    append_env() { echo "$1" >> "$env_file"; }
+
     # --- Discord ---
-    echo "# Discord Bot Configuration" >> "$env_file"
+    append_env "#################################################################"
+    append_env "##                       DISCORD BOT SETTINGS                  ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# Discord Bot Token and Client ID (Required)"
     read -r -p "Enter DISCORD_TOKEN: " discord_token
     if [[ -z "$discord_token" ]]; then
-        echo "DISCORD_TOKEN=your_discord_token_here # <<< MANUALLY EDIT REQUIRED" >> "$env_file"
+        append_env "DISCORD_TOKEN=your_discord_token_here # <<< MANUALLY EDIT REQUIRED"
         needs_manual_edit+=("DISCORD_TOKEN")
     else
-        echo "DISCORD_TOKEN=$discord_token" >> "$env_file"
+        append_env "DISCORD_TOKEN=$discord_token"
     fi
-    read -r -p "Enter CLIENT_ID: " client_id
-    if [[ -z "$client_id" ]]; then
-        echo "CLIENT_ID=your_client_id_here # <<< MANUALLY EDIT REQUIRED" >> "$env_file"
-        needs_manual_edit+=("CLIENT_ID")
-    else
-        echo "CLIENT_ID=$client_id" >> "$env_file"
-    fi
-    echo "" >> "$env_file"
+    # Removed CLIENT_ID prompt
+    append_env ""
 
-    # --- Server Ports ---
-    echo "# Server Ports" >> "$env_file"
+    # --- Server Ports & Network ---
+    append_env "#################################################################"
+    append_env "##                  SERVER & NETWORK SETTINGS                  ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# Port for incoming SDRTrunk/TrunkRecorder uploads"
     prompt_input "Enter BOT_PORT (for SDRTrunk/TR)" "$DEFAULT_BOT_PORT" bot_port
-    echo "BOT_PORT=$bot_port" >> "$env_file"
-    prompt_input "Enter API_KEY_FILE path" "$DEFAULT_API_KEY_FILE" api_key_file
-    echo "API_KEY_FILE=$api_key_file" >> "$env_file"
+    append_env "BOT_PORT=$bot_port"
+    append_env ""
+    append_env "# Port for the web interface/API server"
     prompt_input "Enter WEBSERVER_PORT (e.g., 80, 8080)" "$DEFAULT_WEBSERVER_PORT" webserver_port
-    echo "WEBSERVER_PORT=$webserver_port" >> "$env_file"
+    append_env "WEBSERVER_PORT=$webserver_port"
+    append_env ""
+    append_env "# Public domain name or IP address used for creating audio playback links"
     prompt_input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" "$DEFAULT_PUBLIC_DOMAIN" public_domain
-    echo "PUBLIC_DOMAIN=$public_domain" >> "$env_file"
-    echo "" >> "$env_file"
+    append_env "PUBLIC_DOMAIN=$public_domain"
+    append_env ""
+    append_env "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
+    prompt_input "Enter TIMEZONE" "$DEFAULT_TIMEZONE" timezone
+    append_env "TIMEZONE=$timezone"
+    append_env ""
 
-    # --- Geocoding ---
-    echo "# Geocoding Configuration" >> "$env_file"
-    read -r -p "Enter GOOGLE_MAPS_API_KEY: " google_maps_key
-     if [[ -z "$google_maps_key" ]]; then
-        echo "GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here # <<< MANUALLY EDIT REQUIRED" >> "$env_file"
-        needs_manual_edit+=("GOOGLE_MAPS_API_KEY")
-    else
-        echo "GOOGLE_MAPS_API_KEY=$google_maps_key" >> "$env_file"
-    fi
-    prompt_input "Enter GEOCODING_CITY (Default City)" "$DEFAULT_GEO_CITY" geo_city
-    echo "GEOCODING_CITY=$geo_city" >> "$env_file"
-    prompt_input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" "$DEFAULT_GEO_STATE" geo_state
-    echo "GEOCODING_STATE=$geo_state" >> "$env_file"
-    prompt_input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" "$DEFAULT_GEO_COUNTRY" geo_country
-    echo "GEOCODING_COUNTRY=$geo_country" >> "$env_file"
-    prompt_input "Enter GEOCODING_TARGET_COUNTIES (Comma-separated)" "$DEFAULT_GEO_COUNTIES" geo_counties
-    echo "GEOCODING_TARGET_COUNTIES=$geo_counties" >> "$env_file"
-    echo "" >> "$env_file"
-
-    # --- Transcription ---
-    echo "# Transcription Configuration" >> "$env_file"
-    prompt_input "Enter WHISPER_MODEL (e.g., tiny, base, small, medium, large-v3)" "$DEFAULT_WHISPER_MODEL" whisper_model
-    echo "WHISPER_MODEL=$whisper_model" >> "$env_file"
-    # Use the device determined earlier
-    prompt_input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" "${T_DEVICE:-cpu}" transcription_device
-    echo "TRANSCRIPTION_DEVICE=$transcription_device" >> "$env_file"
-    echo "" >> "$env_file"
-
-    # --- LLM ---
-    echo "# Local LLM Configuration" >> "$env_file"
-    prompt_input "Enter OLLAMA_URL" "$DEFAULT_OLLAMA_URL" ollama_url
-    echo "OLLAMA_URL=$ollama_url" >> "$env_file"
-    prompt_input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" "$DEFAULT_OLLAMA_MODEL_ENV" ollama_model_env
-    echo "OLLAMA_MODEL=$ollama_model_env" >> "$env_file"
-    echo "" >> "$env_file"
-
-    # --- OpenAI (Optional) ---
-    echo "# Optional: OpenAI Configuration (alternative to Ollama)" >> "$env_file"
-    read -r -p "Enter OPENAI_API_KEY (leave blank if using Ollama): " openai_key
-    if [[ -z "$openai_key" ]]; then
-        echo "OPENAI_API_KEY= # <<< Optional: Add key here if using OpenAI" >> "$env_file"
-    else
-        echo "OPENAI_API_KEY=$openai_key" >> "$env_file"
-        needs_manual_edit+=("OPENAI_API_KEY (if intended)")
-    fi
-    echo "" >> "$env_file"
-
-    # --- Talk Groups ---
-    echo "# Talk Groups" >> "$env_file"
-    prompt_input "Enter MAPPED_TALK_GROUPS (Comma-separated IDs for address extraction)" "$DEFAULT_MAPPED_TGS" mapped_tgs
-    echo "MAPPED_TALK_GROUPS=$mapped_tgs" >> "$env_file"
-    echo "" >> "$env_file"
-
-    # --- Timezone ---
-    echo "# Timezone" >> "$env_file"
-    prompt_input "Enter TIMEZONE (e.g., US/Eastern, America/Chicago, UTC)" "$DEFAULT_TIMEZONE" timezone
-    echo "TIMEZONE=$timezone" >> "$env_file"
-    echo "" >> "$env_file"
-
-    # --- Authentication ---
-    echo "# Authentication" >> "$env_file"
+    # --- Auth & API Keys ---
+    append_env "#################################################################"
+    append_env "##                   AUTHENTICATION & API KEYS                 ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
+    prompt_input "Enter API_KEY_FILE path" "$DEFAULT_API_KEY_FILE" api_key_file
+    append_env "API_KEY_FILE=$api_key_file             # Edit and run GenApiKey.js to create/update keys"
+    append_env ""
+    append_env "# Enable/disable password authentication for the web interface"
     prompt_input "Enable Webserver Authentication? (true/false)" "$DEFAULT_ENABLE_AUTH" enable_auth
-    echo "ENABLE_AUTH=$enable_auth" >> "$env_file"
-    # Only ask for password if auth is enabled
+    append_env "ENABLE_AUTH=$enable_auth                 # Set to 'true' to enable password login"
+    append_env "# Password for web interface login (only used if ENABLE_AUTH=true)"
     if [[ "$enable_auth" == "true" ]]; then
         read -r -p "Enter WEBSERVER_PASSWORD (for web login): " webserver_password
         if [[ -z "$webserver_password" ]]; then
-             echo "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED" >> "$env_file"
+             append_env "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED"
              needs_manual_edit+=("WEBSERVER_PASSWORD (since auth enabled)")
         else
-             echo "WEBSERVER_PASSWORD=$webserver_password" >> "$env_file"
+             append_env "WEBSERVER_PASSWORD=$webserver_password"
         fi
     else
-         echo "WEBSERVER_PASSWORD= # Authentication disabled" >> "$env_file"
+         append_env "WEBSERVER_PASSWORD=                     # Run init-admin.js after changing this if auth is enabled"
     fi
-    echo "" >> "$env_file"
+    append_env ""
 
-    # --- Talk Group Mappings (Manual Edit Required) ---
-    echo "# Talk Groups mapping (format: ID=Location)" >> "$env_file"
-    echo "# --- MANUALLY EDIT THE FOLLOWING SECTION ---" >> "$env_file"
-    echo "# Add one line for EACH talk group ID listed in MAPPED_TALK_GROUPS above." >> "$env_file"
-    echo "# Example format:" >> "$env_file"
-    echo "# TALK_GROUP_1001=City1 or any town in County1 ST" >> "$env_file"
-    echo "# TALK_GROUP_1002=City2 or any town in County1 ST" >> "$env_file"
-    echo "# TALK_GROUP_2001=City3 or any town in County2 ST" >> "$env_file"
-    echo "# TALK_GROUP_2002=City4 or any town in County2 ST" >> "$env_file"
-    echo "# --- END MANUAL EDIT SECTION ---" >> "$env_file"
+    # --- Transcription ---
+    append_env "#################################################################"
+    append_env "##                   TRANSCRIPTION SETTINGS                    ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Transcription Mode ---"
+    append_env "# Select 'local' (requires Python/CUDA setup) or 'remote' (uses API server)"
+    prompt_input "Enter TRANSCRIPTION_MODE ('local' or 'remote')" "$DEFAULT_TRANSCRIPTION_MODE" transcription_mode
+    append_env "TRANSCRIPTION_MODE=$transcription_mode"
+    append_env ""
+    append_env "# --- Local Settings (Only used if TRANSCRIPTION_MODE=local) ---"
+    append_env "# faster-whisper model (e.g., tiny, base, small, medium, large-v3)"
+    prompt_input "Enter WHISPER_MODEL" "$DEFAULT_WHISPER_MODEL" whisper_model
+    append_env "WHISPER_MODEL=$whisper_model"
+    append_env "# Device for local transcription ('cuda' or 'cpu')"
+    if [[ "$transcription_mode" == "local" ]]; then
+        prompt_input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" "${T_DEVICE:-cpu}" transcription_device
+        append_env "TRANSCRIPTION_DEVICE=$transcription_device             # Ignored if mode is 'remote'"
+    else
+        append_env "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
+    fi
+    append_env ""
+    append_env "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
+    append_env "# URL of your running faster-whisper-server/speaches API"
+    if [[ "$transcription_mode" == "remote" ]]; then
+        prompt_input "Enter FASTER_WHISPER_SERVER_URL" "$DEFAULT_WHISPER_SERVER_URL" whisper_server_url
+        append_env "FASTER_WHISPER_SERVER_URL=$whisper_server_url # Ignored if mode is 'local'"
+    else
+        append_env "FASTER_WHISPER_SERVER_URL=$DEFAULT_WHISPER_SERVER_URL # Ignored if mode is 'local'"
+    fi
+    append_env ""
+
+    # --- Geocoding ---
+    append_env "#################################################################"
+    append_env "##                  GEOCODING & LOCATION SETTINGS              ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Geocoding API Keys ---"
+    append_env "# INSTRUCTIONS:"
+    append_env "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
+    append_env "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
+    append_env "# 3. You can comment out the unused key with a '#' to avoid confusion."
+    append_env ""
+    append_env "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
+    read -r -p "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ): " google_maps_key
+    if [[ -z "$google_maps_key" ]]; then
+        append_env "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
+        needs_manual_edit+=("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
+    else
+        append_env "GOOGLE_MAPS_API_KEY=$google_maps_key"
+    fi
+    append_env ""
+    append_env "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
+    read -r -p "Enter LOCATIONIQ_API_KEY (leave blank if using Google): " location_iq_key
+    if [[ -z "$location_iq_key" ]]; then
+        append_env "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
+        needs_manual_edit+=("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
+    else
+        append_env "LOCATIONIQ_API_KEY=$location_iq_key"
+    fi
+    append_env ""
+    append_env "# --- Location Hints (Used by both providers) ---"
+    append_env "# Default location hints for the geocoder"
+    prompt_input "Enter GEOCODING_CITY (Default City)" "$DEFAULT_GEO_CITY" geo_city
+    append_env "GEOCODING_CITY=$geo_city        # Default city"
+    prompt_input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" "$DEFAULT_GEO_STATE" geo_state
+    append_env "GEOCODING_STATE=$geo_state                    # Default state abbreviation (e.g., MD, VA)"
+    prompt_input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" "$DEFAULT_GEO_COUNTRY" geo_country
+    append_env "GEOCODING_COUNTRY=$geo_country                  # Default country abbreviation"
+    append_env ""
+    append_env "# Target counties for address validation (comma-separated)"
+    prompt_input "Enter GEOCODING_TARGET_COUNTIES" "$DEFAULT_GEO_COUNTIES" geo_counties
+    append_env "GEOCODING_TARGET_COUNTIES=$geo_counties"
+    append_env ""
+    append_env "# Target cities for address extraction hints (comma-separated)"
+    prompt_input "Enter TARGET_CITIES_LIST" "$DEFAULT_TARGET_CITIES" target_cities_list
+    append_env "TARGET_CITIES_LIST=$target_cities_list"
+    append_env ""
+
+
+    # --- LLM & AI Summary ---
+    append_env "#################################################################"
+    append_env "##                LLM & AI SUMMARY SETTINGS                    ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Ollama Settings ---"
+    append_env "# URL for your running Ollama instance"
+    prompt_input "Enter OLLAMA_URL" "$DEFAULT_OLLAMA_URL" ollama_url
+    append_env "OLLAMA_URL=$ollama_url"
+    append_env "# Ollama model used for address extraction and summarization"
+    prompt_input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" "$DEFAULT_OLLAMA_MODEL_ENV" ollama_model_env
+    append_env "OLLAMA_MODEL=$ollama_model_env"
+    append_env ""
+    append_env "# --- OpenAI Settings (Optional Alternative) ---"
+    append_env "# API Key if using OpenAI instead of Ollama"
+    read -r -p "Enter OPENAI_API_KEY (leave blank if using Ollama): " openai_key
+    if [[ -z "$openai_key" ]]; then
+        append_env "OPENAI_API_KEY= # Leave blank if using Ollama"
+    else
+        append_env "OPENAI_API_KEY=$openai_key"
+        needs_manual_edit+=("OPENAI_API_KEY (if intended)")
+    fi
+    append_env ""
+    append_env "# --- Summary Settings ---"
+    append_env "# How many hours back the AI summary should cover"
+    prompt_input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" "$DEFAULT_SUMMARY_LOOKBACK_HOURS" summary_hours
+    append_env "SUMMARY_LOOKBACK_HOURS=$summary_hours"
+    append_env ""
+
+    # --- Talk Group Mappings ---
+    append_env "#################################################################"
+    append_env "##                     TALK GROUP MAPPINGS                     ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Address Extraction Mapping ---"
+    append_env "# Comma-separated list of Talk Group IDs where address extraction should be attempted"
+    append_env "# Recommend using dispatch talkgroups only."
+    prompt_input "Enter MAPPED_TALK_GROUPS" "$DEFAULT_MAPPED_TGS" mapped_tgs
+    append_env "MAPPED_TALK_GROUPS=$mapped_tgs"
+    append_env ""
+    append_env "# --- Location Descriptions for Mapped Talk Groups ---"
+    append_env "# REQUIRED: Add one line for EACH Talk Group ID listed in MAPPED_TALK_GROUPS above."
+    append_env "# Format: TALK_GROUP_<ID>=Location Description for LLM context"
+    append_env "# Example: TALK_GROUP_1234=Any Town or Area within Your County ST"
+    append_env "# --- MANUALLY EDIT THE FOLLOWING SECTION ---"
+    # Split the mapped TGs and add commented out examples
+    IFS=',' read -ra tgs_array <<< "$mapped_tgs"
+    for tgId in "${tgs_array[@]}"; do
+        # Trim whitespace
+        tgId=$(echo "$tgId" | sed 's/^[ \t]*//;s/[ \t]*$//')
+        if [[ -n "$tgId" ]]; then
+            append_env "# TALK_GROUP_${tgId}=<Location Description for $tgId>"
+        fi
+    done
+    append_env "# --- END MANUAL EDIT SECTION ---"
     needs_manual_edit+=("TALK_GROUP_XXXX mappings")
-    echo "" >> "$env_file"
+    append_env ""
 
-    # --- Target Cities ---
-    echo "# Target Cities (comma-separated list of cities in your target areas)" >> "$env_file"
-    prompt_input "Enter TARGET_CITIES_LIST (Comma-separated)" "$DEFAULT_TARGET_CITIES" target_cities_list
-    echo "TARGET_CITIES_LIST=$target_cities_list" >> "$env_file"
-    echo "" >> "$env_file"
-
+    # Ensure correct ownership of .env file
+    local original_user=${SUDO_USER:-$(whoami)}
+    local original_group=$(id -gn "$original_user")
+    chown "$original_user:$original_group" "$env_file"
 
     print_message ".env file created in $INSTALL_DIR"
     # Store the list of items needing manual edit for the final reminder
-    export MANUAL_EDIT_LIST="${needs_manual_edit[*]}"
+    # Join array elements into a space-separated string for export
+    export MANUAL_EDIT_LIST=$(IFS=' '; echo "${needs_manual_edit[*]}")
 
 }
 
-
+# *** UPDATED FUNCTION ***
 install_node_deps() {
   print_message "Installing Node.js dependencies..."
-  # Navigate to install dir just in case
   cd "$INSTALL_DIR" || exit 1
-  # Attempt npm install
-  run_command npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser
+  # Attempt npm install - Added form-data
+  local original_user=${SUDO_USER:-$(whoami)}
+  echo "Running npm install as user: $original_user"
+  sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
   if [ $? -ne 0 ]; then
       echo "npm install failed. Trying again..."
-      run_command npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually in $INSTALL_DIR."
+      sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually as user '$original_user' in $INSTALL_DIR."
   fi
   print_message "Node.js dependency installation attempted."
 }
@@ -330,27 +408,21 @@ install_node_deps() {
 setup_python_venv() {
   print_message "Setting up Python virtual environment and installing dependencies..."
   cd "$INSTALL_DIR" || exit 1
-
-  echo "Creating Python virtual environment (.venv)..."
-  run_command python3 -m venv .venv || { echo "Failed to create Python venv."; return 1; }
-
-  echo "Activating virtual environment..."
-  # Note: Activation is temporary for the script's context. User needs to activate manually later.
+  local original_user=${SUDO_USER:-$(whoami)}
+  local original_group=$(id -gn "$original_user")
+  echo "Creating Python virtual environment (.venv) as user: $original_user ..."
+  sudo -u "$original_user" python3 -m venv .venv || { echo "Failed to create Python venv."; return 1; }
+  echo "Activating virtual environment (for this script)..."
   source .venv/bin/activate || { echo "Failed to activate Python venv."; return 1; }
-
   echo "Upgrading pip..."
   run_command pip install --upgrade pip
-
-  # Ask user about GPU/CPU for PyTorch based on previous NVIDIA choice
   local torch_install_cmd=""
   local use_cuda=false
-  # Use the T_DEVICE variable exported from the nvidia function
   if [[ "$T_DEVICE" == "cuda" ]]; then
       if prompt_yes_no "Install PyTorch with CUDA support (based on your earlier choice)?"; then
           use_cuda=true
       fi
   fi
-
   if $use_cuda; then
       echo "Please specify your CUDA version for PyTorch (e.g., 11.8, 12.1). Check https://pytorch.org/get-started/locally/"
       read -r -p "Enter CUDA version (leave blank to attempt latest): " cuda_version
@@ -370,19 +442,11 @@ setup_python_venv() {
   else
       echo "Installing CPU-only version of PyTorch..."
       torch_install_cmd="pip install torch torchvision torchaudio"
-      # Ensure T_DEVICE is cpu if GPU wasn't chosen here
       export T_DEVICE="cpu"
   fi
-
   run_command $torch_install_cmd || { echo "Failed to install PyTorch."; deactivate; return 1; }
-
   echo "Installing faster-whisper and python-dotenv..."
   run_command pip install faster-whisper python-dotenv || { echo "Failed to install faster-whisper/python-dotenv."; deactivate; return 1; }
-
-  # Optional: Install specific ctranslate2 version (add prompt if needed)
-  # echo "Check README if a specific ctranslate2 version is needed for your CUDA setup."
-  # run_command pip install --force-reinstall ctranslate2==<version>
-
   echo "Deactivating virtual environment."
   deactivate
   print_message "Python environment setup complete."
@@ -391,13 +455,15 @@ setup_python_venv() {
 create_dirs() {
   print_message "Creating required directories..."
   cd "$INSTALL_DIR" || exit 1
+  local original_user=${SUDO_USER:-$(whoami)}
+  local original_group=$(id -gn "$original_user")
   run_command mkdir -p audio
   run_command mkdir -p data
-  run_command mkdir -p logs # Added logs directory based on webserver.js
+  run_command mkdir -p logs
+  run_command chown -R "$original_user:$original_group" audio data logs
   print_message "Directories created."
 }
 
-# Updated function to handle talk group import
 import_talkgroups() {
     print_message "Import Talk Group Data (Required)"
     echo "This application requires talk group data exported from RadioReference.com."
@@ -407,31 +473,28 @@ import_talkgroups() {
     echo "4. Save the file as 'talkgroups.csv' inside the '$INSTALL_DIR' directory."
     echo "5. (Optional) Export frequencies as 'frequencies.csv' and save it in the same directory."
     echo ""
-
     local talkgroups_file="$INSTALL_DIR/talkgroups.csv"
-
+    local original_user=${SUDO_USER:-$(whoami)}
     while true; do
         read -r -p "Have you downloaded and saved 'talkgroups.csv' to '$INSTALL_DIR'? [y/n/skip]: " response
         case "$response" in
             [Yy]* )
-                if [ -f "$talkgroups_file" ]; then
-                    echo "Found '$talkgroups_file'. Running import script..."
+                if sudo -u "$original_user" [ -f "$talkgroups_file" ]; then
+                    echo "Found '$talkgroups_file'. Running import script as user '$original_user'..."
                     cd "$INSTALL_DIR" || exit 1
-                    run_command node import_csv.js || echo "Warning: Talk group import script encountered an error. Check output."
+                    sudo -u "$original_user" node import_csv.js || echo "Warning: Talk group import script encountered an error. Check output."
                     print_message "Talk group import attempted."
                     break
                 else
-                    echo "Error: '$talkgroups_file' not found in '$INSTALL_DIR'."
-                    echo "Please make sure the file is correctly named and placed."
+                    echo "Error: '$talkgroups_file' not found in '$INSTALL_DIR' or not accessible by user '$original_user'."
+                    echo "Please make sure the file is correctly named and placed, and check permissions."
                 fi
                 ;;
             [Nn]* )
-                echo "Please download the file and place it in the directory, then run this script again or run 'node import_csv.js' manually later."
-                # Optionally pause here again if needed
-                # read -r -p "Press Enter when ready to continue..."
+                echo "Please download the file and place it in the directory, then run this script again or run 'node import_csv.js' manually later as user '$original_user'."
                 ;;
             [Ss][Kk][Ii][Pp]* )
-                echo "Skipping talk group import. You MUST run 'node import_csv.js' manually later after placing the file."
+                echo "Skipping talk group import. You MUST run 'node import_csv.js' manually later as user '$original_user' after placing the file."
                 print_message "Talk group import skipped."
                 break
                 ;;
@@ -442,40 +505,49 @@ import_talkgroups() {
     done
 }
 
-
+# *** UPDATED FUNCTION ***
 manual_steps_reminder() {
   print_message "--- MANUAL CONFIGURATION REQUIRED ---"
   echo "The script has completed the automated steps and created a base .env file."
   echo "You MUST now manually review and potentially edit the following files in '$INSTALL_DIR':"
   echo ""
-  echo "1.  '.env' file ('nano .env'):"
+  echo "1.  '.env' file ('nano $INSTALL_DIR/.env'):"
   echo "    - Verify all values are correct for your setup."
   echo "    - CRITICAL: Add your actual keys/tokens for:"
-  # List items that definitely need manual input based on the env creation function
   local needs_edit_str=""
   for item in $MANUAL_EDIT_LIST; do
       needs_edit_str+="$item, "
   done
-  # Remove trailing comma and space
-  needs_edit_str=${needs_edit_str%, }
-  echo "      -> $needs_edit_str"
+  if [[ -n "$needs_edit_str" ]]; then
+      needs_edit_str=${needs_edit_str%, }
+      echo "      -> $needs_edit_str"
+  else
+      echo "      -> (Review all placeholders like 'your_..._here')"
+  fi
+  # *** UPDATED REMINDERS ***
+  echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')."
+  echo "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct."
+  echo "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
+  echo "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup."
+  echo "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct."
+  # *** END UPDATED REMINDERS ***
   echo "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines."
   echo ""
-  echo "2.  'public/config.js' ('nano public/config.js'):"
+  echo "2.  'public/config.js' ('nano $INSTALL_DIR/public/config.js'):"
   echo "    - Review map center, zoom, icons, etc."
   echo ""
   echo "3.  API Key for SDRTrunk/TrunkRecorder:"
-  echo "    - Edit 'GenApiKey.js' ('nano GenApiKey.js') and set your desired secret key."
+  echo "    - Edit 'GenApiKey.js' ('nano $INSTALL_DIR/GenApiKey.js') and set your desired secret key."
   echo "    - Run 'node GenApiKey.js' to get the HASHED key."
-  echo "    - Create/edit 'data/apikeys.json' ('nano data/apikeys.json')."
+  echo "    - Create/edit 'data/apikeys.json' ('nano $INSTALL_DIR/data/apikeys.json')."
   echo "    - Add the HASHED key in the format: [{\"key\":\"YOUR_HASHED_KEY_HERE\",\"disabled\":false}]"
   echo ""
   echo "4.  (If Skipped) Import Talk Groups:"
   echo "    - Place 'talkgroups.csv' / 'frequencies.csv' in '$INSTALL_DIR'."
-  echo "    - Run 'node import_csv.js'."
+  echo "    - Run 'node import_csv.js' (run as the user who owns the files, e.g., 'sudo -u $SUDO_USER node import_csv.js' if needed)."
   echo ""
   echo "5.  (Optional) Initialize Admin User (if ENABLE_AUTH=true in .env):"
-  echo "    - Run 'node init-admin.js'."
+  echo "    - Run 'node init-admin.js' (run as the user who owns the files)."
   echo ""
   echo "--- HOW TO RUN ---"
   echo "1. Open Terminal 1: cd $INSTALL_DIR && source .venv/bin/activate && node bot.js"
@@ -488,16 +560,22 @@ manual_steps_reminder() {
 # --- Main Script Execution ---
 print_message "Starting Scanner Map Installation..."
 
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run this script using sudo: sudo bash $0"
+  exit 1
+fi
+
 install_prerequisites
 install_ollama
 install_nvidia_components # Will prompt user and provide links
 clone_repo
-create_env_file # New step
-install_node_deps
+create_env_file # Uses updated function
+install_node_deps # Uses updated function
 setup_python_venv # Will use T_DEVICE set earlier
 create_dirs
-import_talkgroups # New interactive step
-manual_steps_reminder
+import_talkgroups # Uses updated function
+manual_steps_reminder # Uses updated function
 
 # --- PAUSE ---
 print_message "Installation script finished. Please review the manual steps above."
