@@ -23,42 +23,84 @@ let timestampUpdateInterval = null;
 let isNewCallAudioMuted = false;
 let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
 
+// Uses uppercase keys consistent with how they're stored in the DB via webserver.js
 let categoryCounts = {
-  'MEDICAL': 0,
-  'FIRE': 0,
-  'TRAFFIC': 0,
-  'THEFT': 0,
-  'SUSPICIOUS': 0,
-  'DOMESTIC': 0,
+  'MEDICAL EMERGENCY': 0,
+  'INJURED PERSON': 0,
+  'DISTURBANCE': 0,
+  'VEHICLE COLLISION': 0,
+  'BURGLARY': 0,
   'ASSAULT': 0,
-  'ALARM': 0,
-  'WELFARE': 0,
-  'ANIMAL': 0,
+  'STRUCTURE FIRE': 0,
+  'MISSING PERSON': 0,
+  'MEDICAL CALL': 0,
+  'BUILDING FIRE': 0,
+  'STOLEN VEHICLE': 0,
+  'SERVICE CALL': 0,
+  'VEHICLE STOP': 0,
+  'UNCONSCIOUS PERSON': 0,
+  'RECKLESS DRIVER': 0,
+  'PERSON WITH A GUN': 0,
+  'ALTERED LEVEL OF CONSCIOUSNESS': 0,
+  'BREATHING PROBLEMS': 0,
+  'FIGHT': 0,
+  'CARBON MONOXIDE': 0,
+  'ABDUCTION': 0,
+  'PASSED OUT PERSON': 0,
+  'HAZMAT': 0,
+  'FIRE ALARM': 0,
+  'TRAFFIC HAZARD': 0,
+  'INTOXICATED PERSON': 0,
+  'MVC': 0,
+  'ANIMAL BITE': 0, // Added
+  'ASSIST': 0,      // Added
   'OTHER': 0
 };
+
 let newestCallIds = []; // Store IDs of newest calls
 const MAX_PULSING_MARKERS = 3; // Maximum number of pulsing markers
 
-// Category color mapping - simplified for high contrast
+// Assigning colors based on incident type similarity. Using uppercase keys.
 const CATEGORY_COLORS = {
-    // High Urgency / Emergency Response (Vivid Red)
-    'MEDICAL':   '#FF1744',
-    'FIRE':      '#FF1744',
-    'ASSAULT':   '#FF1744',
-    'ALARM':     '#FF1744', // Grouped with high urgency
+    // Medical Related (Reds/Pinks - adjusted for better contrast)
+    'MEDICAL EMERGENCY':                 '#E53935', // Medium Red
+    'INJURED PERSON':                    '#F06292', // Medium Pink
+    'MEDICAL CALL':                      '#E53935', // Medium Red
+    'UNCONSCIOUS PERSON':                '#F06292', // Medium Pink
+    'ALTERED LEVEL OF CONSCIOUSNESS':    '#E53935', // Medium Red
+    'BREATHING PROBLEMS':                '#F06292', // Medium Pink
+    'PASSED OUT PERSON':                 '#F06292', // Medium Pink
+    'ANIMAL BITE':                       '#EF5350', // Slightly Lighter Red
 
-    // Investigation / Intervention (Vivid Cyan/Blue)
-    'THEFT':     '#00E5FF',
-    'SUSPICIOUS':'#00E5FF',
-    'DOMESTIC':  '#00E5FF', // Grouped with intervention
+    // Fire Related (Oranges - avoiding pure yellow)
+    'STRUCTURE FIRE':                    '#F57C00', // Strong Orange
+    'BUILDING FIRE':                     '#F57C00', // Strong Orange
+    'FIRE ALARM':                        '#FFA726', // Lighter Orange (Amber)
+    'CARBON MONOXIDE':                   '#FFA726', // Lighter Orange (Amber)
+    'HAZMAT':                            '#E65100', // Darker Orange/Brownish
 
-    // Traffic / Hazard (Vivid Yellow)
-    'TRAFFIC':   '#FFFF00',
+    // Police/Crime Related (Blues/Teals - adjusted brightness)
+    'DISTURBANCE':                       '#039BE5', // Medium Blue
+    'BURGLARY':                          '#26C6DA', // Medium Cyan/Teal
+    'ASSAULT':                           '#1E88E5', // Strong Blue
+    'STOLEN VEHICLE':                    '#26C6DA', // Medium Cyan/Teal
+    'VEHICLE STOP':                      '#4FC3F7', // Lighter, distinct Blue
+    'PERSON WITH A GUN':                 '#1E88E5', // Strong Blue
+    'FIGHT':                             '#039BE5', // Medium Blue
+    'ABDUCTION':                         '#1E88E5', // Strong Blue
+    'INTOXICATED PERSON':                '#4FC3F7', // Lighter, distinct Blue
 
-    // General / Other (Vivid Lime Green)
-    'WELFARE':   '#76FF03',
-    'ANIMAL':    '#76FF03',
-    'OTHER':     '#76FF03'
+    // Traffic Related (Ambers/Oranges - replaced pure yellow)
+    'VEHICLE COLLISION':                 '#FFB300', // Amber/Gold
+    'RECKLESS DRIVER':                   '#FFCA28', // Lighter Amber
+    'TRAFFIC HAZARD':                    '#FFB300', // Amber/Gold
+    'MVC':                               '#FFCA28', // Lighter Amber (Motor Vehicle Collision)
+
+    // Other/Service (Greens/Purples/Greys - ensuring visibility)
+    'MISSING PERSON':                    '#66BB6A', // Medium Green
+    'SERVICE CALL':                      '#78909C', // Blue Grey (more distinct than plain grey)
+    'ASSIST':                            '#78909C', // Blue Grey
+    'OTHER':                             '#90A4AE', // Lighter Blue Grey
 };
 
 // Pulsing Icon Implementation
@@ -417,7 +459,7 @@ function removeExpiredMarkers() {
 
 
 function toggleLiveStream() {
-    // Open the radio website in a new tab
+    // Open the rdio website in a new tab
     window.open(appConfig.audio.liveStreamUrl, '_blank');
 }
 

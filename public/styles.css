@@ -1928,4 +1928,31 @@ input[type="time"] {
 .pac-icon {
   display: none !important;
 }
+/* Scrollbar Styles for Category Sidebar */
+#category-sidebar::-webkit-scrollbar {
+  width: 12px; /* Width of the scrollbar */
+}
+
+#category-sidebar::-webkit-scrollbar-track {
+  background: var(--background-color); /* Match sidebar background */
+  border-radius: 0 4px 4px 0; /* Match sidebar border-radius if needed */
+}
+
+#category-sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--primary-color); /* Green thumb */
+  border-radius: 6px; /* Rounded thumb */
+  border: 2px solid var(--background-color); /* Space around thumb */
+}
+
+#category-sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-color); /* Brighter green on hover */
+}
+
+/* Firefox Scrollbar Styles */
+#category-sidebar {
+  scrollbar-width: thin; /* Use 'auto' or 'thin' */
+  scrollbar-color: var(--primary-color) var(--background-color); /* thumb track */
+}
+
+/* --- END Scrollbar Styles for Category Sidebar --- */
 /* End of CSS file */
