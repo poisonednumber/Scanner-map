@@ -161,6 +161,221 @@
         padding-right: 0;
       }
     }
+
+    /* Styles for Global Volume Control */
+    .global-volume-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px; /* Add space below heatmap controls */
+      width: 100%; /* Take full width in its container */
+      justify-content: center; /* Center items */
+    }
+
+    .global-volume-controls label {
+      font-size: 14px;
+      color: var(--text-color);
+      white-space: nowrap;
+    }
+
+    #global-volume {
+      width: 100%;
+      max-width: 200px; /* Limit slider width */
+      height: 8px;
+    }
+
+    /* Adjust global volume layout for mobile */
+    .global-volume-controls {
+      margin-top: 5px;
+      padding: 0 5px; /* Add padding */
+    }
+    .global-volume-controls label {
+      font-size: 12px; /* Smaller label */
+    }
+    #global-volume {
+      max-width: 150px; /* Shorter slider on mobile */
+    }
+
+    /* --- Live Feed Display Styles --- */
+    #live-feed-display {
+      position: fixed;
+      bottom: 200px; /* Adjust based on control panel height, especially mobile */
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 500px;
+      max-height: 150px; /* Approx 5 lines */
+      background-color: rgba(0, 0, 0, 0.85);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+      z-index: 997; /* Below control panel/modals, above map */
+      overflow: hidden; /* Prevent scrollbars */
+      display: flex;
+      flex-direction: column-reverse; /* Newest items appear at the bottom and push upwards */
+      padding: 5px;
+      box-sizing: border-box;
+      pointer-events: none; /* Allow clicks to pass through to map */
+      transition: bottom 0.3s ease-in-out; /* For mobile positioning */
+    }
+
+    .live-feed-item {
+      padding: 4px 8px;
+      margin-bottom: 3px; /* Space between items */
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      background-color: rgba(0, 20, 0, 0.7); /* Slight background */
+      border-radius: 3px;
+      opacity: 1;
+      transition: opacity 1.5s ease-out; /* Slower fade out */
+      border-left: 2px solid var(--primary-color); /* Indicator */
+    }
+
+    .live-feed-item.fading-out {
+      opacity: 0;
+    }
+
+    .live-feed-item strong {
+        color: #00ccff; /* Highlight talkgroup name */
+        margin-right: 5px;
+    }
+
+    /* Mobile adjustment for live feed display position */
+    @media screen and (max-width: 768px) {
+        #live-feed-display {
+            bottom: 190px; /* Position above the taller mobile control panel */
+            max-width: calc(100% - 20px); /* Adjust width for mobile */
+            max-height: 120px; /* Slightly shorter on mobile */
+        }
+        .live-feed-item {
+            font-size: 12px; /* Smaller font on mobile */
+        }
+    }
+    @media screen and (max-width: 480px) {
+        #live-feed-display {
+           bottom: 190px; /* May need further adjustment if control panel grows */
+        }
+    }
+    /* --- END Live Feed Display Styles --- */
+
+    /* --- Live Feed Setup Modal Styles --- */
+    .live-feed-modal-content {
+      width: 90%;
+      max-width: 500px; /* Adjust width as needed */
+      max-height: 85vh; /* Limit height */
+      display: flex;
+      flex-direction: column;
+    }
+
+    .live-feed-modal-content h2 {
+      text-align: center;
+      margin-bottom: 15px;
+      text-shadow: 0 0 8px var(--primary-color);
+    }
+
+    #live-feed-search {
+        width: 100%;
+        padding: 8px 10px;
+        background-color: #000;
+        color: #00ff00;
+        border: 1px solid #00ff00;
+        border-radius: 4px;
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 14px;
+        box-sizing: border-box;
+        margin-bottom: 15px;
+    }
+
+    .live-feed-master-controls {
+        display: flex;
+        justify-content: space-around;
+        padding: 10px 0;
+        margin-bottom: 15px;
+        border-top: 1px solid rgba(0, 255, 0, 0.2);
+        border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+    }
+
+    .live-feed-master-controls label {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+        font-size: 14px;
+        color: var(--text-color);
+    }
+
+    .live-feed-master-controls input[type="checkbox"] {
+        margin-right: 8px;
+        accent-color: var(--primary-color);
+        width: 16px;
+        height: 16px;
+    }
+
+    #live-feed-talkgroup-list {
+      flex-grow: 1; /* Allow list to take available space */
+      overflow-y: auto; /* Enable scrolling */
+      padding-right: 10px; /* Space for scrollbar */
+      margin-bottom: 15px;
+      border: 1px solid rgba(0, 255, 0, 0.2);
+      padding: 5px;
+      min-height: 200px; /* Ensure it has some height */
+    }
+
+    /* Scrollbar for talkgroup list */
+    #live-feed-talkgroup-list::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    #live-feed-talkgroup-list::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 5px;
+    }
+
+    #live-feed-talkgroup-list::-webkit-scrollbar-thumb {
+      background-color: var(--primary-color);
+      border-radius: 5px;
+      border: 2px solid rgba(0, 0, 0, 0.3);
+    }
+
+    #live-feed-talkgroup-list {
+      scrollbar-width: thin;
+      scrollbar-color: var(--primary-color) rgba(0, 0, 0, 0.3);
+    }
+
+    .live-feed-tg-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 5px;
+      margin-bottom: 3px;
+      border-radius: 3px;
+      transition: background-color 0.2s;
+      cursor: pointer;
+    }
+
+    .live-feed-tg-item:hover {
+        background-color: rgba(0, 51, 0, 0.2);
+    }
+
+    .live-feed-tg-item input[type="checkbox"] {
+        margin-right: 10px;
+        accent-color: var(--primary-color);
+        flex-shrink: 0;
+        width: 15px;
+        height: 15px;
+    }
+
+    .live-feed-tg-item label {
+        font-size: 14px;
+        color: var(--text-color);
+        flex-grow: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    /* --- END Live Feed Setup Modal Styles --- */
   </style>
 </head>
 
@@ -186,6 +401,7 @@
         <option value="custom">Custom range</option>
       </select>
       <button id="toggle-mode">Day/Night</button>
+      <button id="live-feed-setup-btn">Live Feed</button>
       </div>
 
     <div id="new-call-banner" class="hidden">
@@ -202,6 +418,10 @@
           </label>
           <div id="heatmap-intensity-container">
             <input type="range" id="heatmap-intensity" min="1" max="10" value="5" />
+          </div>
+          <div id="global-volume-container" class="global-volume-controls">
+            <label for="global-volume">Volume:</label>
+            <input type="range" id="global-volume" class="volume" min="0" max="1" step="0.05" value="0.5" />
           </div>
         </div>
       </div>
@@ -285,21 +505,129 @@
   </div>
   <div id="audio-container" style="display: none;"></div>
 
+  <!-- Talkgroup History Modal -->
+  <div id="talkgroup-modal" class="modal">
+    <div class="modal-content talkgroup-modal-content">
+      <h2 id="talkgroup-modal-title">Talkgroup History</h2>
+
+      <!-- Autoplay Toggle -->
+      <div class="talkgroup-modal-controls">
+        <label for="talkgroup-autoplay-toggle" id="talkgroup-autoplay-label">
+          <input type="checkbox" id="talkgroup-autoplay-toggle" />
+          <span>Autoplay New Calls</span>
+        </label>
+      </div>
+      <!-- End Autoplay Toggle -->
+
+      <div id="talkgroup-list" class="talkgroup-list">
+        <!-- Transcription items will be loaded here -->
+        <div class="loading-placeholder">Loading history...</div>
+      </div>
+      <div class="modal-buttons">
+        <button type="button" class="cancel-btn" onclick="closeTalkgroupModal()">Close</button>
+      </div>
+    </div>
+  </div>
+  <!-- END Talkgroup History Modal -->
+
+  <!-- NEW: Live Feed Setup Modal -->
+  <div id="live-feed-modal" class="modal">
+      <div class="modal-content live-feed-modal-content">
+          <h2>Live Feed Setup</h2>
+
+          <div class="form-group">
+              <label for="live-feed-search">Search Talkgroups:</label>
+              <input type="text" id="live-feed-search" placeholder="Start typing..." />
+          </div>
+
+          <div class="live-feed-master-controls">
+              <label>
+                  <input type="checkbox" id="live-feed-audio-enable" />
+                  Enable Live Audio
+              </label>
+          </div>
+
+          <div id="live-feed-talkgroup-list">
+              <div class="loading-placeholder">Loading talkgroups...</div>
+          </div>
+
+          <div class="modal-buttons">
+              <button type="button" class="cancel-btn" onclick="closeLiveFeedModal()">Close</button>
+          </div>
+      </div>
+  </div>
+  <!-- END Live Feed Setup Modal -->
+
+  <!-- NEW: Live Feed Display Area -->
+  <div id="live-feed-display">
+  </div>
+  <!-- END Live Feed Display Area -->
+
   <script src="config.js"></script>
 
   <script>
-    const gKey = window?.appConfig?.geocoding?.googleApiKey;
-    if (gKey) {
-      const gScript = document.createElement('script');
-      gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places`;
-      gScript.async = true;
-      gScript.defer = true;
-      document.head.appendChild(gScript);
-    } else {
-      console.error('Google Maps API key is missing from config.js (appConfig.geocoding.googleApiKey)');
+    // Function to initialize Google Maps
+    async function initGoogleMaps() {
+      // Wait for the API key to be fetched
+      await new Promise((resolve) => {
+        const checkKey = () => {
+          if (window?.appConfig?.geocoding?.googleApiKey) {
+            resolve();
+          } else {
+            setTimeout(checkKey, 100);
+          }
+        };
+        checkKey();
+      });
+
+      const gKey = window.appConfig.geocoding.googleApiKey;
+      if (gKey) {
+        return new Promise((resolve) => {
+          const gScript = document.createElement('script');
+          gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&callback=onGoogleMapsLoaded`;
+          gScript.async = true;
+          gScript.defer = true;
+          window.onGoogleMapsLoaded = resolve;
+          document.head.appendChild(gScript);
+        });
+      } else {
+        console.error('Google Maps API key is missing from config.js (appConfig.geocoding.googleApiKey)');
+        return Promise.reject('No API key');
+      }
+    }
+
+    // Initialize the application
+    async function initializeApplication() {
+      try {
+        await initGoogleMaps();
+        console.log('Google Maps API loaded successfully');
+        
+        // Load and initialize the main app
+        const appScript = document.createElement('script');
+        appScript.src = 'app.js';
+        appScript.onload = () => {
+          if (typeof initializeApp === 'function') {
+            initializeApp();
+          } else {
+            console.error('initializeApp function not found');
+          }
+        };
+        document.body.appendChild(appScript);
+      } catch (error) {
+        console.error('Failed to initialize application:', error);
+      }
+    }
+
+    // Start the application
+    initializeApplication();
+
+    // Placeholder function to close the new modal (will be defined in app.js)
+    function closeLiveFeedModal() {
+      const modal = document.getElementById('live-feed-modal');
+      if (modal) {
+          modal.style.display = 'none';
+      }
     }
   </script>
-
-  <script src="app.js"></script>
 </body>
 </html>

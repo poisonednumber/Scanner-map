@@ -50,6 +50,12 @@ body, html {
     margin: 0 20px;
 }
 
+.search-heatmap-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 #control-panel button, #control-panel select {
     margin-right: 10px;
     padding: 8px 12px;
@@ -267,7 +273,7 @@ body, html {
     -webkit-appearance: none;
     width: 100%;
     height: 8px; /* Increased height for better visibility */
-    background: var(--background-color);
+    background: transparent; /* Make default background transparent */
     outline: none;
     opacity: 0.7;
     transition: opacity 0.2s;
@@ -288,8 +294,8 @@ body, html {
     background: var(--primary-color);
     cursor: pointer;
     border-radius: 50%;
-    border: 1px solid var(--text-color);
-    margin-top: -4px; /* Centers the thumb */
+    border: 1px solid #000000; /* Changed border to black */
+    margin-top: -5px; /* Adjusted margin-top */
 }
 
 .volume::-moz-range-thumb, #heatmap-intensity::-moz-range-thumb {
@@ -298,20 +304,22 @@ body, html {
     background: var(--primary-color);
     cursor: pointer;
     border-radius: 50%;
-    border: 1px solid var(--text-color);
+    border: 1px solid #000000; /* Changed border to black */
 }
 
 /* Track styles */
 .volume::-webkit-slider-runnable-track, #heatmap-intensity::-webkit-slider-runnable-track {
     height: 8px;
-    background: var(--background-color);
+    background: rgba(0, 255, 0, 0.1); /* Lighter track background */
     border-radius: 4px;
+    border: 1px solid var(--border-color); /* Keep border */
 }
 
 .volume::-moz-range-track, #heatmap-intensity::-moz-range-track {
     height: 8px;
-    background: var(--background-color);
+    background: rgba(0, 255, 0, 0.1); /* Lighter track background */
     border-radius: 4px;
+    border: 1px solid var(--border-color); /* Keep border */
 }
 
 /* MS-specific styles */
@@ -323,10 +331,17 @@ body, html {
     color: transparent;
 }
 
-.volume::-ms-fill-lower, .volume::-ms-fill-upper,
-#heatmap-intensity::-ms-fill-lower, #heatmap-intensity::-ms-fill-upper {
-    background: var(--background-color);
-    border: 1px solid var(--text-color);
+.volume::-ms-fill-lower,
+#heatmap-intensity::-ms-fill-lower {
+    background: rgba(0, 255, 0, 0.1); /* Lighter track background */
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.volume::-ms-fill-upper,
+#heatmap-intensity::-ms-fill-upper {
+    background: transparent; /* Make upper track transparent */
+    border: 1px solid var(--border-color);
     border-radius: 4px;
 }
 
@@ -336,7 +351,7 @@ body, html {
     background: var(--primary-color);
     cursor: pointer;
     border-radius: 50%;
-    border: 1px solid var(--text-color);
+    border: 1px solid #000000; /* Changed border to black */
     margin-top: 0;
 }
 
@@ -1722,7 +1737,8 @@ input[type="time"] {
     width: 300%;
     position: absolute;
     margin: -100% 0 0 -100%;
-    box-shadow: 0 0 6px 2px red; /* Default color set in JS */
+    /* Increased shadow size and spread */
+    box-shadow: 0 0 10px 4px red; /* Default color set in JS, increased size */
     -webkit-animation: pulsate 1s ease-out;
     animation: pulsate 1s ease-out;
     -webkit-animation-iteration-count: infinite;
@@ -1739,6 +1755,11 @@ input[type="time"] {
         opacity: 0;
     }
     50% {
+        /* Keep full opacity longer */
+        opacity: 1;
+    }
+    80% {
+        /* Start fading later */
         opacity: 1;
     }
     100% {
@@ -1755,6 +1776,11 @@ input[type="time"] {
         opacity: 0;
     }
     50% {
+        /* Keep full opacity longer */
+        opacity: 1;
+    }
+    80% {
+        /* Start fading later */
         opacity: 1;
     }
     100% {
@@ -1956,3 +1982,406 @@ input[type="time"] {
 
 /* --- END Scrollbar Styles for Category Sidebar --- */
 /* End of CSS file */
+
+/* --- Talkgroup Modal Styles --- */
+.talkgroup-modal-content {
+  width: 90%; /* Wider modal */
+  max-width: 700px;
+  max-height: 80vh; /* Limit height */
+  display: flex;
+  flex-direction: column;
+  margin: 5vh auto; /* Position near top instead of center */
+}
+
+.talkgroup-modal-content h2 {
+  text-align: center;
+  margin-bottom: 15px;
+  text-shadow: 0 0 8px var(--primary-color);
+}
+
+.talkgroup-list {
+  flex-grow: 1; /* Allow list to take available space */
+  overflow-y: auto; /* Enable scrolling */
+  padding-right: 10px; /* Space for scrollbar */
+  margin-bottom: 15px;
+}
+
+/* Scrollbar for talkgroup list */
+.talkgroup-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.talkgroup-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+}
+
+.talkgroup-list::-webkit-scrollbar-thumb {
+  background-color: var(--primary-color);
+  border-radius: 5px;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+}
+
+.talkgroup-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) rgba(0, 0, 0, 0.3);
+}
+
+.talkgroup-list-item {
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 10px 15px;
+  margin-bottom: 10px;
+  background-color: rgba(0, 51, 0, 0.1); /* Subtle green background */
+  transition: background-color 0.3s;
+}
+
+.talkgroup-list-item:hover {
+  background-color: rgba(0, 51, 0, 0.2);
+}
+
+.talkgroup-item-timestamp {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 5px;
+  display: block;
+}
+
+.talkgroup-item-transcription {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.talkgroup-item-audio .waveform {
+  height: 25px; /* Smaller waveform */
+  margin-top: 5px;
+}
+
+.talkgroup-item-audio .audio-controls {
+  justify-content: flex-start; /* Align controls left */
+  gap: 10px;
+}
+
+.talkgroup-item-audio .play-pause {
+  padding: 4px 8px;
+  font-size: 12px;
+  margin-top: 0;
+}
+
+.talkgroup-item-audio .volume {
+  max-width: 100px; /* Shorter volume slider */
+  height: 6px;
+}
+
+.talkgroup-item-audio .volume::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+    margin-top: -3px;
+}
+
+.talkgroup-item-audio .volume::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+}
+
+.loading-placeholder {
+  text-align: center;
+  padding: 20px;
+  opacity: 0.7;
+}
+
+.new-item-highlight {
+  animation: newItemFadeIn 0.5s ease-out;
+}
+
+@keyframes newItemFadeIn {
+  from { background-color: rgba(0, 255, 0, 0.3); }
+  to { background-color: rgba(0, 51, 0, 0.1); }
+}
+
+/* Mobile Adjustments for Talkgroup Modal */
+@media screen and (max-width: 768px) {
+  .talkgroup-modal-content {
+    width: 95%;
+    max-height: 85vh;
+  }
+
+  .talkgroup-list-item {
+    padding: 8px 10px;
+  }
+
+  .talkgroup-modal-content h2 {
+    font-size: 1.2em;
+  }
+}
+
+/* --- END Talkgroup Modal Styles --- */
+
+/* NEW: Style for the History button */
+.talkgroup-history-btn {
+    display: inline-block;
+    padding: 8px 12px;
+    background-color: var(--hover-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.3s;
+    margin-right: 5px;
+    text-align: center; /* Center text */
+    min-width: auto; /* Remove min-width */
+    flex-grow: 0; /* Don't grow */
+    flex-shrink: 0; /* Don't shrink */
+}
+
+.talkgroup-history-btn:hover {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    box-shadow: 0 0 10px var(--primary-color);
+}
+
+/* Apply mobile styles to history button */
+.talkgroup-history-btn {
+    flex-basis: auto; /* Let content determine size */
+    margin: 5px 1%;
+    padding: 5px 10px; /* Adjust padding */
+    font-size: 11px;
+    text-align: center;
+}
+
+.popup-timestamp {
+    font-size: 11px;
+}
+
+/* NEW: Style for the talkgroup modal controls (autoplay toggle) */
+.talkgroup-modal-controls {
+  text-align: center;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+}
+
+.talkgroup-modal-controls label {
+  display: inline-flex; /* Use inline-flex for better alignment */
+  align-items: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-color);
+}
+
+.talkgroup-modal-controls input[type="checkbox"] {
+  margin-right: 8px;
+  accent-color: var(--primary-color);
+  width: 16px; /* Slightly larger checkbox */
+  height: 16px;
+}
+
+/* NEW Ellipsis Animation */
+@keyframes ellipsisCycle {
+  0%   { content: '.'; }
+  33%  { content: '..'; }
+  66%  { content: '...'; }
+  100% { content: '.'; }
+}
+
+/* NEW Style for the ellipsis */
+.loading-ellipsis::after {
+  content: '.'; /* Initial state */
+  display: inline-block;
+  width: 1.5em; /* Reserve space for three dots */
+  text-align: left;
+  vertical-align: bottom;
+  overflow: hidden;
+  animation: ellipsisCycle 1.5s infinite step-start;
+  margin-left: 4px; /* Space after the label text */
+}
+
+/* --- Live Feed Setup Modal Styles --- */
+.live-feed-modal-content {
+  width: 90%;
+  max-width: 500px; /* Adjust width as needed */
+  max-height: 85vh; /* Limit height */
+  display: flex;
+  flex-direction: column;
+  margin: 5vh auto; /* 5% from top, centered horizontally */
+}
+
+.live-feed-modal-content h2 {
+  text-align: center;
+  margin-bottom: 15px;
+  text-shadow: 0 0 8px var(--primary-color);
+}
+
+#live-feed-search { /* Style for search input moved here */
+    width: 100%;
+    padding: 8px 10px;
+    background-color: #000;
+    color: #00ff00;
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    box-sizing: border-box;
+    margin-bottom: 15px;
+}
+
+.live-feed-master-controls { /* Style for master controls container */
+    display: flex;
+    /* MODIFIED: Center the single remaining item */
+    justify-content: center; 
+    align-items: center; /* Vertically align */
+    padding: 10px 0;
+    margin-bottom: 15px;
+    border-top: 1px solid rgba(0, 255, 0, 0.2);
+    border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+}
+
+.live-feed-master-controls label { /* Style for master control labels */
+    display: inline-flex; /* Keep inline-flex */
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+}
+
+.live-feed-master-controls input[type="checkbox"] { /* Style for master control checkboxes */
+    margin-right: 8px;
+    accent-color: var(--primary-color);
+    width: 16px;
+    height: 16px;
+}
+
+#live-feed-talkgroup-list { /* Style for talkgroup list container */
+  flex-grow: 1; /* Allow list to take available space */
+  overflow-y: auto; /* Enable scrolling */
+  padding-right: 10px; /* Space for scrollbar */
+  margin-bottom: 15px;
+  border: 1px solid rgba(0, 255, 0, 0.2);
+  padding: 5px;
+  min-height: 200px; /* Ensure it has some height */
+}
+
+/* Scrollbar for talkgroup list */
+#live-feed-talkgroup-list::-webkit-scrollbar { /* Style for scrollbar */
+  width: 10px;
+}
+
+#live-feed-talkgroup-list::-webkit-scrollbar-track { /* Style for scrollbar track */
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+}
+
+#live-feed-talkgroup-list::-webkit-scrollbar-thumb { /* Style for scrollbar thumb */
+  background-color: var(--primary-color);
+  border-radius: 5px;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+}
+
+#live-feed-talkgroup-list { /* Firefox scrollbar styles */
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) rgba(0, 0, 0, 0.3);
+}
+
+.live-feed-tg-item { /* Style for individual talkgroup items */
+  display: flex;
+  align-items: center;
+  padding: 8px 5px;
+  margin-bottom: 3px;
+  border-radius: 3px;
+  transition: background-color 0.2s;
+  cursor: pointer;
+}
+
+.live-feed-tg-item:hover { /* Hover style for talkgroup items */
+    background-color: rgba(0, 51, 0, 0.2);
+}
+
+.live-feed-tg-item input[type="checkbox"] { /* Style for talkgroup checkboxes */
+    margin-right: 10px;
+    accent-color: var(--primary-color);
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+}
+
+.live-feed-tg-item label { /* Style for talkgroup labels */
+    font-size: 14px;
+    color: var(--text-color);
+    flex-grow: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* --- END Live Feed Setup Modal Styles --- */
+
+/* --- RE-INSERTED: Live Feed Display Styles --- */
+#live-feed-display {
+  position: fixed !important; /* Add !important */
+  /* NEW: Position at the bottom */
+  bottom: 10px !important; /* Add !important */
+  left: 50%;
+  transform: translateX(-50%);
+  /* END NEW */
+  width: 90%;
+  max-width: 500px;
+  max-height: 150px; /* Approx 5 lines */
+  background-color: rgba(0, 0, 0, 0.85);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+  z-index: 997 !important; /* Add !important (just in case) */
+  overflow: hidden; /* Prevent scrollbars */
+  display: flex !important; /* Add !important */
+  flex-direction: column-reverse;
+  padding: 5px;
+  box-sizing: border-box;
+  pointer-events: none; /* Allow clicks to pass through to map */
+  transition: bottom 0.3s ease-in-out; /* For mobile positioning */
+}
+
+.live-feed-item { /* Style for individual live feed items */
+    padding: 4px 8px;
+    margin-bottom: 3px; /* Space between items */
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: rgba(0, 20, 0, 0.7); /* Slight background */
+    border-radius: 3px;
+    opacity: 1;
+    transition: opacity 1.5s ease-out; /* Slower fade out */
+    border-left: 2px solid var(--primary-color); /* Indicator */
+}
+
+.live-feed-item.fading-out { /* Style for fading out items */
+    opacity: 0;
+}
+
+.live-feed-item strong { /* Style for talkgroup name highlight */
+    color: #00ccff; /* Highlight talkgroup name */
+    margin-right: 5px;
+}
+
+/* Mobile adjustment for live feed display position */
+@media screen and (max-width: 768px) {
+    #live-feed-display {
+        /* NEW: Position just above mobile control panel (180px height + 10px buffer) */
+        bottom: 190px !important; /* Add !important */
+        max-width: calc(100% - 20px); /* Adjust width for mobile */
+        max-height: 120px; /* Slightly shorter on mobile */
+    }
+    .live-feed-item {
+        font-size: 12px; /* Smaller font on mobile */
+    }
+}
+@media screen and (max-width: 480px) {
+    #live-feed-display {
+       /* NEW: Adjust if control panel height changes on very small screens */
+       bottom: 195px !important; /* Add !important - Give a little extra space if panel wraps */
+    }
+}
+/* --- END Live Feed Display Styles --- */

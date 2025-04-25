@@ -64,7 +64,7 @@ const config = {
   // Audio settings
   audio: {
     notificationSound: '/notification-sound.mp3',
-    liveStreamUrl: 'https://example.com', // your rdio scanner site if perferred.
+    liveStreamUrl: 'n/a', // not used anymore.
   },
   
   // Marker classification rules
@@ -125,7 +125,7 @@ const config = {
   
   // Geocoding settings
   geocoding: {
-    googleApiKey: 'googleApiKey',
+    googleApiKey: null, // Will be set dynamically
     defaultArea: {
       lat: 39.078925, 
       lng: -76.933018
@@ -136,6 +136,20 @@ const config = {
     minQueryLength: 3
   }
 };
+
+// Function to fetch Google API key from server
+async function fetchGoogleApiKey() {
+  try {
+    const response = await fetch('/api/config/google-api-key');
+    const data = await response.json();
+    config.geocoding.googleApiKey = data.apiKey;
+  } catch (error) {
+    console.error('Error fetching Google API key:', error);
+  }
+}
+
+// Fetch the API key when the config is loaded
+fetchGoogleApiKey();
 
 // Export the configuration
 window.appConfig = config;

@@ -10,7 +10,7 @@ let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
 let socket; // Socket.IO
 let currentSearchTerm = ''; // Current search term
 const wavesurfers = {}; // Store WaveSurfer instances
-let audioContext;
+let audioContext = null; // Initialize explicitly as null
 let heatmapLayer; // Heatmap layer
 let heatmapIntensity; // Intensity for heatmap
 let toggleModeButton; // Button to toggle map modes
@@ -22,6 +22,78 @@ let selectedCategory = null;
 let timestampUpdateInterval = null;
 let isNewCallAudioMuted = false;
 let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
+
+// NEW: Variables for Talkgroup Modal
+let isTalkgroupModalOpen = false;
+let currentOpenTalkgroupId = null;
+const talkgroupModalWavesurfers = {}; // Separate WaveSurfer instances for the modal
+let talkgroupPollingInterval = null; // Interval ID for polling
+let talkgroupModalAutoplay = true; // Default autoplay to true
+let lastCallTimestampInModal = null; // Track the newest timestamp shown in modal
+
+// NEW: Global Volume Level
+let globalVolumeLevel = 0.5; // Default to 50% volume
+
+// NEW: Variable to store original mute state
+let originalMuteStateBeforeModal = false;
+
+// --- Live Feed State Variables ---
+let liveFeedSelectedTalkgroups = new Set(); // Stores IDs of selected talkgroups
+// REMOVED: let isLiveFeedEnabled = false;
+let isLiveFeedAudioEnabled = false;
+let allLiveFeedTalkgroups = []; // Cache for the full talkgroup list
+const MAX_LIVE_FEED_ITEMS = 5;
+const LIVE_FEED_ITEM_DURATION = 15000; // 15 seconds in milliseconds
+
+// Add references for the UI elements that will be assigned in setupLiveFeed
+// REMOVED liveFeedEnableCheckbox
+let liveFeedModal, liveFeedSetupBtn, liveFeedSearchInput, liveFeedAudioEnableCheckbox, liveFeedTalkgroupListContainer, liveFeedDisplayContainer;
+
+// Declare the audio source variable globally if it doesn't exist elsewhere
+let currentAudioSource = null;
+// --- End Live Feed State Variables ---
+
+// MOVED TO TOP: initGlobalGainNode definition
+function initGlobalGainNode() {
+    console.log("[Audio Debug] Attempting to initialize globalGainNode...");
+    // Use window reference just in case, though global scope should be fine here
+    if (window.audioContext && !window.globalGainNode) { 
+        console.log("[Audio Debug] audioContext exists and globalGainNode is NULL. Creating GainNode...");
+        try {
+            window.globalGainNode = window.audioContext.createGain(); 
+            window.globalGainNode.gain.value = globalVolumeLevel; 
+            window.globalGainNode.connect(window.audioContext.destination);
+            console.log('[Audio Debug] Global Gain Node initialized SUCCESSFULLY.');
+        } catch (e) {
+            console.error('[Audio Debug] FAILED to create or connect Global Gain Node:', e);
+            window.globalGainNode = null;
+        }
+    } else {
+        if (!window.audioContext) { 
+             console.warn("[Audio Debug] Cannot initialize GainNode because audioContext is NULL.");
+        } else if (window.globalGainNode) {
+             console.log("[Audio Debug] Global Gain Node already initialized.");
+        }
+    }
+}
+
+// --- ALL OTHER FUNCTION DEFINITIONS FOLLOW --- 
+
+// Helper function to update slider background fill
+function updateSliderFill(slider) {
+    if (!slider) return;
+    try {
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+        const value = parseFloat(slider.value);
+        const percentage = ((value - min) / (max - min)) * 100;
+        // Ensure percentage is within 0-100
+        const clampedPercentage = Math.max(0, Math.min(100, percentage));
+        slider.style.background = `linear-gradient(to right, var(--primary-color) ${clampedPercentage}%, rgba(0, 255, 0, 0.1) ${clampedPercentage}%)`;
+    } catch (error) {
+        console.error("Error updating slider fill:", error, slider);
+    }
+}
 
 // Uses uppercase keys consistent with how they're stored in the DB via webserver.js
 let categoryCounts = {
@@ -301,16 +373,17 @@ function setupLiveStreamButton() {
 }
 
 // Initialize the category sidebar
+/* // REMOVE THIS FUNCTION ENTIRELY
 function initCategorySidebar() {
   const categoryList = document.getElementById('category-list');
   categoryList.innerHTML = '';
-  
+
   // Check if we're on mobile and adjust styling accordingly
   if (isMobile()) {
-    document.getElementById('category-sidebar').style.maxHeight = 
+    document.getElementById('category-sidebar').style.maxHeight =
       `${window.innerHeight - 350}px`;
   }
-  
+
   Object.keys(categoryCounts).forEach(category => {
     const categoryItem = document.createElement('div');
     categoryItem.className = 'category-item';
@@ -319,14 +392,14 @@ function initCategorySidebar() {
       <div class="category-name">${category}</div>
       <div class="category-count">${categoryCounts[category]}</div>
     `;
-    
+
     categoryItem.addEventListener('click', () => {
       toggleCategoryFilter(category);
     });
-    
+
     categoryList.appendChild(categoryItem);
   });
-  
+
   // Add "All" category
   const allCategory = document.createElement('div');
   allCategory.className = 'category-item active';
@@ -335,78 +408,156 @@ function initCategorySidebar() {
     <div class="category-name">ALL</div>
     <div class="category-count">${Object.values(categoryCounts).reduce((a, b) => a + b, 0)}</div>
   `;
-  
+
   allCategory.addEventListener('click', () => {
     toggleCategoryFilter('ALL');
   });
-  
+
   categoryList.prepend(allCategory);
-  
+
   // Add resize handler for mobile
   window.addEventListener('resize', () => {
     if (isMobile()) {
-      document.getElementById('category-sidebar').style.maxHeight = 
+      document.getElementById('category-sidebar').style.maxHeight =
         `${window.innerHeight - 350}px`;
     }
   });
 }
+*/
 
 // Toggle category filter
 function toggleCategoryFilter(category) {
   // Reset active state for all categories
+  /* // Logic moved to updateCategoryCounts / handled by re-rendering
   document.querySelectorAll('.category-item').forEach(item => {
     item.classList.remove('active');
   });
-  
+
   // Set active state for selected category
   const categoryElement = document.querySelector(`.category-item[data-category="${category}"]`);
   if (categoryElement) {
     categoryElement.classList.add('active');
   }
-  
+  */
+
   selectedCategory = category === 'ALL' ? null : category;
-  
-  // Apply filters
+
+  // Apply filters (this will trigger updateCategoryCounts which handles active state)
   applyFilters();
-  
+
   // If switching to ALL category, ensure pulsing markers are updated
-  if (category === 'ALL') {
-    updatePulsingMarkers();
-  }
+  // This might not be necessary if applyFilters correctly handles visibility
+  // if (category === 'ALL') {
+  //   updatePulsingMarkers();
+  // }
 }
 
-// Update category counts
+
+// Update category counts and dynamically update sidebar
 function updateCategoryCounts() {
-  // Reset all counts
-  Object.keys(categoryCounts).forEach(category => {
-    categoryCounts[category] = 0;
-  });
-  
-  // Count visible markers by category
-  Object.values(allMarkers).forEach(data => {
-    if (data.visible && data.category) {
-      const category = data.category;
-      if (categoryCounts.hasOwnProperty(category)) {
-        categoryCounts[category]++;
-      } else {
-        categoryCounts['OTHER']++;
-      }
+    const categoryList = document.getElementById('category-list');
+    if (!categoryList) {
+        console.error("Category list element not found!");
+        return;
     }
-  });
-  
-  // Update the UI
-  Object.keys(categoryCounts).forEach(category => {
-    const countElement = document.querySelector(`.category-item[data-category="${category}"] .category-count`);
-    if (countElement) {
-      countElement.textContent = categoryCounts[category];
+
+    // 1. Calculate counts for visible markers
+    const currentCounts = {};
+    // Initialize with known categories to ensure they are checked even if count becomes 0
+    Object.keys(categoryCounts).forEach(category => {
+        currentCounts[category] = 0;
+    });
+    let totalVisible = 0;
+
+    Object.values(allMarkers).forEach(data => {
+        // Count only if the marker is currently visible according to filters
+        if (data.visible) {
+            totalVisible++;
+            const category = data.category || 'OTHER'; // Use 'OTHER' if undefined/null
+            // Ensure we only count valid, known categories or 'OTHER'
+            if (currentCounts.hasOwnProperty(category)) {
+                currentCounts[category]++;
+            } else {
+                // If the category from the data isn't in our initial list, count it as 'OTHER'
+                currentCounts['OTHER']++;
+            }
+        }
+    });
+
+    // 2. Prepare list of categories with counts > 0
+    const categoriesToShow = [];
+    for (const category in currentCounts) {
+        if (currentCounts[category] > 0) {
+            categoriesToShow.push({ name: category, count: currentCounts[category] });
+        }
     }
-  });
-  
-  // Update ALL category count
-  const allCountElement = document.querySelector(`.category-item[data-category="ALL"] .category-count`);
-  if (allCountElement) {
-    allCountElement.textContent = Object.values(categoryCounts).reduce((a, b) => a + b, 0);
-  }
+
+    // 3. Sort categories alphabetically
+    categoriesToShow.sort((a, b) => a.name.localeCompare(b.name));
+
+    // 4. Rebuild the category list (excluding 'ALL' for now)
+    categoryList.innerHTML = ''; // Clear previous category-specific items
+
+    // 5. Add sorted categories with counts > 0
+    categoriesToShow.forEach(catInfo => {
+        const categoryItem = document.createElement('div');
+        categoryItem.className = 'category-item';
+        categoryItem.dataset.category = catInfo.name;
+        categoryItem.innerHTML = `
+            <div class="category-name">${catInfo.name}</div>
+            <div class="category-count">${catInfo.count}</div>
+        `;
+
+        // Highlight if it's the currently selected category
+        if (selectedCategory === catInfo.name) {
+            categoryItem.classList.add('active');
+        }
+
+        categoryItem.addEventListener('click', () => {
+            // Pass the actual category name to the filter function
+            toggleCategoryFilter(catInfo.name);
+        });
+
+        categoryList.appendChild(categoryItem);
+    });
+
+    // 6. Handle the "ALL" category
+    const allCategoryItem = document.createElement('div');
+    allCategoryItem.className = 'category-item';
+    allCategoryItem.dataset.category = 'ALL';
+    allCategoryItem.innerHTML = `
+        <div class="category-name">ALL</div>
+        <div class="category-count">${totalVisible}</div>
+    `;
+    // Set 'ALL' as active if no specific category is selected
+    if (!selectedCategory) {
+        allCategoryItem.classList.add('active');
+    }
+    allCategoryItem.addEventListener('click', () => {
+        toggleCategoryFilter('ALL');
+    });
+
+    // Add 'ALL' to the top
+    categoryList.prepend(allCategoryItem);
+
+    // 7. Check if the currently selected category is still visible
+    if (selectedCategory && currentCounts[selectedCategory] === 0) {
+        console.log(`Selected category "${selectedCategory}" no longer has visible markers. Resetting to ALL.`);
+        // Update state and visually reset in the next filter application
+        selectedCategory = null; // Reset internal state
+        // Re-apply filters which will call updateCategoryCounts again and highlight ALL
+        applyFilters();
+    }
+
+    // 8. Adjust sidebar height for mobile
+    // Consider moving resize logic to a dedicated function if it becomes complex
+    if (isMobile()) {
+        const sidebar = document.getElementById('category-sidebar');
+        if (sidebar) {
+           // Adjusted height: Viewport - control panel (180) - summary bar (50) - buffer (20)
+           sidebar.style.maxHeight = `${window.innerHeight - 180 - 50 - 20}px`;
+        }
+    }
 }
 
 // Start timestamp update interval
@@ -441,19 +592,22 @@ function updatePopupTimestamps() {
 function removeExpiredMarkers() {
   const now = new Date();
   const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
-  
+
   Object.keys(allMarkers).forEach(callId => {
     const callTime = new Date(allMarkers[callId].timestamp);
-    if (callTime < filterTime) {
-      // Remove from map if it's currently visible
-      if (allMarkers[callId].visible) {
+    // Only act on markers that are currently visible
+    if (allMarkers[callId].visible && callTime < filterTime) {
+        // Remove from map
         markerGroups.removeLayer(markers[callId]);
         allMarkers[callId].visible = false;
-      }
+        // Remove pulsing if present
+        if (markers[callId].pulseMarker) {
+            map.removeLayer(markers[callId].pulseMarker);
+        }
     }
   });
-  
-  // Update category counts after removing markers
+
+  // Update category counts after potentially removing markers
   updateCategoryCounts();
 }
 
@@ -498,19 +652,37 @@ function applyCustomTimeFilter() {
 
 // Initialize audio context
 function initAudioContext() {
+    console.log("[Audio Debug] Setting up standard audio context init listener.");
     document.body.addEventListener('click', () => {
-        // Get all active WaveSurfer instances
-        Object.values(wavesurfers).forEach(ws => {
-            if (ws && ws.backend && typeof ws.backend.getAudioContext === 'function') {
-                const audioContext = ws.backend.getAudioContext();
-                if (audioContext && audioContext.state === 'suspended') {
-                    audioContext.resume().catch(err => 
-                        console.warn('Error resuming AudioContext:', err)
-                    );
-                }
+        console.log("[Audio Debug] Body click detected (standard listener).");
+        // Create context ONLY if it doesn't exist
+        if (!window.audioContext) { 
+            console.log("[Audio Debug] audioContext is NULL. Attempting creation...");
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                window.audioContext = new AudioContext(); 
+                console.log(`[Audio Debug] AudioContext CREATED successfully. State: ${window.audioContext.state}`);
+                // REMOVED: initGlobalGainNode(); // Don't call here, handled by fallback in playLiveAudio if needed
+            } catch (e) {
+                console.error('[Audio Debug] FAILED to create AudioContext:', e);
+                window.audioContext = null; 
+                return; 
             }
-        });
-    }, { once: true });
+        }
+
+        // Attempt to resume if context exists and is suspended 
+        if (window.audioContext && window.audioContext.state === 'suspended') {
+            console.log("[Audio Debug] audioContext is suspended. Attempting resume...");
+            window.audioContext.resume().then(() => {
+                 console.log("[Audio Debug] audioContext resumed successfully.");
+            }).catch(err =>
+                console.warn('[Audio Debug] Error resuming AudioContext:', err)
+            );
+        }
+         // Optionally resume wavesurfers 
+         // ... wavesurfer resume logic ...
+
+    }, { once: true }); // Still run only once
 }
 
 // Attempt to enable audio autoplay with a shorter, more compatible silent audio
@@ -708,7 +880,12 @@ function initializeSocketIO() {
         console.log(`Received event "${eventName}":`, args);
     });
 
+    // Listener for map updates (Keep as is)
     socket.on('newCall', handleNewCall);
+    
+    // Restore direct Listener for live feed updates
+    socket.on('liveFeedUpdate', handleLiveFeedUpdate); 
+    
     socket.on('error', (error) => console.error('Socket.IO Error:', error));
     socket.on('serverMessage', (message) => console.log('Server message:', message));
     socket.on('pong', () => console.log('Received pong from server'));
@@ -830,59 +1007,26 @@ function addMarker(call, isNew = false) {
         
         // Create top container that holds links and timestamp
         const topContainer = document.createElement('div');
-        topContainer.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            padding-bottom: 8px;
-            margin-bottom: 6px;
-        `;
-
+        topContainer.className = 'popup-top-container'; // Use class for styling
+        
         // Create links container (left side)
         const topLinksContainer = document.createElement('div');
-        topLinksContainer.style.cssText = 'display: flex; gap: 6px;';
-
+        topLinksContainer.className = 'popup-top-links'; // Use class for styling
+        
         // Create street view link
         const streetViewLink = document.createElement('a');
         streetViewLink.href = `https://www.google.com/maps?layer=c&cbll=${call.lat},${call.lon}`;
         streetViewLink.target = '_blank';
         streetViewLink.className = 'street-view-link';
         streetViewLink.innerHTML = 'Street View';
-        streetViewLink.style.cssText = `
-            color: #00ff00;
-            text-decoration: none;
-            font-size: 11px;
-            padding: 2px 4px;
-            background-color: #003300;
-            border: 1px solid #00ff00;
-            border-radius: 4px;
-            transition: all 0.3s;
-            display: inline-block;
-            text-align: center;
-            min-width: 60px;
-            font-family: 'Share Tech Mono', monospace;
-        `;
-
+        // style.cssText is no longer needed here if using class
+        
         // Create correction link
         const correctionLink = document.createElement('a');
         correctionLink.href = '#';
         correctionLink.className = 'correction-link';
         correctionLink.textContent = 'Edit Marker';
-        correctionLink.style.cssText = `
-            color: #00ff00;
-            text-decoration: none;
-            font-size: 11px;
-            padding: 2px 4px;
-            background-color: #003300;
-            border: 1px solid #00ff00;
-            border-radius: 4px;
-            transition: all 0.3s;
-            display: inline-block;
-            text-align: center;
-            min-width: 60px;
-            font-family: 'Share Tech Mono', monospace;
-        `;
+        // style.cssText is no longer needed here if using class
         correctionLink.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -891,7 +1035,7 @@ function addMarker(call, isNew = false) {
 
         // Create timestamp container (right side)
         const timestampContainer = document.createElement('div');
-        timestampContainer.style.cssText = 'text-align: right; font-size: 12px; opacity: 0.8;';
+        timestampContainer.className = 'popup-timestamp'; // Use class for styling
         timestampContainer.innerHTML = `<small>${formatTimestamp(call.timestamp)}</small>`;
 
         // Add links to the left container
@@ -916,18 +1060,18 @@ function addMarker(call, isNew = false) {
         
         // Add category with blue theme styling if it exists
         if (call.category) {
-            mainContentHTML += `<span style="display: inline-block; margin-left: 10px; color: #00ccff; font-weight: bold; font-style: italic; text-shadow: 0 0 3px #003366; font-size: 1.1em; letter-spacing: 0.2px;">${call.category}</span>`;
+            mainContentHTML += `<span class="category-badge">${call.category}</span>`; // Use class for styling
         }
         
-        // Add transcription and other elements
+        // Add transcription and audio controls
         mainContentHTML += `<br>${call.transcription || 'No transcription available.'}<br>
             <div id="waveform-${call.id}" class="waveform"></div>
             <div class="audio-controls">
                 <button class="play-pause" data-call-id="${call.id}" aria-label="Play audio for call ${call.id}">Play</button>
-                <button class="get-more-info" data-call-id="${call.id}" data-skip="0">More Info</button>
-                <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${call.id}" aria-label="Volume control for call ${call.id}">
+                <button class="talkgroup-history-btn" data-talkgroup-id="${call.talk_group_id}" data-talkgroup-name="${call.talk_group_name || 'Unknown Talk Group'}">More Info</button>
+                <!-- REMOVED: <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${call.id}" aria-label="Volume control for call ${call.id}"> -->
             </div>
-            <div class="additional-info"></div>
+            <!-- REMOVED: <div class="additional-info"></div> -->
         `;
         
         contentWrapper.innerHTML = mainContentHTML;
@@ -945,30 +1089,19 @@ function addMarker(call, isNew = false) {
         // Handle popup open event
         marker.on('popupopen', function() {
             console.log(`Popup opened for callId: ${call.id}`);
-            initWaveSurfer(call.id, `/audio/${call.audio_id}`, () => {
+            initWaveSurfer(call.id, `/audio/${call.audio_id}`, wavesurfers, () => { // Pass main wavesurfers object
                 if (!isNewCallAudioMuted && this.shouldPlayAudio) {
-                    const wavesurferInstance = wavesurfers[call.id];
-
-                    if (wavesurferInstance && wavesurferInstance.backend && typeof wavesurferInstance.backend.getAudioContext === 'function') {
-                        const audioContext = wavesurferInstance.backend.getAudioContext();
-
-                        if (audioContext.state === 'suspended') {
-                            audioContext.resume().then(() => {
-                                console.log('AudioContext resumed');
-                                playWaveSurferAudio(call.id, this);
-                            }).catch(e => {
-                                console.error('AudioContext resume failed:', e);
-                                playWaveSurferAudio(call.id, this);
-                            });
-                        } else {
-                            playWaveSurferAudio(call.id, this);
-                        }
-                    } else {
-                        console.warn('WaveSurfer instance or backend or getAudioContext not available; proceeding without resuming AudioContext.');
-                        playWaveSurferAudio(call.id, this);
-                    }
+                    playWaveSurferAudio(call.id, wavesurfers, this);
                 }
             });
+
+            // Add listener for the new history button *inside* popupopen
+            const historyButton = this.getPopup().getElement().querySelector('.talkgroup-history-btn');
+            if (historyButton) {
+                 // Remove previous listener if any to prevent duplicates
+                 historyButton.removeEventListener('click', handleShowTalkgroupHistory);
+                 historyButton.addEventListener('click', handleShowTalkgroupHistory);
+            }
         });
         
         // Handle popup close event
@@ -980,10 +1113,13 @@ function addMarker(call, isNew = false) {
                     playPauseButton.textContent = 'Play';
                 }
             }
+             // Optional: Remove history button listener on close?
+             // const historyButton = this.getPopup()?.getElement()?.querySelector('.talkgroup-history-btn');
+             // if (historyButton) historyButton.removeEventListener('click', handleShowTalkgroupHistory);
         });
         
         markerGroups.addLayer(marker);
-        markers[call.id] = marker;
+        markers[call.id] = marker; // Corrected: use call.id
         allMarkers[call.id] = { 
             marker: marker, 
             transcription: call.transcription.toLowerCase(), 
@@ -1248,6 +1384,8 @@ function startAddressSearch(callId, originalMarker, modal) {
           if (document.getElementById('enable-heatmap').checked) {
             updateHeatmap();
           }
+          // Update counts as marker location changed but it's still visible
+          updateCategoryCounts();
         });
       })
       .catch(err => {
@@ -1323,9 +1461,12 @@ function deleteMarker(callId, marker, modal) {
         updateHeatmap();
       }
 
+      // Update counts and sidebar
+      updateCategoryCounts();
+
       // If a marker in the newest list was deleted, update pulsing markers
       if (indexInNewest > -1) {
-        loadNewNewestMarker();
+        loadNewNewestMarker(); // This internally calls updatePulsingMarkers
       }
     })
     .catch(error => {
@@ -2036,7 +2177,7 @@ function applyFilters() {
 
     console.log(`Visible markers after filtering: ${visibleMarkers}`);
     
-    // Update category counts
+    // Update category counts and sidebar *after* visibility is set
     updateCategoryCounts();
 
     // Update heatmap if active
@@ -2074,26 +2215,34 @@ function getCallIdFromMarker(marker) {
 function setupHeatmapControls() {
     const heatmapCheckbox = document.getElementById('enable-heatmap');
     const intensitySliderContainer = document.getElementById('heatmap-intensity-container');
+    const intensitySlider = document.getElementById('heatmap-intensity');
 
-    if (heatmapCheckbox) {
+    if (heatmapCheckbox && intensitySliderContainer && intensitySlider) {
         heatmapCheckbox.addEventListener('change', handleHeatmapToggle);
 
-        // Set initial visibility of intensity slider
-        if (heatmapCheckbox.checked) {
-            intensitySliderContainer.style.display = 'flex';
-        } else {
-            intensitySliderContainer.style.display = 'none';
-        }
+        // Set initial visibility of intensity slider container
+        intensitySliderContainer.style.display = heatmapCheckbox.checked ? 'flex' : 'none';
+
+        // Set initial fill for intensity slider
+        updateSliderFill(intensitySlider);
+
+        intensitySlider.addEventListener('input', function(e) {
+            handleIntensityChange(e);
+            updateSliderFill(this); // Update fill on change
+        });
+
     } else {
-        console.error('Heatmap checkbox not found');
+        console.error('Heatmap control elements not found');
     }
 
-    const intensitySlider = document.getElementById('heatmap-intensity');
+    // Removed the duplicate event listener setup from previous attempt if any
+    /* // REMOVE if exists
     if (intensitySlider) {
         intensitySlider.addEventListener('input', handleIntensityChange);
     } else {
         console.error('Heatmap intensity slider not found');
     }
+    */
 }
 
 function handleHeatmapToggle(event) {
@@ -2213,94 +2362,427 @@ function isValidCall(call) {
 }
 
 // Initialize WaveSurfer
-function initWaveSurfer(callId, audioUrl, onReadyCallback) {
-    if (wavesurfers[callId]) {
-        wavesurfers[callId].destroy();
-        delete wavesurfers[callId];
+function initWaveSurfer(callId, audioUrl, wavesurferStore, onReadyCallback, containerSelector = null) {
+    const containerId = containerSelector || `waveform-${callId}`;
+    const containerElement = document.getElementById(containerId);
+
+    // Check if container exists
+    if (!containerElement) {
+        console.warn(`WaveSurfer container #${containerId} not found for callId ${callId}. Skipping init.`);
+        return;
     }
 
-    wavesurfers[callId] = WaveSurfer.create({
-        container: `#waveform-${callId}`,
-        waveColor: '#00ff00',
-        progressColor: '#008000',
-        cursorColor: '#ffffff',
-        height: 30,
-        normalize: true,
-        backend: 'webaudio', // Use 'webaudio' backend in v7
-    });
-
-    wavesurfers[callId].load(audioUrl);
-
-    const playPauseButton = document.querySelector(`.play-pause[data-call-id="${callId}"]`);
-    if (playPauseButton) {
-        playPauseButton.replaceWith(playPauseButton.cloneNode(true));
-    }
-
-    const newPlayPauseButton = document.querySelector(`.play-pause[data-call-id="${callId}"]`);
-    if (newPlayPauseButton) {
-        newPlayPauseButton.addEventListener('click', function() {
-            if (wavesurfers[callId].isPlaying()) {
-                wavesurfers[callId].pause();
-                this.textContent = 'Play';
-            } else {
-                wavesurfers[callId].play();
-                this.textContent = 'Pause';
-            }
-        });
-    }
-
-    const volumeControl = document.querySelector(`input[type="range"][data-call-id="${callId}"]`);
-    if (volumeControl) {
-        volumeControl.replaceWith(volumeControl.cloneNode(true));
-    }
-
-    const newVolumeControl = document.querySelector(`input[type="range"][data-call-id="${callId}"]`);
-    if (newVolumeControl) {
-        newVolumeControl.addEventListener('input', function(e) {
-            wavesurfers[callId].setVolume(e.target.value);
-        });
-    }
-
-    wavesurfers[callId].on('ready', function() {
-        console.log(`WaveSurfer for callId ${callId} is ready.`);
-        if (onReadyCallback) onReadyCallback();
-    });
-
-    wavesurfers[callId].on('finish', function() {
-        if (playPauseButton) {
-            playPauseButton.textContent = 'Play';
+    // Destroy existing instance for this specific call ID *in this store* if it exists
+    if (wavesurferStore[callId]) {
+        try {
+            wavesurferStore[callId].destroy();
+        } catch (e) {
+            console.warn(`Error destroying previous wavesurfer for ${callId}:`, e);
         }
-    });
+        delete wavesurferStore[callId];
+    }
 
-    wavesurfers[callId].on('error', function(error) {
-        console.error(`WaveSurfer error for callId ${callId}:`, error);
-    });
+    try {
+        wavesurferStore[callId] = WaveSurfer.create({
+            container: `#${containerId}`, // Use the dynamic or default container ID
+            waveColor: '#00ff00',
+            progressColor: '#008000',
+            cursorColor: '#ffffff',
+            height: containerId.startsWith('tg-') ? 25 : 30, // Use smaller height for talkgroup modal
+            normalize: true,
+            backend: 'webaudio',
+        });
+
+        wavesurferStore[callId].load(audioUrl);
+
+        // Find controls specific to this WaveSurfer instance (pop-up or modal)
+        const controlsContainer = containerElement.closest('.talkgroup-list-item, .custom-popup');
+        if (!controlsContainer) {
+            console.warn(`Could not find controls container for wavesurfer ${callId}`);
+            return;
+        }
+
+        const playPauseButton = controlsContainer.querySelector(`.play-pause[data-call-id="${callId}"]`);
+        if (playPauseButton) {
+            // Clone and replace to remove old listeners reliably
+            const newButton = playPauseButton.cloneNode(true);
+            playPauseButton.parentNode.replaceChild(newButton, playPauseButton);
+
+            newButton.addEventListener('click', function() {
+                if (wavesurferStore[callId].isPlaying()) {
+                    wavesurferStore[callId].pause();
+                    this.textContent = 'Play';
+                } else {
+                    // Pause all other playing wavesurfers in the *same* store
+                    Object.keys(wavesurferStore).forEach(wsCallId => {
+                        if (wsCallId !== callId.toString() && wavesurferStore[wsCallId] && wavesurferStore[wsCallId].isPlaying()) {
+                            wavesurferStore[wsCallId].pause();
+                            const otherButton = document.querySelector(`.play-pause[data-call-id="${wsCallId}"]`);
+                            if (otherButton) otherButton.textContent = 'Play';
+                        }
+                    });
+                    wavesurferStore[callId].play();
+                    this.textContent = 'Pause';
+                }
+            });
+        }
+
+        // REMOVE Volume Control Logic
+        /*
+        const volumeControl = controlsContainer.querySelector(`input.volume[data-call-id="${call.id}"]`);
+        if (volumeControl) {
+            const newVolumeControl = volumeControl.cloneNode(true);
+            volumeControl.parentNode.replaceChild(newVolumeControl, volumeControl);
+            newVolumeControl.addEventListener('input', function(e) {
+                 if (wavesurferStore[callId]) {
+                    wavesurferStore[callId].setVolume(e.target.value);
+                 }
+            });
+            // Initialize volume visually
+             if (wavesurferStore[callId]) {
+                wavesurferStore[callId].setVolume(newVolumeControl.value);
+             }
+        }
+        */
+
+        wavesurferStore[callId].on('ready', function() {
+            console.log(`WaveSurfer for callId ${callId} in container #${containerId} is ready.`);
+            // Set initial volume using global level
+            if (wavesurferStore[callId]) {
+                wavesurferStore[callId].setVolume(globalVolumeLevel);
+            }
+            if (onReadyCallback) onReadyCallback();
+        });
+
+        wavesurferStore[callId].on('finish', function() {
+             const button = controlsContainer.querySelector(`.play-pause[data-call-id="${callId}"]`);
+             if (button) {
+                button.textContent = 'Play';
+             }
+        });
+
+        wavesurferStore[callId].on('error', function(error) {
+            console.error(`WaveSurfer error for callId ${callId} in container #${containerId}:`, error);
+             const errorMsg = document.createElement('small');
+             errorMsg.textContent = ' Error loading audio.';
+             errorMsg.style.color = 'red';
+             containerElement.appendChild(errorMsg);
+        });
+
+    } catch (error) {
+        console.error(`Failed to initialize WaveSurfer for callId ${callId}:`, error);
+    }
 }
 
-function playWaveSurferAudio(callId, marker) {
+// Modified to accept the specific wavesurfer store
+function playWaveSurferAudio(callId, wavesurferStore, marker = null) {
+    if (!wavesurferStore || !wavesurferStore[callId]) {
+        console.error(`WaveSurfer instance not found for callId ${callId} in the provided store.`);
+        return;
+    }
     try {
-        wavesurfers[callId].play();
-        const playPauseButton = document.querySelector(`.play-pause[data-call-id="${callId}"]`);
-        if (playPauseButton) {
-            playPauseButton.textContent = 'Pause';
+        // Ensure audio context is running (required after user interaction)
+        const wsInstance = wavesurferStore[callId];
+        if (wsInstance.backend && typeof wsInstance.backend.getAudioContext === 'function') {
+            const audioContext = wsInstance.backend.getAudioContext();
+            if (audioContext.state === 'suspended') {
+                 audioContext.resume().then(() => {
+                     console.log('AudioContext resumed for playing');
+                     wsInstance.play();
+                 }).catch(e => console.error('AudioContext resume failed:', e));
+            } else {
+                 wsInstance.play();
+            }
+        } else {
+             wsInstance.play(); // Fallback if context check fails
         }
-        marker.shouldPlayAudio = false;
+
+        const controlsContainer = document.querySelector(`.talkgroup-list-item[data-call-id="${callId}"], .custom-popup`); // Find the right container
+        if (controlsContainer) {
+            const playPauseButton = controlsContainer.querySelector(`.play-pause[data-call-id="${callId}"]`);
+            if (playPauseButton) {
+                playPauseButton.textContent = 'Pause';
+            }
+        }
+
+        if (marker) {
+            marker.shouldPlayAudio = false; // Mark as played if triggered from marker
+        }
         console.log(`Audio played for callId: ${callId}`);
     } catch (e) {
         console.error(`Failed to play audio for callId ${callId}:`, e);
     }
 }
 
-function handleGetMoreInfo(event) {
-    // Prevent default behavior if necessary
-    event.preventDefault();
-
+// NEW: Event handler wrapper for the history button
+function handleShowTalkgroupHistory(event) {
     const button = event.target;
-    const callId = button.getAttribute('data-call-id');
-    const skip = parseInt(button.getAttribute('data-skip'), 10);
-    const additionalInfoDiv = button.closest('.custom-popup').querySelector('.additional-info');
-    getAdditionalTranscriptions(callId, skip, additionalInfoDiv, button);
+    const talkgroupId = button.getAttribute('data-talkgroup-id');
+    const talkgroupName = button.getAttribute('data-talkgroup-name');
+    if (talkgroupId) {
+        showTalkgroupModal(parseInt(talkgroupId, 10), talkgroupName);
+    } else {
+        console.error("Talkgroup ID not found on button");
+    }
 }
+
+// Global function to close the talkgroup modal
+function closeTalkgroupModal() {
+    const modal = document.getElementById('talkgroup-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    isTalkgroupModalOpen = false;
+    currentOpenTalkgroupId = null;
+
+    // Destroy all wavesurfers associated with this modal instance
+    Object.keys(talkgroupModalWavesurfers).forEach(callId => {
+        if (talkgroupModalWavesurfers[callId]) {
+            talkgroupModalWavesurfers[callId].destroy();
+        }
+    });
+    // Clear the object
+    for (let key in talkgroupModalWavesurfers) {
+        delete talkgroupModalWavesurfers[key];
+    }
+    console.log('Talkgroup modal closed and wavesurfers destroyed.');
+
+    // Restore main mute state
+    const mainMuteCheckbox = document.getElementById('mute-new-calls');
+    if (mainMuteCheckbox && mainMuteCheckbox.checked !== originalMuteStateBeforeModal) {
+        mainMuteCheckbox.checked = originalMuteStateBeforeModal;
+        mainMuteCheckbox.dispatchEvent(new Event('change')); // Trigger state update
+        console.log(`Restored main mute state to: ${originalMuteStateBeforeModal}`);
+    }
+
+    // Clear the polling interval when closing the modal
+    if (talkgroupPollingInterval) {
+        clearInterval(talkgroupPollingInterval);
+        talkgroupPollingInterval = null;
+    }
+}
+
+// NEW: Function to create a list item for the talkgroup modal
+function createTalkgroupListItem(call) {
+    const listItem = document.createElement('div');
+    listItem.className = 'talkgroup-list-item';
+    listItem.dataset.callId = call.id;
+
+    listItem.innerHTML = `
+        <span class="talkgroup-item-timestamp">${formatTimestamp(call.timestamp)}</span>
+        <p class="talkgroup-item-transcription">${call.transcription || 'No transcription available.'}</p>
+        <div class="talkgroup-item-audio">
+            ${call.audio_id ? `
+                <div id="tg-waveform-${call.id}" class="waveform"></div>
+                <div class="audio-controls">
+                    <button class="play-pause" data-call-id="${call.id}" aria-label="Play audio">Play</button>
+                    <!-- REMOVED: <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${call.id}" aria-label="Volume control"> -->
+                </div>
+            ` : '<small>No audio file.</small>'}
+        </div>
+    `;
+
+    // Initialize WaveSurfer if audio exists
+    if (call.audio_id) {
+        // Use setTimeout to ensure the element is in the DOM before WaveSurfer tries to attach
+        setTimeout(() => {
+            initWaveSurfer(call.id, `/audio/${call.audio_id}`, talkgroupModalWavesurfers, null, `tg-waveform-${call.id}`);
+        }, 0);
+    }
+
+    return listItem;
+}
+
+// NEW: Function to show the talkgroup modal
+function showTalkgroupModal(talkgroupId, talkgroupName) {
+    const modal = document.getElementById('talkgroup-modal');
+    const titleElement = document.getElementById('talkgroup-modal-title');
+    const listElement = document.getElementById('talkgroup-list');
+
+    if (!modal || !titleElement || !listElement) {
+        console.error('Talkgroup modal elements not found!');
+        return;
+    }
+
+    // Set title
+    titleElement.textContent = talkgroupName || 'Talkgroup History';
+
+    // Reset state and content
+    listElement.innerHTML = '<div class="loading-placeholder">Loading history...</div>';
+    isTalkgroupModalOpen = true;
+    currentOpenTalkgroupId = talkgroupId;
+
+    // Clear previous wavesurfers immediately before fetching new data
+    Object.keys(talkgroupModalWavesurfers).forEach(callId => {
+        if (talkgroupModalWavesurfers[callId]) {
+            talkgroupModalWavesurfers[callId].destroy();
+        }
+    });
+    for (let key in talkgroupModalWavesurfers) {
+        delete talkgroupModalWavesurfers[key];
+    }
+
+    // Fetch initial history (using the current main time filter range)
+    fetch(`/api/talkgroup/${talkgroupId}/calls?hours=${timeRangeHours}`)
+        .then(response => response.json())
+        .then(calls => {
+            listElement.innerHTML = ''; // Clear loading placeholder
+            if (calls && calls.length > 0) {
+                calls.forEach(call => {
+                    const listItem = createTalkgroupListItem(call);
+                    listElement.appendChild(listItem);
+                });
+            } else {
+                listElement.innerHTML = '<div class="loading-placeholder">No calls found for this talkgroup in the selected time range.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching talkgroup history:', error);
+            listElement.innerHTML = '<div class="loading-placeholder error">Error loading call history.</div>';
+        });
+
+    // Display the modal
+    modal.style.display = 'block';
+
+    // --- Auto-mute main new calls --- 
+    const mainMuteCheckbox = document.getElementById('mute-new-calls');
+    if (mainMuteCheckbox) {
+        originalMuteStateBeforeModal = mainMuteCheckbox.checked; // Store original state
+        if (!originalMuteStateBeforeModal) { // Only check it if it wasn't already checked
+            mainMuteCheckbox.checked = true;
+            mainMuteCheckbox.dispatchEvent(new Event('change')); // Trigger state update
+            console.log("Temporarily muted main new call sounds.");
+        }
+    }
+    // --- End auto-mute ---
+
+    // Set initial state of autoplay toggle and add listener
+    const autoplayToggle = document.getElementById('talkgroup-autoplay-toggle');
+    const autoplayLabel = document.getElementById('talkgroup-autoplay-label'); // Get the label
+    const autoplayLabelTextSpan = autoplayLabel?.querySelector('span'); // Get the inner span
+
+    if (autoplayToggle && autoplayLabel && autoplayLabelTextSpan) { // Check all exist
+        autoplayToggle.checked = talkgroupModalAutoplay;
+        // Set initial class based on default state
+        if (talkgroupModalAutoplay) {
+            // autoplayLabel.classList.add('live-indicator'); // Old way
+            autoplayLabelTextSpan.classList.add('loading-ellipsis'); // Add to span
+        } else {
+            // autoplayLabel.classList.remove('live-indicator'); // Old way
+            autoplayLabelTextSpan.classList.remove('loading-ellipsis'); // Remove from span
+        }
+        // Remove previous listener before adding new one
+        autoplayToggle.removeEventListener('change', handleTalkgroupAutoplayChange);
+        autoplayToggle.addEventListener('change', handleTalkgroupAutoplayChange);
+    }
+
+    // Start polling for new calls for this talkgroup
+    startTalkgroupPolling(talkgroupId);
+}
+
+// NEW: Handler for the autoplay toggle change
+function handleTalkgroupAutoplayChange(event) {
+    talkgroupModalAutoplay = event.target.checked;
+    console.log(`Talkgroup modal autoplay set to: ${talkgroupModalAutoplay}`);
+
+    const autoplayLabel = document.getElementById('talkgroup-autoplay-label'); // Get label
+    const autoplayLabelTextSpan = autoplayLabel?.querySelector('span'); // Get inner span
+
+    // if (autoplayLabel) { // Old check
+    if (autoplayLabelTextSpan) { // Check if span exists
+        if (talkgroupModalAutoplay) {
+            // autoplayLabel.classList.add('live-indicator'); // Old way
+            autoplayLabelTextSpan.classList.add('loading-ellipsis'); // Add class to span
+        } else {
+            // autoplayLabel.classList.remove('live-indicator'); // Old way
+            autoplayLabelTextSpan.classList.remove('loading-ellipsis'); // Remove class from span
+        }
+    }
+}
+
+// NEW: Function to start polling for new calls in the modal
+function startTalkgroupPolling(talkgroupId) {
+    // Clear any existing interval first
+    if (talkgroupPollingInterval) {
+        clearInterval(talkgroupPollingInterval);
+    }
+
+    // console.log(`Starting polling for talkgroup ${talkgroupId}...`); // Reduced logging
+
+    talkgroupPollingInterval = setInterval(() => {
+        pollForNewTalkgroupCalls(talkgroupId);
+    }, 5000); // Poll every 5 seconds (reverted from 3)
+}
+
+// NEW: Function that actually performs the poll
+function pollForNewTalkgroupCalls(talkgroupId) {
+    if (!isTalkgroupModalOpen || currentOpenTalkgroupId !== talkgroupId) {
+        // Modal closed or changed talkgroup, stop polling (should be handled by close, but safety check)
+        if (talkgroupPollingInterval) clearInterval(talkgroupPollingInterval);
+        talkgroupPollingInterval = null;
+        return;
+    }
+
+    // Use the timestamp of the newest item currently in the modal list
+    const listElement = document.getElementById('talkgroup-list');
+    const firstItem = listElement?.querySelector('.talkgroup-list-item');
+    const newestCallIdInList = firstItem ? parseInt(firstItem.dataset.callId, 10) : 0;
+
+    // Fetch calls newer than the newest one we already have displayed
+    // Note: Using ID assumes IDs are sequential and increasing with time
+    fetch(`/api/talkgroup/${talkgroupId}/calls?sinceId=${newestCallIdInList}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(newCalls => {
+            if (newCalls && newCalls.length > 0) {
+                // console.log(`Poll received ${newCalls.length} new call(s) for talkgroup ${talkgroupId}`); // Reduced logging
+                const placeholder = listElement.querySelector('.loading-placeholder');
+                if (placeholder) placeholder.remove(); // Remove placeholder if present
+
+                // Sort potentially multiple new calls by timestamp (newest first for prepending)
+                newCalls.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                newCalls.forEach(call => {
+                     // Double-check we haven't already added this ID (e.g., from rapid polling)
+                     if (!listElement.querySelector(`.talkgroup-list-item[data-call-id="${call.id}"]`)) {
+                        const newItem = createTalkgroupListItem(call);
+                        newItem.classList.add('new-item-highlight');
+                        listElement.prepend(newItem);
+
+                        // Handle autoplay if enabled
+                        if (talkgroupModalAutoplay && call.audio_id) {
+                            // Need a slight delay for WaveSurfer init
+                            setTimeout(() => {
+                                playWaveSurferAudio(call.id, talkgroupModalWavesurfers);
+                            }, 500); // Adjust delay if needed
+                        }
+                     }
+                });
+
+                // Optional: Prune old items if list gets too long
+                const maxItems = 100;
+                while (listElement.children.length > maxItems) {
+                    const oldestItem = listElement.lastElementChild;
+                    const oldCallId = oldestItem.dataset.callId;
+                    if (talkgroupModalWavesurfers[oldCallId]) {
+                        talkgroupModalWavesurfers[oldCallId].destroy();
+                        delete talkgroupModalWavesurfers[oldCallId];
+                    }
+                    listElement.removeChild(oldestItem);
+                }
+            }
+        })
+        .catch(error => {
+            console.warn(`Polling error for talkgroup ${talkgroupId}:`, error);
+            // Optionally stop polling on repeated errors?
+        });
+}
+
+
 
 function showNotification(message, type = 'success') {
   const notification = document.createElement('div');
@@ -2674,13 +3156,15 @@ function initializeApp() {
     setupCallControls(); // Use this instead of setupMuteButton
     setupTimeFilter();
     setupHeatmapControls();
-    setupLiveStreamButton();
+    setupLiveFeed(); // Change back to setupLiveFeed
+    // setupLiveStreamButton(); // Keep the old one commented out
     loadCalls(timeRangeHours);
     setupUserManagement();
 	setupSidebarToggle();
-    
-    // Initialize the category sidebar
-    initCategorySidebar();
+    setupGlobalVolumeControl(); // Add this line
+
+    // Initialize the category sidebar content dynamically
+    updateCategoryCounts(); // Call this to build the initial list based on default state
     
     // Start timestamp updates
     startTimestampUpdates();
@@ -2688,15 +3172,20 @@ function initializeApp() {
     fetch('/api/sessions/current')
         .then(response => response.json())
         .then(data => {
-            currentSessionToken = data.session.token;
+            currentSessionToken = data.session?.token; // Handle potential null session
             setupSessionManagement();
         })
         .catch(error => {
             console.error('Error getting current session:', error);
+            // Proceed even if session fetch fails, maybe show anonymous state?
+             setupSessionManagement(); // Setup anyway, might show defaults
         });
     
-    // Initialize pulsing markers functionality
-    initializePulsingMarkers();
+    // Initialize pulsing markers functionality (assuming this is defined elsewhere)
+    // initializePulsingMarkers(); // If this function exists, keep it
+
+    // Load initial calls *after* all UI setup is complete
+    loadCalls(timeRangeHours);
 }
 // Function to load and display summary
 function loadSummary() {
@@ -2795,9 +3284,351 @@ loadSummary();
 // Set up summary refresh interval (every 2 minutes)
 setInterval(loadSummary, 120000);
 // Update volume slider style
+/* // REMOVE THIS BLOCK
 document.addEventListener('input', function(e) {
     if (e.target.classList.contains('volume')) {
         const value = e.target.value;
         e.target.style.setProperty('--value', `${value * 100}%`);
     }
 });
+*/
+
+// NEW: Function to setup the global volume control listener
+function setupGlobalVolumeControl() {
+    console.log("Attempting to set up global volume control..."); // Log function call
+    const volumeSlider = document.getElementById('global-volume');
+
+    if (volumeSlider) {
+        console.log("Global volume slider element FOUND."); // Log element found
+        // Set initial slider value
+        volumeSlider.value = globalVolumeLevel;
+        updateSliderFill(volumeSlider); // Set initial fill
+
+        volumeSlider.addEventListener('input', function(e) {
+            globalVolumeLevel = parseFloat(e.target.value);
+            // console.log(`Global volume slider changed. New value: ${globalVolumeLevel}`); // Reduced logging
+
+            // Apply volume to all active wavesurfers in the main map
+            Object.values(wavesurfers).forEach((ws, index) => {
+                if (ws) {
+                    try {
+                       // console.log(`Setting volume for map WS index ${index} to ${globalVolumeLevel}`); // Reduced logging
+                       ws.setVolume(globalVolumeLevel);
+                    } catch (err) {
+                        // console.warn(`Error setting volume on map wavesurfer ${index}:`, err); // Keep warning for errors
+                    }
+                } // else {
+                    // console.log(`Map WS index ${index} is null/undefined.`); // Reduced logging
+                // }
+            });
+
+            // Apply volume to all active wavesurfers in the talkgroup modal
+            Object.values(talkgroupModalWavesurfers).forEach((ws, index) => {
+                if (ws) {
+                    try {
+                        // console.log(`Setting volume for modal WS index ${index} to ${globalVolumeLevel}`); // Reduced logging
+                        ws.setVolume(globalVolumeLevel);
+                    } catch (err) {
+                        // console.warn(`Error setting volume on modal wavesurfer ${index}:`, err); // Keep warning for errors
+                    }
+                } // else {
+                    // console.log(`Modal WS index ${index} is null/undefined.`); // Reduced logging
+                // }
+            });
+            updateSliderFill(this); // Update fill on change
+        });
+    } else {
+        console.error("Global volume slider element NOT FOUND!"); // Log element not found
+    }
+}
+
+// NEW Handler for Live Feed Updates
+function handleLiveFeedUpdate(call) {
+    // OPTIMIZATION: Skip if nothing is selected/enabled
+    if (liveFeedSelectedTalkgroups.size === 0 && !isLiveFeedAudioEnabled) {
+        // console.log("[LiveFeed] No talkgroups selected and audio disabled. Skipping update.");
+        return; 
+    }
+    
+    // console.log("[LiveFeed] handleLiveFeedUpdate triggered for call ID:", call.id);
+    const incomingTgId = parseInt(call.talk_group_id, 10); 
+
+    // Check if the talkgroup is selected
+    if (liveFeedSelectedTalkgroups.has(incomingTgId)) { 
+        // console.log(`[LiveFeed] Match found for TG ID ${incomingTgId}! Calling displayLiveFeedItem.`);
+        displayLiveFeedItem(call); // Display the item (handles audio internally)
+    } else {
+        // console.log(`[LiveFeed] Call TG ID ${incomingTgId} ignored. Selected: ${liveFeedSelectedTalkgroups.has(incomingTgId)}`);
+    }
+}
+
+// NEW: Live Feed Setup and Helper Functions
+
+function setupLiveFeed() {
+    console.log("[LiveFeed] Setting up Live Feed UI and listeners...");
+    liveFeedSetupBtn = document.getElementById('live-feed-setup-btn');
+    liveFeedModal = document.getElementById('live-feed-modal');
+    liveFeedSearchInput = document.getElementById('live-feed-search');
+    // REMOVED: liveFeedEnableCheckbox = document.getElementById('live-feed-enable');
+    liveFeedAudioEnableCheckbox = document.getElementById('live-feed-audio-enable');
+    liveFeedTalkgroupListContainer = document.getElementById('live-feed-talkgroup-list');
+    liveFeedDisplayContainer = document.getElementById('live-feed-display');
+
+    // Modified check to remove liveFeedEnableCheckbox
+    if (!liveFeedSetupBtn || !liveFeedModal || !liveFeedSearchInput || !liveFeedAudioEnableCheckbox || !liveFeedTalkgroupListContainer || !liveFeedDisplayContainer) {
+        console.error("[LiveFeed] Failed to find one or more required Live Feed elements.");
+        return;
+    }
+
+    // Listener to open the modal
+    liveFeedSetupBtn.addEventListener('click', openLiveFeedModal);
+
+    // Listeners within the modal
+    liveFeedSearchInput.addEventListener('input', handleLiveFeedSearch);
+    // REMOVED: liveFeedEnableCheckbox.addEventListener('change', handleMasterEnableChange);
+    liveFeedAudioEnableCheckbox.addEventListener('change', handleAudioEnableChange);
+
+    // Initial state setup
+    // REMOVED: liveFeedEnableCheckbox.checked = isLiveFeedEnabled;
+    liveFeedAudioEnableCheckbox.checked = isLiveFeedAudioEnabled;
+    // MODIFIED: Hide display initially, show based on selections later
+    liveFeedDisplayContainer.style.display = liveFeedSelectedTalkgroups.size > 0 ? 'flex' : 'none'; 
+
+    // Fetch all talkgroups for the modal (unchanged)
+    fetch('/api/talkgroups')
+        .then(response => response.json())
+        .then(talkgroups => {
+            allLiveFeedTalkgroups = talkgroups; // Cache the list
+            console.log(`[LiveFeed] Fetched ${allLiveFeedTalkgroups.length} talkgroups.`);
+        })
+        .catch(error => {
+            console.error('[LiveFeed] Error fetching talkgroups:', error);
+            liveFeedTalkgroupListContainer.innerHTML = '<div class="loading-placeholder error">Error loading talkgroups.</div>';
+        });
+}
+
+function openLiveFeedModal() {
+    if (!liveFeedModal || !allLiveFeedTalkgroups) return;
+    console.log("[LiveFeed] Opening setup modal.");
+    liveFeedModal.style.display = 'block';
+    populateLiveFeedTalkgroups(); // Populate with current selections
+    // Ensure display state is correct when opening modal
+    liveFeedDisplayContainer.style.display = liveFeedSelectedTalkgroups.size > 0 ? 'flex' : 'none'; 
+}
+
+// Placeholder for the globally accessible close function (defined in index.html)
+function closeLiveFeedModal() { 
+    const modal = document.getElementById('live-feed-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    // Ensure display state is correct when closing modal
+    if (liveFeedDisplayContainer) { // Add check for safety
+       liveFeedDisplayContainer.style.display = liveFeedSelectedTalkgroups.size > 0 ? 'flex' : 'none'; 
+    }
+}
+
+function populateLiveFeedTalkgroups() { // (Unchanged from previous step)
+    if (!liveFeedTalkgroupListContainer) return;
+
+    const searchTerm = liveFeedSearchInput.value.toLowerCase();
+    const filteredTalkgroups = allLiveFeedTalkgroups.filter(tg =>
+        tg.name.toLowerCase().includes(searchTerm)
+    );
+
+    filteredTalkgroups.sort((a, b) => {
+        const aIsSelected = liveFeedSelectedTalkgroups.has(a.id);
+        const bIsSelected = liveFeedSelectedTalkgroups.has(b.id);
+
+        if (aIsSelected && !bIsSelected) {
+            return -1; 
+        } else if (!aIsSelected && bIsSelected) {
+            return 1;  
+        } else {
+            return a.name.localeCompare(b.name);
+        }
+    });
+
+    if (filteredTalkgroups.length === 0) {
+        liveFeedTalkgroupListContainer.innerHTML = '<div class="loading-placeholder">No matching talkgroups found.</div>';
+        return;
+    }
+
+    liveFeedTalkgroupListContainer.innerHTML = filteredTalkgroups.map(tg => `
+        <div class="live-feed-tg-item">
+            <input type="checkbox"
+                   id="live-feed-tg-${tg.id}"
+                   data-tg-id="${tg.id}"
+                   ${liveFeedSelectedTalkgroups.has(tg.id) ? 'checked' : ''}>
+            <label for="live-feed-tg-${tg.id}">${tg.name}</label>
+        </div>
+    `).join('');
+
+    liveFeedTalkgroupListContainer.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', handleLiveFeedSelectionChange);
+    });
+}
+
+function handleLiveFeedSearch() { // (Unchanged)
+    populateLiveFeedTalkgroups();
+}
+
+function handleLiveFeedSelectionChange(event) {
+    const checkbox = event.target;
+    const talkgroupId = parseInt(checkbox.dataset.tgId, 10);
+
+    if (checkbox.checked) {
+        liveFeedSelectedTalkgroups.add(talkgroupId);
+        console.log(`[LiveFeed] Added TG ID ${talkgroupId} to selection. Current set:`, liveFeedSelectedTalkgroups);
+    } else {
+        liveFeedSelectedTalkgroups.delete(talkgroupId);
+         console.log(`[LiveFeed] Removed TG ID ${talkgroupId} from selection. Current set:`, liveFeedSelectedTalkgroups);
+    }
+    
+    // NEW: Update display based on selection size
+    if (liveFeedDisplayContainer) { // Add safety check
+        liveFeedDisplayContainer.style.display = liveFeedSelectedTalkgroups.size > 0 ? 'flex' : 'none';
+        // Optional: Clear display if no TGs are selected
+        if (liveFeedSelectedTalkgroups.size === 0) {
+            liveFeedDisplayContainer.innerHTML = '';
+        }
+    }
+}
+
+// REMOVED function handleMasterEnableChange(event) { ... }
+
+function handleAudioEnableChange(event) { // (Unchanged)
+    isLiveFeedAudioEnabled = event.target.checked;
+    console.log(`[LiveFeed] Audio Enabled set to: ${isLiveFeedAudioEnabled}`);
+}
+
+// Ensure displayLiveFeedItem is defined before handleLiveFeedUpdate
+function displayLiveFeedItem(call) {
+    // MODIFIED: Removed check for isLiveFeedEnabled
+    if (!liveFeedDisplayContainer) return; 
+
+    const newItem = document.createElement('div');
+    newItem.className = 'live-feed-item';
+    newItem.innerHTML = `<strong>${call.talk_group_name || 'Unknown TG'}</strong>: ${call.transcription || '...'}`;
+    liveFeedDisplayContainer.prepend(newItem);
+
+    while (liveFeedDisplayContainer.children.length > MAX_LIVE_FEED_ITEMS) {
+        liveFeedDisplayContainer.removeChild(liveFeedDisplayContainer.lastElementChild);
+    }
+
+    setTimeout(() => {
+        newItem.classList.add('fading-out');
+        setTimeout(() => {
+             if (newItem.parentNode === liveFeedDisplayContainer) { 
+                liveFeedDisplayContainer.removeChild(newItem);
+             }
+        }, 1500); 
+    }, LIVE_FEED_ITEM_DURATION - 1500);
+    
+    // Live Audio Logic (Unchanged)
+    if (isLiveFeedAudioEnabled && call.audio_id) {
+        console.log(`[LiveFeed] Attempting live audio for TG ${call.talk_group_id}, Call ${call.id}`);
+        playLiveAudio(call);
+    }
+}
+
+// playLiveAudio function (use window.audioContext)
+function playLiveAudio(call) {
+    console.log(`[LiveFeed Debug] playLiveAudio called for Call ID: ${call.id}, Audio ID: ${call.audio_id}`);
+    // Stop previous source
+    if (currentAudioSource && currentAudioSource.stop) {
+        try {
+            console.log(`[LiveFeed Debug] Stopping previous audio source...`);
+            currentAudioSource.stop();
+        } catch (e) {
+            console.warn('[LiveFeed] Error stopping previous audio source:', e);
+        }
+        currentAudioSource = null; // Ensure it's cleared
+    }
+
+    // --- MODIFIED: Ensure AudioContext exists --- 
+    if (!window.audioContext) {
+        console.warn('[LiveFeed Debug] AudioContext is NULL inside playLiveAudio. Attempting fallback creation...');
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            window.audioContext = new AudioContext();
+            console.log(`[LiveFeed Debug] Fallback AudioContext CREATED successfully. State: ${window.audioContext.state}`);
+            // Need to ensure GainNode is also ready if context was just created
+            initGlobalGainNode(); 
+        } catch (e) {
+             console.error('[LiveFeed Debug] Fallback FAILED to create AudioContext:', e);
+             return; // Cannot proceed without context
+        }
+    }
+    // --- END MODIFIED SECTION --- 
+
+    // Resume if suspended (shouldn't be needed if just created, but safe check)
+    if (window.audioContext.state === 'suspended') { 
+        console.log('[LiveFeed Debug] AudioContext is suspended, attempting to resume...');
+        window.audioContext.resume().catch(e => console.warn('[LiveFeed] AudioContext resume failed:', e));
+    }
+    
+    // Check GainNode state 
+    if (!window.globalGainNode) {
+         console.warn('[LiveFeed Debug] globalGainNode is NULL. Audio might be silent.');
+    } else {
+         console.log(`[LiveFeed Debug] globalGainNode exists. Gain value: ${window.globalGainNode.gain.value}`);
+    }
+    
+    const audioUrl = `/audio/${call.audio_id}`;
+    console.log(`[LiveFeed Debug] Fetching audio from: ${audioUrl}`);
+    
+    fetch(audioUrl)
+        .then(response => {
+             // ... (fetch response logging) ...
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.arrayBuffer();
+        })
+        .then(arrayBuffer => {
+            // ... (arrayBuffer check and logging) ... 
+            if (!arrayBuffer || arrayBuffer.byteLength === 0) { 
+                 console.error(`[LiveFeed Debug] Error: Received invalid ArrayBuffer...`);
+                 throw new Error("Received invalid audio data");
+            }
+            console.log(`[LiveFeed Debug] Decoding ArrayBuffer...`);
+            return window.audioContext.decodeAudioData(arrayBuffer); 
+        })
+        .then(audioBuffer => {
+            // ... (decode success logging) ...
+            const source = window.audioContext.createBufferSource(); 
+            source.buffer = audioBuffer;
+            const destinationNode = window.globalGainNode || window.audioContext.destination; 
+            // ... (connect and start logging) ...
+            source.connect(destinationNode);
+            source.start(0);
+            currentAudioSource = source;
+            console.log(`[LiveFeed] Started playing live audio for Call ID: ${call.id}`);
+            source.onended = () => {
+                // ... (onended logging) ...
+                if (currentAudioSource === source) { 
+                    currentAudioSource = null;
+                }
+            };
+        })
+        .catch(error => {
+            console.error(`[LiveFeed Debug] Error in playLiveAudio chain for Call ID ${call.id}:`, error);
+            currentAudioSource = null;
+        });
+}
+
+// initGlobalGainNode function (use window.audioContext)
+// ... (existing implementation) ...
+
+// setupGlobalVolumeControl function (Unchanged)
+function setupGlobalVolumeControl() {
+    // ... (existing implementation) ...
+}
+
+// initAudioContext function (Unchanged)
+function initAudioContext() {
+    // ... (existing implementation) ...
+}
+
+// --- END Live Feed Functions ---
