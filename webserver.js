@@ -23,17 +23,26 @@ const {
   TIMEZONE,
   ENABLE_AUTH, // New environment variable for toggling authentication
   SESSION_DURATION_DAYS = "7", // Default 7 days if not specified
-  MAX_SESSIONS_PER_USER = "5" // Default 5 sessions if not specified
+  MAX_SESSIONS_PER_USER = "5", // Default 5 sessions if not specified
+  GOOGLE_MAPS_API_KEY
 } = process.env;
 
 // Validate required environment variables
-const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN'];
+const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN', 'GOOGLE_MAPS_API_KEY'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
   console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
   process.exit(1);
 }
+
+// Add endpoint to serve Google API key
+const app = express();
+app.use(express.json()); // Add this line to parse JSON bodies
+
+app.get('/api/config/google-api-key', (req, res) => {
+  res.json({ apiKey: GOOGLE_MAPS_API_KEY });
+});
 
 // Authentication is enabled if ENABLE_AUTH=true
 const authEnabled = ENABLE_AUTH?.toLowerCase() === 'true';
@@ -44,12 +53,6 @@ const MAX_SESSIONS = parseInt(MAX_SESSIONS_PER_USER, 10);
 const SESSION_CLEANUP_INTERVAL = 60 * 60 * 1000; // Cleanup every hour
 
 // Express app setup
-const app = express();
-const PORT = parseInt(WEBSERVER_PORT, 10);
-
-app.use(express.json());
-
-// Create HTTP server and setup Socket.IO
 const server = http.createServer(app);
 const io = socketIo(server);
 
@@ -676,23 +679,11 @@ app.delete('/api/markers/:id', (req, res) => {
 });
 
 app.put('/api/markers/:id/location', (req, res) => {
-  const markerId = parseInt(req.params.id, 10);
-  
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ error: 'Invalid request body' });
-  }
-
+  const markerId = parseInt(req.params.id);
   const { lat, lon } = req.body;
 
   if (isNaN(markerId) || typeof lat !== 'number' || typeof lon !== 'number') {
-    return res.status(400).json({ 
-      error: 'Invalid parameters',
-      details: {
-        markerId: isNaN(markerId) ? 'Invalid ID' : markerId,
-        lat: typeof lat !== 'number' ? 'Invalid latitude' : lat,
-        lon: typeof lon !== 'number' ? 'Invalid longitude' : lon
-      }
-    });
+    return res.status(400).json({ error: 'Invalid parameters' });
   }
 
   db.run(
@@ -701,10 +692,9 @@ app.put('/api/markers/:id/location', (req, res) => {
     function(err) {
       if (err) {
         console.error('Error updating marker location:', err);
-        return res.status(500).json({ error: 'Internal server error', details: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
       }
-
-      res.json({ message: 'Marker location updated successfully' });
+      res.json({ success: true });
     }
   );
 });
@@ -756,30 +746,104 @@ app.get('/api/additional-transcriptions/:callId', (req, res) => {
   );
 });
 
+// NEW Endpoint for Talkgroup History
+app.get('/api/talkgroup/:talkgroupId/calls', (req, res) => {
+  const talkgroupId = parseInt(req.params.talkgroupId, 10);
+  const hours = parseInt(req.query.hours) || 12; // Default hours for initial load
+  const sinceId = parseInt(req.query.sinceId, 10) || 0; // Get the ID to fetch calls newer than
+
+  if (isNaN(talkgroupId)) {
+    return res.status(400).json({ error: 'Invalid talkgroup ID' });
+  }
+
+  let query;
+  const params = [];
+
+  if (sinceId > 0) {
+    // Polling request: Get calls strictly newer than the last known ID for this talkgroup
+    // console.log(`Polling calls for talkgroup ${talkgroupId} since ID: ${sinceId}`); // Reduced logging
+    query = `
+      SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
+      FROM transcriptions t
+      LEFT JOIN audio_files a ON t.id = a.transcription_id
+      LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+      WHERE t.talk_group_id = ? AND t.id > ?
+        AND t.transcription IS NOT NULL -- ADDED: Ensure transcription exists
+      ORDER BY t.timestamp DESC -- Still return newest first for consistency
+    `;
+    params.push(talkgroupId, sinceId);
+  } else {
+    // Initial load request: Get calls within the time range
+    const sinceTimestamp = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+    console.log(`Fetching initial calls for talkgroup ${talkgroupId} since: ${sinceTimestamp} (${hours} hours ago)`);
+    query = `
+      SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
+      FROM transcriptions t
+      LEFT JOIN audio_files a ON t.id = a.transcription_id
+      LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+      WHERE t.talk_group_id = ? AND t.timestamp >= ?
+        AND t.transcription IS NOT NULL -- ADDED: Ensure transcription exists
+      ORDER BY t.timestamp DESC
+    `;
+    params.push(talkgroupId, sinceTimestamp);
+  }
+
+  db.all(query, params, (err, rows) => {
+    if (err) {
+      console.error(`Error fetching calls for talkgroup ${talkgroupId}:`, err);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    // For polling requests, rows might be empty, which is normal
+    if (sinceId > 0) {
+       // console.log(`Poll returned ${rows.length} calls for talkgroup ${talkgroupId} since ID ${sinceId}`); // Reduced logging
+    } else {
+       console.log(`Initial load returned ${rows.length} calls for talkgroup ${talkgroupId}`);
+    }
+    res.json(rows);
+  });
+});
+// END NEW Endpoint
+
 // Socket.IO Setup
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
-
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
   });
 });
 
-// Database Polling for new calls
-let lastCallId = 0;
+// --- Start Polling Logic --- 
 
+// State variables for polling
+let lastCallId = 0; // For map updates
+let lastLiveFeedCallId = 0; // For live feed updates
+
+// Initialization functions
 function initializeLastCallId() {
   db.get('SELECT MAX(id) AS maxId FROM transcriptions', (err, row) => {
     if (err) {
       console.error('Error initializing lastCallId:', err.message);
     } else {
       lastCallId = row.maxId || 0;
-      console.log(`Initialized lastCallId to ${lastCallId}`);
+      console.log(`Initialized lastCallId (for map) to ${lastCallId}`);
     }
   });
 }
 
-// Modified checkForNewCalls function in webserver.js
+function initializeLastLiveFeedCallId() {
+  db.get('SELECT MAX(id) AS maxId FROM transcriptions', (err, row) => {
+    if (err) {
+      console.error('Error initializing lastLiveFeedCallId:', err.message);
+    } else {
+      lastLiveFeedCallId = row.maxId || 0;
+      console.log(`Initialized lastLiveFeedCallId (for feed) to ${lastLiveFeedCallId}`);
+    }
+  });
+}
+
+
+// Polling function for MAP updates (requires lat/lon)
 function checkForNewCalls() {
   db.all(
     `
@@ -788,74 +852,143 @@ function checkForNewCalls() {
     LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
     WHERE t.id > ? 
-      AND t.lat IS NOT NULL 
-      AND t.lon IS NOT NULL 
+      AND t.lat IS NOT NULL
+      AND t.lon IS NOT NULL
       AND t.lat BETWEEN -90 AND 90 
       AND t.lon BETWEEN -180 AND 180
     ORDER BY t.id ASC
+    LIMIT 10 -- Limit to prevent flooding
     `,
     [lastCallId],
     async (err, rows) => {
       if (err) {
-        console.error('Error checking for new calls:', err.message);
+        console.error('Error checking for new map calls:', err.message);
         return;
       }
       
+      let updatedLastId = lastCallId;
       if (rows && rows.length > 0) {
-        for (const row of rows) {
-          // Update lastCallId
-          if (row.id > lastCallId) {
-            lastCallId = row.id;
-          }
-          
-          // Generate category if it doesn't exist and we have a transcription
-          if (!row.category && row.transcription) {
-            try {
-              const category = await generateShortSummary(row.transcription);
-              if (category) {
-                console.log(`Generated category for call ID ${row.id}: "${category}"`);
-                
-                // Update the database with the category using a Promise to ensure it completes before emitting
-                await new Promise((resolve, reject) => {
-                  db.run(
-                    `UPDATE transcriptions SET category = ? WHERE id = ?`,
-                    [category, row.id],
-                    function(err) {
-                      if (err) {
-                        console.error(`Error updating category for ID ${row.id}:`, err);
-                        reject(err);
-                      } else {
-                        console.log(`Saved category "${category}" for call ID ${row.id}`);
-                        // Update the row object to include the category
-                        row.category = category;
-                        resolve();
-                      }
-                    }
-                  );
-                });
+          for (const row of rows) {
+              if (row.id > updatedLastId) {
+                  updatedLastId = row.id; // Track highest ID fetched
               }
-            } catch (categoryError) {
-              console.error(`Error generating category for call ID ${row.id}:`, categoryError);
-            }
+
+              // --- Process Category --- 
+              if (!row.category && row.transcription) {
+                  try {
+                      const category = await generateShortSummary(row.transcription);
+                      if (category) {
+                          console.log(`Generated category for map call ID ${row.id}: "${category}"`);
+                          await new Promise((resolve, reject) => {
+                              db.run(
+                                  `UPDATE transcriptions SET category = ? WHERE id = ?`,
+                                  [category, row.id],
+                                  function(dbErr) {
+                                      if (dbErr) reject(dbErr);
+                                      else resolve();
+                                  }
+                              );
+                          });
+                          row.category = category;
+                      }
+                  } catch (categoryError) {
+                      console.error(`Error generating category for map call ID ${row.id}:`, categoryError);
+                  }
+              }
+              // --- End Category Processing ---
+
+              // --- Emission Logic with Timeout --- 
+              if (row.transcription) {
+                   // Has transcription, emit immediately
+                  io.emit('newCall', row);
+              } else {
+                  // No transcription yet, check age
+                  const callAgeMs = Date.now() - new Date(row.timestamp).getTime();
+                  if (callAgeMs > 10000) { // 10 second timeout
+                      // Timeout exceeded, emit with placeholder
+                      row.transcription = "[Transcription Pending...]"; // Modify row
+                      io.emit('newCall', row);
+                  } else {
+                      // Too new and no transcription, wait 
+                  }
+              }
+              // --- End Emission Logic ---
           }
-          
-          // Emit the call event
-          io.emit('newCall', row);
-          console.log('Emitted newCall event for call ID:', row.id);
-        }
+          // Update state variable *after* processing batch with highest ID *fetched*
+          if (updatedLastId > lastCallId) {
+              lastCallId = updatedLastId;
+          }
       }
     }
   );
 }
 
-// Initialize lastCallId and start polling
+// Polling function specifically for the LIVE FEED (no location check)
+function checkForLiveFeedCalls() {
+  db.all(
+    `
+    SELECT t.id, t.talk_group_id, t.transcription, t.timestamp, 
+           a.id AS audio_id, 
+           tg.alpha_tag AS talk_group_name
+    FROM transcriptions t
+    LEFT JOIN audio_files a ON t.id = a.transcription_id
+    LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+    WHERE t.id > ? 
+    ORDER BY t.id ASC
+    LIMIT 10 -- Limit to prevent flooding
+    `,
+    [lastLiveFeedCallId],
+    (err, rows) => {
+      if (err) {
+        console.error('Error checking for live feed calls:', err.message);
+        return;
+      }
+      
+      let updatedLastFeedId = lastLiveFeedCallId;
+      if (rows && rows.length > 0) {
+          rows.forEach(row => {
+              if (row.id > updatedLastFeedId) {
+                  updatedLastFeedId = row.id; // Track highest ID fetched
+              }
+              
+              // --- Emission Logic with Timeout ---
+              if (row.transcription) {
+                   // Has transcription, emit immediately
+                  io.emit('liveFeedUpdate', row); 
+              } else {
+                   // No transcription yet, check age
+                  const callAgeMs = Date.now() - new Date(row.timestamp).getTime();
+                  if (callAgeMs > 10000) { // 10 second timeout
+                      // Timeout exceeded, emit with placeholder
+                      row.transcription = "[Transcription Pending...]"; // Modify row
+                      io.emit('liveFeedUpdate', row);
+                  } else {
+                      // Too new and no transcription, wait
+                  }
+              }
+              // --- End Emission Logic ---
+          });
+          // Update state variable *after* processing batch with highest ID *fetched*
+          if (updatedLastFeedId > lastLiveFeedCallId) {
+              lastLiveFeedCallId = updatedLastFeedId;
+          }
+      }
+    }
+  );
+}
+
+// Initialize last IDs and start polling intervals
 initializeLastCallId();
-setInterval(checkForNewCalls, 2000);
+initializeLastLiveFeedCallId();
+setInterval(checkForNewCalls, 2000); // Poll for map updates every 2s
+setInterval(checkForLiveFeedCalls, 2500); // Poll for live feed slightly offset, every 2.5s
+
+// --- End Polling Logic ---
 
 // Server Startup
-server.listen(PORT, () => {
-  console.log(`Web server running on port ${PORT}`);
-  console.log(`Audio URL base: http://${PUBLIC_DOMAIN}:${PORT}/audio/`);
+server.listen(WEBSERVER_PORT, () => {
+  console.log(`Web server running on port ${WEBSERVER_PORT}`);
+  console.log(`Audio URL base: http://${PUBLIC_DOMAIN}:${WEBSERVER_PORT}/audio/`);
   
   if (authEnabled) {
     console.log('Authentication: ENABLED');
@@ -865,59 +998,70 @@ server.listen(PORT, () => {
     console.log('Authentication: DISABLED');
   }
 });
-// API endpoint to log marker corrections
+
+// Add correction logging endpoint
 app.post('/api/log/correction', (req, res) => {
-  const logData = req.body;
-  
-  // Validate required fields
-  if (!logData.callId) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Missing required fields in correction log data' 
-    });
+  const { callId, originalAddress, newAddress } = req.body;
+
+  if (!callId || !originalAddress || !newAddress) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
+
+  const logData = {
+    timestamp: new Date().toISOString(),
+    callId,
+    originalAddress,
+    newAddress
+  };
+
+  const logFilePath = path.join(logsDir, `corrections_${new Date().toISOString().split('T')[0]}.json`);
   
-  // Add timestamp if not provided
-  if (!logData.timestamp) {
-    logData.timestamp = new Date().toISOString();
-  }
-  
-  // Path to log file - one file per day
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const logFilePath = path.join(logsDir, `corrections_${today}.json`);
-  
-  // Check if file exists and read it
-  let existingData = [];
+  // Read existing logs
+  let existingLogs = [];
   if (fs.existsSync(logFilePath)) {
     try {
       const fileContent = fs.readFileSync(logFilePath, 'utf8');
-      existingData = JSON.parse(fileContent);
-      if (!Array.isArray(existingData)) {
-        existingData = [];
-      }
+      existingLogs = JSON.parse(fileContent);
     } catch (err) {
-      console.error('Error reading corrections log file:', err);
-      existingData = []; // Reset if there's an error
+      console.error('Error reading log file:', err);
     }
   }
-  
+
   // Add new log entry
-  existingData.push(logData);
-  
+  existingLogs.push(logData);
+
   // Write back to file
-  fs.writeFile(logFilePath, JSON.stringify(existingData, null, 2), (err) => {
+  fs.writeFile(logFilePath, JSON.stringify(existingLogs, null, 2), (err) => {
     if (err) {
-      console.error('Error writing to correction log:', err);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Failed to write to log' 
-      });
+      console.error('Error writing to log file:', err);
+      return res.status(500).json({ error: 'Failed to write to log' });
     }
-    
-    console.log('Correction logged successfully');
     res.json({ success: true });
   });
 });
+
+// Get all talkgroups for selection UI
+app.get('/api/talkgroups', (req, res) => {
+  db.all(
+    `SELECT id, alpha_tag, tag 
+     FROM talk_groups 
+     ORDER BY alpha_tag ASC`, // Order alphabetically for easier browsing
+    [], 
+    (err, rows) => {
+      if (err) {
+        console.error('Error fetching talkgroups:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+      // Combine alpha_tag and tag for display if alpha_tag exists
+      const talkgroups = rows.map(tg => ({
+        id: tg.id,
+        name: tg.alpha_tag ? `${tg.alpha_tag} (${tg.tag || tg.id})` : (tg.tag || `ID: ${tg.id}`)
+      }));
+      res.json(talkgroups);
+    }
+  );
+});
+
 // Graceful Shutdown
 process.on('SIGINT', () => {
   console.log('Shutting down web server gracefully...');

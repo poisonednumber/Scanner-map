@@ -50,11 +50,7 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
   ? mappedTalkGroupsString.split(',').map(id => id.trim())
   : [];
 
-// (Replace the entire logger setup section in your bot.js with this)
 
-// (Paste this entire block where the old logger setup was)
-
-// --- Whitelist Filtering & Logger Setup ---
 
 // Whitelist patterns for console INFO messages
 const allowedPatterns = [
