@@ -541,10 +541,13 @@
           </div>
 
           <div class="live-feed-master-controls">
+              <!-- REMOVED AUDIO ENABLE CHECKBOX -->
+              <!--
               <label>
                   <input type="checkbox" id="live-feed-audio-enable" />
                   Enable Live Audio
               </label>
+              -->
           </div>
 
           <div id="live-feed-talkgroup-list">
@@ -564,6 +567,7 @@
   <!-- END Live Feed Display Area -->
 
   <script src="config.js"></script>
+  <script src="app.js" defer></script>
 
   <script>
     // Function to initialize Google Maps
@@ -587,7 +591,10 @@
           gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&callback=onGoogleMapsLoaded`;
           gScript.async = true;
           gScript.defer = true;
-          window.onGoogleMapsLoaded = resolve;
+          window.onGoogleMapsLoaded = () => {
+              console.log('Google Maps API loaded successfully');
+              resolve();
+          };
           document.head.appendChild(gScript);
         });
       } else {
@@ -596,30 +603,11 @@
       }
     }
 
-    // Initialize the application
-    async function initializeApplication() {
-      try {
-        await initGoogleMaps();
-        console.log('Google Maps API loaded successfully');
-        
-        // Load and initialize the main app
-        const appScript = document.createElement('script');
-        appScript.src = 'app.js';
-        appScript.onload = () => {
-          if (typeof initializeApp === 'function') {
-            initializeApp();
-          } else {
-            console.error('initializeApp function not found');
-          }
-        };
-        document.body.appendChild(appScript);
-      } catch (error) {
-        console.error('Failed to initialize application:', error);
-      }
-    }
-
-    // Start the application
-    initializeApplication();
+    // Start Google Maps loading
+    initGoogleMaps().catch(error => {
+        console.error('Failed to initialize Google Maps API:', error);
+        // Application can potentially continue without maps features, or show an error
+    });
 
     // Placeholder function to close the new modal (will be defined in app.js)
     function closeLiveFeedModal() {

@@ -2347,14 +2347,29 @@ input[type="time"] {
     margin-bottom: 3px; /* Space between items */
     font-family: 'Share Tech Mono', monospace;
     font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; /* Keep text on one line */
+    overflow: hidden; /* Hide overflowing text */
+    text-overflow: ellipsis; /* Keep ellipsis as default */
     background-color: rgba(0, 20, 0, 0.7); /* Slight background */
     border-radius: 3px;
     opacity: 1;
     transition: opacity 1.5s ease-out; /* Slower fade out */
     border-left: 2px solid var(--primary-color); /* Indicator */
+    position: relative; /* Needed for absolute positioning of inner span if used */
+    box-sizing: border-box;
+}
+
+/* NEW: Inner span for scrolling content */
+.live-feed-item .scroll-content {
+    display: inline-block; /* Allows transform */
+    padding-right: 15px; /* Add space at the end before looping */
+}
+
+/* NEW: Class applied when scrolling is needed */
+.live-feed-item.scrolling .scroll-content {
+    text-overflow: clip; /* Remove ellipsis when scrolling */
+    animation: marquee-scroll 15s linear infinite; /* Adjust duration as needed */
+    will-change: transform;
 }
 
 .live-feed-item.fading-out { /* Style for fading out items */
@@ -2365,6 +2380,18 @@ input[type="time"] {
     color: #00ccff; /* Highlight talkgroup name */
     margin-right: 5px;
 }
+
+/* NEW: Marquee animation */
+@keyframes marquee-scroll {
+    0% {
+        transform: translateX(0%);
+    }
+    100% {
+        /* Calculate based on JS later, but start with a large enough value */
+        transform: translateX(-100%);
+    }
+}
+
 
 /* Mobile adjustment for live feed display position */
 @media screen and (max-width: 768px) {
@@ -2385,3 +2412,43 @@ input[type="time"] {
     }
 }
 /* --- END Live Feed Display Styles --- */
+
+/* Apply themed styles to specific checkboxes */
+#enable-heatmap,
+.popup-live-feed-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px; /* Match other themed checkboxes */
+    height: 14px;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    vertical-align: middle;
+    top: -1px; /* Align better */
+    margin-right: 5px; /* Add space like other checkboxes */
+}
+
+#enable-heatmap:checked,
+.popup-live-feed-toggle:checked {
+    background-color: var(--hover-color);
+    border-color: var(--primary-color);
+}
+
+#enable-heatmap:checked::after,
+.popup-live-feed-toggle:checked::after {
+    content: '✓';
+    position: absolute;
+    color: var(--primary-color);
+    font-size: 10px; /* Match other themed checkboxes */
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+#enable-heatmap:hover,
+.popup-live-feed-toggle:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 5px var(--primary-color);
+}
