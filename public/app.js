@@ -21,8 +21,11 @@ let currentSessionToken = null;
 let selectedCategory = null;
 let timestampUpdateInterval = null;
 let isNewCallAudioMuted = false;
-let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
-
+let isTrackingNewCalls = true; // Default to true so tracking is enabled by defaultlet additionalWavesurfers = {};
+const talkgroupPageLimit = 30; // How many calls to fetch per page
+let currentTalkgroupOffset = 0;
+let isLoadingMoreTalkgroupCalls = false;
+let hasMoreTalkgroupCalls = true;
 // NEW: Variables for Talkgroup Modal
 let isTalkgroupModalOpen = false;
 let currentOpenTalkgroupId = null;
@@ -1114,7 +1117,8 @@ function addMarker(call, isNew = false) {
         // Handle popup open event
         marker.on('popupopen', function() {
             // console.log(`Popup opened for callId: ${call.id}`); // REMOVED THIS LOG
-            initWaveSurfer(call.id, `/audio/${call.audio_id}`, wavesurfers, () => { // Pass main wavesurfers object
+            // --- MODIFIED: Use call.id for audio URL ---
+            initWaveSurfer(call.id, `/audio/${call.id}`, wavesurfers, () => { // Pass main wavesurfers object
                 if (!isNewCallAudioMuted && this.shouldPlayAudio) {
                     playWaveSurferAudio(call.id, wavesurfers, this);
                 }
@@ -2039,7 +2043,7 @@ function getAdditionalTranscriptions(callId, skip, container, button) {
 
                 // Initialize WaveSurfer for each new transcription
                 data.forEach(trans => {
-                    initWaveSurfer(trans.id, `/audio/${trans.audio_id}`);
+                    initWaveSurfer(trans.id, `/audio/${trans.id}`, additionalWavesurfers); // Corrected: Use trans.id and pass store
                 });
             }
         })
@@ -2440,7 +2444,12 @@ function initWaveSurfer(callId, audioUrl, wavesurferStore, onReadyCallback, cont
         try {
             wavesurferStore[callId].destroy();
         } catch (e) {
-            console.warn(`Error destroying previous wavesurfer for ${callId}:`, e);
+            // Be less verbose specifically for AbortError during cleanup
+            if (e.name === 'AbortError') {
+                 // console.warn(`Ignoring AbortError during destroy for ${callId}`); // Option to log silently
+            } else {
+                 console.warn(`Error destroying previous wavesurfer for ${callId}:`, e); // Log other errors
+            }
         }
         delete wavesurferStore[callId];
     }
@@ -2463,20 +2472,41 @@ function initWaveSurfer(callId, audioUrl, wavesurferStore, onReadyCallback, cont
         // Load audio file
         wavesurferStore[callId].load(audioUrl);
 
-        // Find controls specific to this WaveSurfer instance (pop-up or modal)
-        const controlsContainer = containerElement.closest('.talkgroup-list-item, .custom-popup');
+        // Find controls specific to this WaveSurfer instance (pop-up, modal, or dynamic content)
+        let controlsContainer = containerElement.closest('.talkgroup-list-item, .custom-popup'); // Try standard parents first
         if (!controlsContainer) {
-            console.warn(`Could not find controls container for wavesurfer ${callId}`);
+             // Fallback for dynamically added content (like "More Info") where the button might be a sibling or in a direct child
+             controlsContainer = containerElement.parentElement.querySelector('.audio-controls') ? containerElement.parentElement : null;
+        }
+        
+        if (!controlsContainer) {
+            console.warn(`Could not find controls container for wavesurfer ${callId} using querySelector or closest.`);
             return;
         }
+        // ADD LOG 1
+        console.log(`[initWaveSurfer - ${callId}] Found controlsContainer:`, controlsContainer);
 
         const playPauseButton = controlsContainer.querySelector(`.play-pause[data-call-id="${callId}"]`);
+        // ADD LOG 2
+        console.log(`[initWaveSurfer - ${callId}] Found playPauseButton:`, playPauseButton);
         if (playPauseButton) {
             // Clone and replace to remove old listeners reliably
             const newButton = playPauseButton.cloneNode(true);
             playPauseButton.parentNode.replaceChild(newButton, playPauseButton);
-
+            // ADD LOG 3
+            console.log(`[initWaveSurfer - ${callId}] Adding click listener to button.`);
             newButton.addEventListener('click', function() {
+                // ADD LOG 4
+                console.log(`[Play Button Click - ${callId}] Clicked!`);
+                // ADD LOG 5
+                const instanceExists = !!wavesurferStore[callId];
+                console.log(`[Play Button Click - ${callId}] Instance in store? ${instanceExists}`, wavesurferStore[callId]);
+                
+                if (!instanceExists) {
+                    console.error(`[Play Button Click - ${callId}] CANNOT PLAY - Instance missing from store!`, wavesurferStore);
+                    return; // Stop if instance is missing
+                }
+
                 if (wavesurferStore[callId].isPlaying()) {
                     wavesurferStore[callId].pause();
                     this.textContent = 'Play';
@@ -2540,6 +2570,12 @@ function initWaveSurfer(callId, audioUrl, wavesurferStore, onReadyCallback, cont
         });
 
         wavesurferStore[callId].on('error', function(error) {
+            // ADD Check: Ignore AbortError as it's likely due to rapid cleanup/re-init
+            if (error && error.name === 'AbortError') {
+                // console.log(`[WaveSurfer ${callId}] Ignoring AbortError during load.`); // Optional: log if needed
+                return; // Stop processing this specific error
+            }
+            // Log and display other errors
             console.error(`WaveSurfer error for callId ${callId} in container #${containerId}:`, error);
             const errorMsg = document.createElement('small');
             errorMsg.textContent = ' Error loading audio.';
@@ -2613,9 +2649,15 @@ function handleShowTalkgroupHistory(event) {
 // Global function to close the talkgroup modal
 function closeTalkgroupModal() {
     const modal = document.getElementById('talkgroup-modal');
+    const listElement = document.getElementById('talkgroup-list'); // Get list element
     if (modal) {
         modal.style.display = 'none';
     }
+    // Remove scroll listener when closing
+    if (listElement) {
+        listElement.removeEventListener('scroll', handleTalkgroupScroll);
+    }
+
     isTalkgroupModalOpen = false;
     currentOpenTalkgroupId = null;
 
@@ -2656,7 +2698,7 @@ function createTalkgroupListItem(call) {
         <span class="talkgroup-item-timestamp">${formatTimestamp(call.timestamp)}</span>
         <p class="talkgroup-item-transcription">${call.transcription || 'No transcription available.'}</p>
         <div class="talkgroup-item-audio">
-            ${call.audio_id ? `
+            ${call.id ? `  
                 <div id="tg-waveform-${call.id}" class="waveform"></div>
                 <div class="audio-controls">
                     <button class="play-pause" data-call-id="${call.id}" aria-label="Play audio">Play</button>
@@ -2666,11 +2708,12 @@ function createTalkgroupListItem(call) {
         </div>
     `;
 
-    // Initialize WaveSurfer if audio exists
-    if (call.audio_id) {
+    // Initialize WaveSurfer if audio exists (check based on ID)
+    if (call.id) { // Corrected: Check for call.id
         // Use setTimeout to ensure the element is in the DOM before WaveSurfer tries to attach
         setTimeout(() => {
-            initWaveSurfer(call.id, `/audio/${call.audio_id}`, talkgroupModalWavesurfers, null, `tg-waveform-${call.id}`);
+            // Use call.id for audio URL
+            initWaveSurfer(call.id, `/audio/${call.id}`, talkgroupModalWavesurfers, null, `tg-waveform-${call.id}`);
         }, 0);
     }
 
@@ -2691,10 +2734,14 @@ function showTalkgroupModal(talkgroupId, talkgroupName) {
     // Set title
     titleElement.textContent = talkgroupName || 'Talkgroup History';
 
-    // Reset state and content
+    // --- Reset state and content ---
     listElement.innerHTML = '<div class="loading-placeholder">Loading history...</div>';
     isTalkgroupModalOpen = true;
     currentOpenTalkgroupId = talkgroupId;
+    // Reset pagination state
+    currentTalkgroupOffset = 0;
+    isLoadingMoreTalkgroupCalls = false;
+    hasMoreTalkgroupCalls = true; // Assume there might be more initially
 
     // Clear previous wavesurfers immediately before fetching new data
     Object.keys(talkgroupModalWavesurfers).forEach(callId => {
@@ -2706,8 +2753,10 @@ function showTalkgroupModal(talkgroupId, talkgroupName) {
         delete talkgroupModalWavesurfers[key];
     }
 
-    // Fetch initial history (using the current main time filter range)
-    fetch(`/api/talkgroup/${talkgroupId}/calls?hours=${timeRangeHours}`)
+    // --- Fetch initial page --- 
+    const initialUrl = `/api/talkgroup/${talkgroupId}/calls?limit=${talkgroupPageLimit}&offset=0`;
+    console.log(`[TalkgroupModal] Fetching initial page: ${initialUrl}`);
+    fetch(initialUrl)
         .then(response => response.json())
         .then(calls => {
             listElement.innerHTML = ''; // Clear loading placeholder
@@ -2716,14 +2765,24 @@ function showTalkgroupModal(talkgroupId, talkgroupName) {
                     const listItem = createTalkgroupListItem(call);
                     listElement.appendChild(listItem);
                 });
+                // Update pagination state
+                currentTalkgroupOffset = calls.length;
+                hasMoreTalkgroupCalls = calls.length === talkgroupPageLimit; // If we got less than limit, no more pages
             } else {
-                listElement.innerHTML = '<div class="loading-placeholder">No calls found for this talkgroup in the selected time range.</div>';
+                listElement.innerHTML = '<div class="loading-placeholder">No calls found for this talkgroup.</div>';
+                hasMoreTalkgroupCalls = false; // No calls found, definitely no more
             }
         })
         .catch(error => {
-            console.error('Error fetching talkgroup history:', error);
+            console.error('Error fetching initial talkgroup history:', error);
             listElement.innerHTML = '<div class="loading-placeholder error">Error loading call history.</div>';
+            hasMoreTalkgroupCalls = false;
         });
+
+    // --- Add Scroll Listener --- 
+    // Remove previous listener first (safety check)
+    listElement.removeEventListener('scroll', handleTalkgroupScroll);
+    listElement.addEventListener('scroll', handleTalkgroupScroll);
 
     // Display the modal
     modal.style.display = 'block';
@@ -2837,12 +2896,22 @@ function pollForNewTalkgroupCalls(talkgroupId) {
                         newItem.classList.add('new-item-highlight');
                         listElement.prepend(newItem);
 
-                        // Handle autoplay if enabled
-                        if (talkgroupModalAutoplay && call.audio_id) {
-                            // Need a slight delay for WaveSurfer init
-                            setTimeout(() => {
-                                playWaveSurferAudio(call.id, talkgroupModalWavesurfers);
-                            }, 500); // Adjust delay if needed
+                        // Initialize WaveSurfer for the new item and provide the autoplay callback
+                        if (call.id) { // Check if ID exists (audio should exist)
+                           setTimeout(() => { // Keep setTimeout(0) to ensure newItem is in DOM
+                               initWaveSurfer(
+                                   call.id, 
+                                   `/audio/${call.id}`, 
+                                   talkgroupModalWavesurfers, 
+                                   () => { // Define the onReadyCallback inline here
+                                       if (talkgroupModalAutoplay && isTalkgroupModalOpen && currentOpenTalkgroupId === talkgroupId) {
+                                            console.log(`[Autoplay] WaveSurfer ready for ${call.id}, attempting autoplay.`);
+                                            playWaveSurferAudio(call.id, talkgroupModalWavesurfers);
+                                       }
+                                   }, 
+                                   `tg-waveform-${call.id}`
+                               );
+                           }, 0);
                         }
                      }
                 });
@@ -3739,10 +3808,10 @@ function displayLiveFeedItem(call) {
         }, 1500); 
     }, LIVE_FEED_ITEM_DURATION - 1500);
     
-    // Live Audio Logic (Unchanged)
-    if (isLiveFeedAudioEnabled && call.audio_id) {
+    // Live Audio Logic (Unchanged -> CHANGED)
+    if (isLiveFeedAudioEnabled && call.id) { // Check for call.id instead of call.audio_id
         console.log(`[LiveFeed] Attempting live audio for TG ${call.talk_group_id}, Call ${call.id}`);
-        playLiveAudio(call);
+        playLiveAudio(call); // Pass the entire call object as it contains the needed ID
     }
 }
 
@@ -3766,7 +3835,7 @@ function playLiveAudio(call) {
         window.audioContext.resume().catch(e => console.warn('AudioContext resume failed:', e));
     }
     
-    const audioUrl = `/audio/${call.audio_id}`;
+    const audioUrl = `/audio/${call.id}`; // Corrected: Use call.id
     
     fetch(audioUrl)
         .then(response => {
@@ -3980,3 +4049,73 @@ function updateLiveFeedModalCheckbox(talkgroupId, isSelected) {
         modalCheckbox.checked = isSelected;
     }
 }
+
+// --- NEW: Scroll Handling Functions --- 
+function handleTalkgroupScroll() {
+    const listElement = document.getElementById('talkgroup-list');
+    if (!listElement) return;
+
+    // Calculate how close to bottom: scrollHeight - currentScrollTop <= clientHeight + threshold
+    const scrollThreshold = 200; // Pixels from bottom to trigger load
+    const nearBottom = listElement.scrollHeight - listElement.scrollTop <= listElement.clientHeight + scrollThreshold;
+
+    // console.log(`Scroll check: nearBottom=${nearBottom}, isLoading=${isLoadingMoreTalkgroupCalls}, hasMore=${hasMoreTalkgroupCalls}`);
+
+    if (nearBottom && !isLoadingMoreTalkgroupCalls && hasMoreTalkgroupCalls) {
+        console.log('[TalkgroupModal] Reached bottom, fetching more calls...');
+        fetchMoreTalkgroupCalls();
+    }
+}
+
+function fetchMoreTalkgroupCalls() {
+    if (!currentOpenTalkgroupId) return; // Should not happen, but safety check
+
+    isLoadingMoreTalkgroupCalls = true;
+    const listElement = document.getElementById('talkgroup-list');
+    
+    // Add loading indicator
+    const loadingIndicator = document.createElement('div');
+    loadingIndicator.className = 'loading-placeholder';
+    loadingIndicator.textContent = 'Loading more...';
+    if (listElement) listElement.appendChild(loadingIndicator);
+
+    const nextOffset = currentTalkgroupOffset; // Offset is the number of items already loaded
+    const fetchUrl = `/api/talkgroup/${currentOpenTalkgroupId}/calls?limit=${talkgroupPageLimit}&offset=${nextOffset}`;
+    console.log(`[TalkgroupModal] Fetching next page: ${fetchUrl}`);
+
+    fetch(fetchUrl)
+        .then(response => response.json())
+        .then(calls => {
+            if (calls && calls.length > 0) {
+                calls.forEach(call => {
+                    const listItem = createTalkgroupListItem(call);
+                    if (listElement) listElement.appendChild(listItem);
+                });
+                // Update offset
+                currentTalkgroupOffset += calls.length;
+                // Check if there might be more
+                hasMoreTalkgroupCalls = calls.length === talkgroupPageLimit;
+            } else {
+                // No more calls returned
+                hasMoreTalkgroupCalls = false;
+                if (listElement) {
+                    loadingIndicator.textContent = 'End of history.';
+                    // Optionally remove the indicator after a delay
+                    setTimeout(() => loadingIndicator.remove(), 3000);
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching more talkgroup calls:', error);
+            if (loadingIndicator) loadingIndicator.textContent = 'Error loading more.';
+             hasMoreTalkgroupCalls = false; // Stop trying on error
+        })
+        .finally(() => {
+            isLoadingMoreTalkgroupCalls = false;
+            // Remove loading indicator unless it was changed to "End of history" or "Error"
+             if (loadingIndicator && loadingIndicator.textContent === 'Loading more...') {
+                 loadingIndicator.remove();
+             }
+        });
+}
+// --- END NEW: Scroll Handling Functions ---
