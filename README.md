@@ -69,8 +69,8 @@ This project can be installed on Windows or Linux. Automated installation script
     -   Installing Ollama and pulling the required model.
     -   Asking if you intend to use an NVIDIA GPU for _local_ transcription (provides manual installation links if yes).
     -   Cloning the repository.
-    -   Interactively creating a base `.env` configuration file (including prompts for transcription mode).
-    -   Installing Node.js and Python dependencies (using a virtual environment).
+    -   Interactively creating a base `.env` configuration file (including prompts for transcription mode and storage mode).
+    -   Installing Node.js and Python dependencies (using a virtual environment). *The script installs required packages like `express`, `discord.js`, `faster-whisper`, `aws-sdk`, `pydub`, etc.*
     -   Creating necessary directories.
     -   Interactively importing `talkgroups.csv` from RadioReference.
 6.  **Replace Geocoding File:** After the script clones the repo, navigate to the install directory (`~/scanner-map` by default) and replace the default `geocoding.js` with the version you chose (e.g., `cp geocoding_google.js geocoding.js`).
@@ -84,6 +84,7 @@ This project can be installed on Windows or Linux. Automated installation script
         -   CRITICAL: Add your specific `TALK_GROUP_XXXX=Location Description` lines for each talk group listed in `MAPPED_TALK_GROUPS`.
         -   Verify `TRANSCRIPTION_MODE` ('local' or 'remote'). If 'remote', set `FASTER_WHISPER_SERVER_URL`. If 'local', set `TRANSCRIPTION_DEVICE` ('cpu' or 'cuda').
         -   Adjust `WEBSERVER_PASSWORD` if `ENABLE_AUTH=true`.
+        -   Verify `STORAGE_MODE` ('local' or 's3'). If 's3', set `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
     -   **`public/config.js`:** Open this file (`nano public/config.js`) and configure map defaults (center, zoom, icons, etc.). If using Google Maps for the _frontend map display_, you might need to add your `Maps_API_KEY` here too.
     -   **`data/apikeys.json`:**
         -   Edit `GenApiKey.js` (`nano GenApiKey.js`) and set your desired secret API key for SDRTrunk/TrunkRecorder.
@@ -142,8 +143,8 @@ This project can be installed on Windows or Linux. Automated installation script
     -   Installing Ollama and pulling the required model.
     -   Asking if you intend to use an NVIDIA GPU for _local_ transcription (provides manual installation links/instructions if yes).
     -   Cloning the repository.
-    -   Interactively creating a base `.env` configuration file (including prompts for transcription mode).
-    -   Installing Node.js and Python dependencies.
+    -   Interactively creating a base `.env` configuration file (including prompts for transcription mode and storage mode).
+    -   Installing Node.js and Python dependencies. *The script installs required packages like `express`, `discord.js`, `faster-whisper`, `aws-sdk`, `pydub`, etc.*
     -   Creating necessary directories.
     -   Interactively importing `talkgroups.csv` from RadioReference.
 8.  **Replace Geocoding File:** After the script clones the repo, navigate to the install directory (`$HOME\scanner-map` by default) and replace the default `geocoding.js` with the version you chose (e.g., `Copy-Item geocoding_google.js geocoding.js -Force`).
@@ -157,6 +158,7 @@ This project can be installed on Windows or Linux. Automated installation script
         -   CRITICAL: Add your specific `TALK_GROUP_XXXX=Location Description` lines for each talk group listed in `MAPPED_TALK_GROUPS`.
         -   Verify `TRANSCRIPTION_MODE` ('local' or 'remote'). If 'remote', set `FASTER_WHISPER_SERVER_URL`. If 'local', set `TRANSCRIPTION_DEVICE` ('cpu' or 'cuda').
         -   Adjust `WEBSERVER_PASSWORD` if `ENABLE_AUTH=true`.
+        -   Verify `STORAGE_MODE` ('local' or 's3'). If 's3', set `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
     -   **`public\config.js`:** Open this file (`notepad .\public\config.js`) and configure map defaults (center, zoom, icons, etc.). If using Google Maps for the _frontend map display_, you might need to add your `Maps_API_KEY` here too.
     -   **`data\apikeys.json`:**
         -   Edit `GenApiKey.js` (`notepad .\GenApiKey.js`) and set your desired secret API key for SDRTrunk/TrunkRecorder.
@@ -200,6 +202,13 @@ This file contains the core configuration. The installation scripts help create 
 -   **`FASTER_WHISPER_SERVER_URL`:** (Only if `TRANSCRIPTION_MODE=remote`) The full URL of your running transcription server API (e.g., `http://localhost:8000`).
 -   **`WHISPER_MODEL` / `OLLAMA_MODEL`:** Choose appropriate models. Larger models are more accurate but require more resources (especially VRAM for large-v3 Whisper).
 -   **`ENABLE_AUTH` / `WEBSERVER_PASSWORD`:** Configure if you want to password-protect the web UI. Run `node init-admin.js` after setting the password if enabling auth.
+-   **`STORAGE_MODE`:** (New) Select where audio files are stored.
+    -   `local`: Saves audio files to the `./audio` folder on the server running `bot.js`. This is the default and simplest option.
+    -   `s3`: Saves audio files to an S3-compatible object storage service (like AWS S3, MinIO, Wasabi, etc.). Requires the S3 variables below to be set. This is useful for scalability, durability, or offloading storage from the main server.
+-   **`S3_ENDPOINT`:** (New - Required if `STORAGE_MODE=s3`) The full URL of your S3-compatible storage endpoint (e.g., `https://s3.us-east-1.amazonaws.com` or `https://your-minio-server.com:9000`).
+-   **`S3_BUCKET_NAME`:** (New - Required if `STORAGE_MODE=s3`) The name of the S3 bucket where audio files will be stored. The bucket must already exist.
+-   **`S3_ACCESS_KEY_ID`:** (New - Required if `STORAGE_MODE=s3`) Your S3 access key ID.
+-   **`S3_SECRET_ACCESS_KEY`:** (New - Required if `STORAGE_MODE=s3`) Your S3 secret access key.
 
 ### public/config.js
 
