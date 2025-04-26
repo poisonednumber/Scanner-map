@@ -6,6 +6,9 @@ import warnings
 import os
 import json
 import logging
+import base64
+import numpy as np
+from pydub import AudioSegment
 from dotenv import load_dotenv
 
 # Load environment variables from .env
@@ -46,14 +49,32 @@ except ImportError:
 
 # Check device availability
 device = TRANSCRIPTION_DEVICE
-if device == "cuda" and not torch.cuda.is_available():
+# Check for MPS availability on macOS ARM
+if device == "mps" and not torch.backends.mps.is_available():
+    logger.warning("MPS requested but not available. Checking for CUDA...")
+    if torch.cuda.is_available():
+        logger.warning("CUDA is available, falling back to CUDA.")
+        device = "cuda"
+    else:
+        logger.warning("CUDA not available, falling back to CPU.")
+        device = "cpu"
+elif device == "cuda" and not torch.cuda.is_available():
     logger.warning("CUDA requested but not available. Falling back to CPU.")
     device = "cpu"
-    
+
 logger.info(f"Using device: {device}")
 
 # Determine computation type
-compute_type = "float16" if device == "cuda" else "int8"
+# Use float32 for MPS, float16 for CUDA, int8 for CPU
+if device == "mps":
+    compute_type = "float32"
+    logger.info("Using float32 compute type for MPS device.")
+elif device == "cuda":
+    compute_type = "float16"
+    logger.info("Using float16 compute type for CUDA device.")
+else:
+    compute_type = "int8"
+    logger.info("Using int8 compute type for CPU device.")
 
 # Load the Faster Whisper model
 try:
@@ -80,59 +101,135 @@ while True:
         line = sys.stdin.readline().strip()
         if not line:
             continue
-            
+
         command = json.loads(line)
-        
-        if command.get('command') != 'transcribe' or 'path' not in command or 'id' not in command:
-            logger.error(f"Invalid command format: {line}")
+        request_id = command.get('id')
+
+        if not request_id:
+            logger.error(f"Command missing 'id': {line}")
             continue
-            
-        audio_file_path = command['path']
-        request_id = command['id']
-        
-        # Validate audio file path
-        if not os.path.isfile(audio_file_path):
-            error_response = {"id": request_id, "error": f"Audio file does not exist: {audio_file_path}"}
+
+        # Determine input type: path or base64 data
+        audio_input = None
+        input_type = None
+        error_detail = None
+
+        if command.get('command') == 'transcribe':
+            if 'path' in command:
+                audio_file_path = command['path']
+                if not os.path.isfile(audio_file_path):
+                    error_detail = f"Audio file does not exist: {audio_file_path}"
+                else:
+                    audio_input = audio_file_path
+                    input_type = 'path'
+            elif 'audio_data_base64' in command:
+                try:
+                    base64_data = command['audio_data_base64']
+                    audio_bytes = base64.b64decode(base64_data)
+                    if not audio_bytes:
+                        error_detail = "Decoded audio data is empty."
+                    else:
+                        # Load audio from bytes using pydub
+                        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+                        # Convert to mono and set frame rate for Whisper (16kHz)
+                        audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
+                        # Convert to numpy array of floats
+                        samples = np.array(audio_segment.get_array_of_samples()).astype(np.float32) / 32768.0
+                        audio_input = samples
+                        input_type = 'buffer'
+                except base64.binascii.Error:
+                    error_detail = "Invalid Base64 data received."
+                except Exception as e:
+                    error_detail = f"Error processing audio buffer: {str(e)}"
+            else:
+                error_detail = "Invalid command format: missing 'path' or 'audio_data_base64'."
+        else:
+             error_detail = f"Invalid command: {command.get('command')}"
+
+        if error_detail:
+            error_response = {"id": request_id, "error": error_detail}
             print(json.dumps(error_response))
             sys.stdout.flush()
             continue
 
-        # Transcribe the audio with English as the specified language
+        # --- Start Transcription ---
+        logger.info(f"Starting transcription for ID: {request_id} (type: {input_type})")
+
+        # File integrity check ONLY if input is a path
+        if input_type == 'path':
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['ffprobe', audio_input], # audio_input is the path here
+                    stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    timeout=10  # Add timeout to prevent hanging
+                )
+                if result.returncode != 0:
+                    error_response = {"id": request_id, "error": f"Corrupt audio file (ffprobe check): {audio_input}"}
+                    print(json.dumps(error_response))
+                    sys.stdout.flush()
+                    continue
+            except Exception as probe_err:
+                logger.warning(f"FFprobe check failed: {str(probe_err)}")
+                # Continue with transcription attempt anyway
+
+        # Transcribe the audio (from path or buffer) with English as the specified language
         try:
+            # Try with VAD filtering first
             segments, info = model.transcribe(
-                audio_file_path, 
-                language='en', 
-                beam_size=7,
+                audio_input, # Can be path string or numpy array
+                language='en',
+                beam_size=5,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 500}
             )
-            
-            # Gather all segment texts
-            segments_text = []
-            for segment in segments:
-                segments_text.append(segment.text)
-            
+
+            segments_text = [segment.text for segment in segments]
             transcription = " ".join(segments_text).strip()
-            
+
             # If transcription is empty after VAD filtering, try without VAD
             if not transcription:
+                logger.info(f"Retrying transcription for ID {request_id} without VAD filter.")
                 segments, info = model.transcribe(
-                    audio_file_path,
+                    audio_input,
                     language='en',
-                    beam_size=7,
+                    beam_size=5,
                     vad_filter=False
                 )
                 segments_text = [segment.text for segment in segments]
                 transcription = " ".join(segments_text).strip()
-            
+
+            logger.info(f"Transcription successful for ID: {request_id}")
             success_response = {"id": request_id, "transcription": transcription}
-            print(json.dumps(success_response))  # Send JSON to stdout
+            print(json.dumps(success_response))
             sys.stdout.flush()
+
         except Exception as e:
-            error_response = {"id": request_id, "error": f"Error during transcription: {str(e)}"}
+            error_str = str(e)
+            # Detect specific FFmpeg/audio processing errors
+            if "[Errno 1094995529]" in error_str or "Invalid data found" in error_str or "corrupt" in error_str.lower():
+                 error_response = {"id": request_id, "error": f"Corrupt audio data for ID {request_id}."}
+            else:
+                 error_response = {"id": request_id, "error": f"Error during transcription for ID {request_id}: {error_str}"}
+            logger.error(f"Transcription failed for ID {request_id}: {error_response['error']}")
             print(json.dumps(error_response))
             sys.stdout.flush()
-            
+            # --- End Transcription ---
+
+    except json.JSONDecodeError as json_err:
+        logger.error(f"Failed to decode JSON command: {line} - Error: {json_err}")
+        continue # Skip this invalid command
     except Exception as e:
-        logger.error(f"Error processing command: {str(e)}")
-        continue  # Continue the loop even if there's an error
+        # Catch broader exceptions in the loop to prevent crashing
+        logger.error(f"Unexpected error in main loop: {str(e)}", exc_info=True)
+        # Optionally send an error back if we can identify the ID
+        if 'request_id' in locals() and request_id:
+             error_response = {"id": request_id, "error": f"Unexpected server error: {str(e)}"}
+             try:
+                 print(json.dumps(error_response))
+                 sys.stdout.flush()
+             except Exception:
+                 pass # Ignore errors trying to report errors
+        continue

@@ -15,7 +15,12 @@ const {
   SUMMARY_LOOKBACK_HOURS,
   TRANSCRIPTION_MODE,
   FASTER_WHISPER_SERVER_URL,
-  WHISPER_MODEL
+  WHISPER_MODEL,
+  STORAGE_MODE,
+  S3_ENDPOINT,
+  S3_BUCKET_NAME,
+  S3_ACCESS_KEY_ID,
+  S3_SECRET_ACCESS_KEY
 } = process.env;
 
 // Now initialize derived variables
@@ -199,6 +204,28 @@ const logger = winston.createLogger({
     })
   ]
 });
+
+// --- NEW: Add S3 Client Setup --- 
+const AWS = require('aws-sdk');
+let s3 = null;
+if (STORAGE_MODE === 's3') {
+  if (!S3_ENDPOINT || !S3_BUCKET_NAME || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
+    logger.error('FATAL: STORAGE_MODE is s3, but required S3 environment variables are missing! Check bot .env');
+    process.exit(1); // Exit if S3 config is incomplete
+  }
+  AWS.config.update({
+    accessKeyId: S3_ACCESS_KEY_ID,
+    secretAccessKey: S3_SECRET_ACCESS_KEY,
+    endpoint: S3_ENDPOINT,
+    s3ForcePathStyle: true, // Necessary for MinIO/non-AWS S3
+    signatureVersion: 'v4'
+  });
+  s3 = new AWS.S3();
+  logger.info(`[Bot] Storage mode set to S3. Endpoint: ${S3_ENDPOINT}, Bucket: ${S3_BUCKET_NAME}`);
+} else {
+  logger.info('[Bot] Storage mode set to local.');
+}
+// --- END S3 Client Setup ---
 
 const {
   Client,
@@ -848,37 +875,38 @@ function startTranscriptionProcess() {
 
 // Function to process the next transcription in the queue
 function processNextTranscription() {
-  if (isProcessingTranscription || transcriptionQueue.length === 0 || !transcriptionProcess) {
+  // Add a check for the process existence early
+  if (!transcriptionProcess) {
+      logger.warn('Local transcription process not running. Cannot process queue.');
+      // Optionally handle orphaned queue items or attempt restart
+      return;
+  }
+
+  if (isProcessingTranscription || transcriptionQueue.length === 0) {
     return;
   }
-  
+
   // Get the next item but don't remove it from the queue yet
   const nextItem = transcriptionQueue[0];
-  
-  // Check if the file exists before sending to Python process
-  if (!fs.existsSync(nextItem.path)) {
-    logger.warn(`File does not exist, skipping transcription: ${nextItem.path}`);
-    
-    // Execute callback with empty string
-    if (nextItem.callback) {
-      nextItem.callback("");
-    }
-    
-    // Remove from queue and process next
-    transcriptionQueue.shift();
-    processNextTranscription();
-    return;
-  }
-  
+
+  // REMOVED file existence check here, it's handled before queuing if needed
+  // if (!fs.existsSync(nextItem.path)) { ... }
+
   // Mark as processing
   isProcessingTranscription = true;
-  
-  // Send the file path to the python process
-  transcriptionProcess.stdin.write(JSON.stringify({
-    command: 'transcribe',
-    id: nextItem.id,
-    path: nextItem.path
-  }) + '\n');
+
+  // Send the pre-constructed payload to the python process
+  try {
+    transcriptionProcess.stdin.write(JSON.stringify(nextItem.payload) + '\n');
+    logger.info(`Sent payload to local transcription process for ID: ${nextItem.id}`);
+  } catch (error) {
+      logger.error(`Error writing to local transcription process stdin for ID ${nextItem.id}: ${error.message}`);
+      // Handle error: potentially retry, fail the item, restart process?
+      isProcessingTranscription = false;
+      // Maybe remove the item from the queue or mark as failed
+      transcriptionQueue.shift(); // Remove the failed item
+      processNextTranscription(); // Try next
+  }
 }
 
 // *** NEW FUNCTION for Remote Transcription ***
@@ -988,7 +1016,7 @@ async function transcribeAudioRemotely(filePath, callback) {
 function handleNewAudio(audioData) {
   const {
     filename, // The custom generated filename (e.g., with timestamp)
-    path: tempPath, // The temporary path where the file was saved
+    path: tempPath, // The temporary path where the file was saved (KEEP AS CONST)
     talkGroupID,
     systemName,
     talkGroupName,
@@ -1009,69 +1037,74 @@ function handleNewAudio(audioData) {
     return;
   }
 
-  // Verify the file exists before proceeding
+  // Verify the file exists before proceeding (Moved here from processNextTranscription)
   if (!fs.existsSync(tempPath)) {
     logger.error(`Audio file doesn't exist when starting handleNewAudio: ${tempPath}`);
     return;
   }
 
-  // Read file into buffer to store in DB (keep this)
+  // Read file into buffer (This is needed for DB blob AND for S3->Local transcription)
   fs.readFile(tempPath, (err, fileBuffer) => {
     if (err) {
       logger.error(`Error reading audio file ${tempPath}:`, err);
-      // Consider deleting temp file if read fails
-       fs.unlink(tempPath, () => {});
+      // Clean up temp file if read fails
+       fs.unlink(tempPath, (errUnlink) => {
+           if (errUnlink) logger.error(`Error deleting temp file after read error ${tempPath}:`, errUnlink);
+       });
       return;
     }
 
-    // Insert initial record into transcriptions table (keep this)
+    // --- Start DB Operations --- Miminized changes here
+    // Determine the storage path/key based on STORAGE_MODE
+    let storagePath;
+    if (STORAGE_MODE === 's3') {
+      // For S3, we store the filename as the key (assuming it's unique enough)
+      // You might want a more structured path like 'audio/YYYY/MM/DD/filename'
+      storagePath = filename;
+      logger.info(`[S3 Storage] Using S3 key: ${storagePath} for transcription ID (to be determined)`);
+    } else {
+      // For local storage, we store the filename relative to the 'audio' directory
+      storagePath = filename;
+      logger.info(`[Local Storage] Using local path: ${storagePath} for transcription ID (to be determined)`);
+    }
+
+    // Insert initial record into transcriptions table
     db.run(
       `INSERT INTO transcriptions (talk_group_id, timestamp, transcription, audio_file_path, address, lat, lon) VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
-      // Ensure dateTime is correctly parsed to ISO string if needed
-      [talkGroupID, new Date(parseInt(dateTime) * 1000).toISOString(), '', filename], // Store the custom filename, not temp path
+      [talkGroupID, new Date(parseInt(dateTime) * 1000).toISOString(), '', storagePath], // Use determined storage path
       function (err) {
         if (err) {
           logger.error(`Error inserting initial transcription record for ${filename}:`, err);
           // If DB insert fails, delete the temp file
-          fs.unlink(tempPath, () => {});
+          fs.unlink(tempPath, (errUnlink) => {
+              if (errUnlink) logger.error(`Error deleting temp file after initial insert error ${tempPath}:`, errUnlink);
+          });
           return;
         }
 
         const transcriptionId = this.lastID; // Get the ID from the database insert
+        logger.info(`Created transcription record ID ${transcriptionId} using storage path: ${storagePath}`);
 
-        // Insert audio data blob (keep this)
-        db.run(
-          `INSERT INTO audio_files (transcription_id, audio_data) VALUES (?, ?)`,
-          [transcriptionId, fileBuffer],
-          (err) => {
-            if (err) {
-              logger.error(`Error inserting audio data for transcription ID ${transcriptionId}:`, err);
-              // If audio data fails, maybe delete the transcription record? And delete temp file.
-              db.run('DELETE FROM transcriptions WHERE id = ?', [transcriptionId], () => {});
-              fs.unlink(tempPath, () => {});
-              return;
-            }
+        // --- NEW: Define function to handle transcription *after* storage is complete ---
+        const afterStorageComplete = (finalPathIfLocal) => { // finalPathIfLocal is null for S3, path string for local
 
-            logger.info(`Saved audio blob for transcription ID ${transcriptionId}`);
-
-            // --- Define the common callback for processing results ---
+            // Define the common callback for processing transcription results
             const processingCallback = (transcriptionText) => {
-                // Use a local copy of tempPath to avoid closure issues if handleNewAudio is called again quickly
-                const currentTempPath = tempPath;
-                const currentFilename = filename; // Use the specific filename for this call
-
                 if (!transcriptionText) {
-                  logger.warn(`No transcription obtained for ID ${transcriptionId} (${currentFilename})`);
+                  logger.warn(`No transcription obtained for ID ${transcriptionId} (${filename})`);
                   updateTranscription(transcriptionId, "", () => {
                     logger.info(`Updated DB with empty transcription for ID ${transcriptionId}`);
-                    // Clean up temp file even on failure
-                    fs.unlink(currentTempPath, (errUnlink) => {
-                      if (errUnlink) logger.error(`Error deleting temp file (after empty transcription) ${currentTempPath}:`, errUnlink);
-                      else logger.info(`Deleted temp file (after empty transcription): ${path.basename(currentTempPath)}`);
-                    });
+                    // Clean up temp file only if storage was S3
+                    if (STORAGE_MODE === 's3') {
+                         fs.unlink(tempPath, (errUnlink) => {
+                           if (errUnlink) logger.error(`Error deleting temp file (after empty transcription) ${tempPath}:`, errUnlink);
+                           else logger.info(`Deleted temp file (after empty transcription): ${path.basename(tempPath)}`);
+                         });
+                    }
                   });
-                  return; // Stop processing if transcription is empty/failed
+                  return;
                 }
+
                 logger.info(`Transcription Text: ${transcriptionText}`);
                 // We got transcription text, update the database
                 updateTranscription(transcriptionId, transcriptionText, () => {
@@ -1080,42 +1113,121 @@ function handleNewAudio(audioData) {
                   // Now handle the logic that uses the transcription
                   handleNewTranscription(
                     transcriptionId, transcriptionText, talkGroupID, systemName,
-                    talkGroupName, source, talkGroupGroup, currentFilename // Pass original filename
+                    talkGroupName, source, talkGroupGroup, storagePath // Pass storagePath
                   );
 
-                  // Clean up temp file after successful processing
-                   fs.unlink(currentTempPath, (errUnlink) => {
-                      if (errUnlink) logger.error(`Error deleting temp file (after successful transcription) ${currentTempPath}:`, errUnlink);
-                      else logger.info(`Deleted temp file (after successful transcription): ${path.basename(currentTempPath)}`);
-                   });
-                  logger.info(`Successfully processed: ${currentFilename}`);
+                  // Clean up temp file only if storage was S3
+                  if (STORAGE_MODE === 's3') {
+                      fs.unlink(tempPath, (errUnlink) => {
+                         if (errUnlink) logger.error(`Error deleting temp file (after successful transcription) ${tempPath}:`, errUnlink);
+                         else logger.info(`Deleted temp file (after successful transcription): ${path.basename(tempPath)}`);
+                      });
+                  }
+                  logger.info(`Successfully processed: ${filename}`);
                 });
             };
             // --- End common callback definition ---
 
             // --- Choose transcription method based on mode ---
-            logger.info(`Initiating transcription for ${filename} using mode: ${effectiveTranscriptionMode}`);
-            if (effectiveTranscriptionMode === 'remote') {
-                // Use the NEW remote function
-                transcribeAudioRemotely(tempPath, processingCallback);
+            logger.info(`Initiating transcription for ID ${transcriptionId} using mode: ${effectiveTranscriptionMode}`);
 
-            } else { // Default or 'local' mode
-                // Queue the job for the existing LOCAL Python process
-                const localRequestId = uuidv4(); // Generate unique ID for Python process communication
-                logger.info(`Queueing local transcription request (ID: ${localRequestId}) for ${filename} (DB ID: ${transcriptionId})`);
+            if (effectiveTranscriptionMode === 'remote') {
+                // Use the remote function.
+                // If local storage, use the final path; if S3, use the original temp path.
+                const pathToUseForRemote = (STORAGE_MODE === 'local') ? finalPathIfLocal : tempPath;
+                transcribeAudioRemotely(pathToUseForRemote, processingCallback);
+
+            } else { // 'local' transcription mode
+                const localRequestId = uuidv4();
+                let payload;
+
+                if (STORAGE_MODE === 's3') {
+                    // S3 Storage + Local Transcription: Send buffer
+                    logger.info(`Queueing local transcription (ID: ${localRequestId}) for DB ID ${transcriptionId} using BASE64 BUFFER`);
+                    payload = {
+                        command: 'transcribe',
+                        id: localRequestId,
+                        audio_data_base64: fileBuffer.toString('base64') // Send the buffer directly
+                    };
+                    // NOTE: tempPath will be deleted later in processingCallback
+                } else {
+                    // Local Storage + Local Transcription: Send path
+                    // Check file exists before sending path
+                    if (!fs.existsSync(tempPath)) {
+                         logger.error(`Local audio file ${tempPath} missing before queuing for local transcription (ID ${transcriptionId}). Aborting.`);
+                         // Call callback with error/empty string?
+                         processingCallback(""); // Fail the transcription
+                         return; // Don't queue
+                    }
+                    logger.info(`Queueing local transcription (ID: ${localRequestId}) for DB ID ${transcriptionId} using PATH: ${tempPath}`);
+                    payload = {
+                        command: 'transcribe',
+                        id: localRequestId,
+                        path: tempPath // Send the path to the temp file
+                    };
+                }
+
+                // Add the job with its specific payload to the queue
                 transcriptionQueue.push({
-                   id: localRequestId, // ID for Python process comms
-                   path: tempPath,
-                   callback: processingCallback, // The common callback handles results
-                   retries: 0, // Keep retry logic if desired for local mode
-                   maxRetries: 2,
-                   dbTranscriptionId: transcriptionId // Store DB ID for potential error handling
+                   id: localRequestId, // ID for matching response from Python
+                   payload: payload, // Contains either path or base64 data
+                   callback: processingCallback,
+                   dbTranscriptionId: transcriptionId
+                   // Removed retry logic here for simplicity, can be added back if needed
                 });
                 processNextTranscription(); // Trigger the local queue processor
             }
             // --- End mode choice ---
-          } // End of db.run callback for audio_files insert
-        ); // End of db.run call for audio_files
+        };
+        // --- End afterStorageComplete function definition ---
+
+        // --- Handle Audio Storage based on Mode ---
+        if (STORAGE_MODE === 's3') {
+          // Upload the buffer to S3
+          const s3Params = {
+            Bucket: S3_BUCKET_NAME,
+            Key: storagePath, // Use the determined S3 key
+            Body: fileBuffer,
+            // ContentType: 'audio/mpeg', // Or determine dynamically
+          };
+          s3.upload(s3Params, (s3Err, data) => {
+            if (s3Err) {
+              logger.error(`Error uploading audio to S3 for transcription ID ${transcriptionId} (key: ${storagePath}):`, s3Err);
+              // If S3 upload fails, should we delete the DB record?
+              db.run('DELETE FROM transcriptions WHERE id = ?', [transcriptionId], () => {});
+              fs.unlink(tempPath, (errUnlink) => { // Delete temp file on S3 error
+                  if (errUnlink) logger.error(`Error deleting temp file after S3 upload error ${tempPath}:`, errUnlink);
+              });
+              return;
+            }
+            logger.info(`Successfully uploaded audio to S3: ${data.Location}`);
+            // Now that S3 upload is done, proceed with transcription choice
+            afterStorageComplete(null);
+          });
+        } else {
+          // Local storage: Move temp file to the final location
+          const finalLocalPath = path.join(UPLOAD_DIR, storagePath);
+          fs.rename(tempPath, finalLocalPath, (renameErr) => {
+              if (renameErr) {
+                  logger.error(`Error moving temp file ${tempPath} to final location ${finalLocalPath}:`, renameErr);
+                  // If rename fails, delete DB record and original temp file
+                  db.run('DELETE FROM transcriptions WHERE id = ?', [transcriptionId], () => {});
+                  fs.unlink(tempPath, (errUnlink) => {
+                      if (errUnlink) logger.error(`Error deleting temp file after rename error ${tempPath}:`, errUnlink);
+                  });
+                  return;
+              }
+              logger.info(`Moved audio file to permanent local storage: ${finalLocalPath}`);
+              // REMOVED: Modify tempPath to point to the *new* final location for local/local transcription
+              // tempPath = finalLocalPath;
+              // Call the next step, passing the final local path
+              afterStorageComplete(finalLocalPath);
+          });
+        }
+        // --- End Storage Handling ---
+
+        // REMOVED: Original transcription initiation logic moved inside handleStorageAndTranscription
+
       } // End of db.run callback for transcriptions insert
     ); // End of db.run call for transcriptions
   }); // End of fs.readFile

@@ -1,6 +1,7 @@
 // webserver.js - Web interface for viewing and managing calls with optional authentication
 
 require('dotenv').config();
+const AWS = require('aws-sdk'); // Add AWS SDK
 
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
@@ -24,7 +25,13 @@ const {
   ENABLE_AUTH, // New environment variable for toggling authentication
   SESSION_DURATION_DAYS = "7", // Default 7 days if not specified
   MAX_SESSIONS_PER_USER = "5", // Default 5 sessions if not specified
-  GOOGLE_MAPS_API_KEY
+  GOOGLE_MAPS_API_KEY,
+  // --- NEW: Storage Env Vars ---
+  STORAGE_MODE = 'local', // Default to local if not set
+  S3_ENDPOINT,
+  S3_BUCKET_NAME,
+  S3_ACCESS_KEY_ID,
+  S3_SECRET_ACCESS_KEY
 } = process.env;
 
 // Validate required environment variables
@@ -43,6 +50,26 @@ app.use(express.json()); // Add this line to parse JSON bodies
 app.get('/api/config/google-api-key', (req, res) => {
   res.json({ apiKey: GOOGLE_MAPS_API_KEY });
 });
+
+// --- NEW: S3 Client Setup ---
+let s3 = null;
+if (STORAGE_MODE === 's3') {
+  if (!S3_ENDPOINT || !S3_BUCKET_NAME || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
+    console.error('FATAL: STORAGE_MODE is s3, but required S3 environment variables are missing! Check webserver .env');
+    process.exit(1); // Exit if S3 config is incomplete
+  }
+  AWS.config.update({
+    accessKeyId: S3_ACCESS_KEY_ID,
+    secretAccessKey: S3_SECRET_ACCESS_KEY,
+    endpoint: S3_ENDPOINT,
+    s3ForcePathStyle: true, // Necessary for MinIO/non-AWS S3
+    signatureVersion: 'v4'
+  });
+  s3 = new AWS.S3();
+  console.log(`[Webserver] Storage mode set to S3. Endpoint: ${S3_ENDPOINT}, Bucket: ${S3_BUCKET_NAME}`);
+} else {
+  console.log('[Webserver] Storage mode set to local.');
+}
 
 // Authentication is enabled if ENABLE_AUTH=true
 const authEnabled = ENABLE_AUTH?.toLowerCase() === 'true';
@@ -410,41 +437,78 @@ const adminAuth = (req, res, next) => {
 };
 
 // Public Routes (No Auth Required)
-app.get('/audio/:id', (req, res) => {
-  const requestedId = req.params.id;
-  
-  // First try to get audio directly by audio_id
-  db.get('SELECT audio_data FROM audio_files WHERE id = ?', [requestedId], (err, row) => {
-    if (err) {
-      console.error('Error fetching audio by ID:', err);
-      return res.status(500).send('Internal Server Error');
-    }
-    
-    if (row) {
-      // Found by audio_id
-      //console.log(`Found audio using direct ID match: ${requestedId}`);
-      res.set('Content-Type', 'audio/mpeg');
-      return res.send(row.audio_data);
-    }
-    
-    // If not found, try by transcription_id
-    db.get('SELECT audio_data FROM audio_files WHERE transcription_id = ?', [requestedId], (err, row) => {
-      if (err) {
-        console.error('Error fetching audio by transcription_id:', err);
-        return res.status(500).send('Internal Server Error');
-      }
-      
-      if (row) {
-        // Found by transcription_id
-        //console.log(`Found audio using transcription_id: ${requestedId}`);
-        res.set('Content-Type', 'audio/mpeg');
-        return res.send(row.audio_data);
-      }
-      
-      // Not found by either method
-      return res.status(404).send('Audio file not found');
+app.get('/audio/:id', async (req, res) => { // Added async
+  const transcriptionId = req.params.id;
+  // Commented out verbose logging
+  // console.log(`[Audio Request] ID: ${transcriptionId}, Mode: ${STORAGE_MODE}`);
+
+  try {
+    // Fetch the audio file path/key from the transcriptions table
+    const row = await new Promise((resolve, reject) => {
+      db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [transcriptionId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
     });
-  });
+
+    if (!row || !row.audio_file_path) {
+      console.error(`[Audio Request] Audio path not found for ID: ${transcriptionId}`);
+      return res.status(404).send('Audio record not found');
+    }
+
+    const audioStoragePath = row.audio_file_path;
+    const extension = path.extname(audioStoragePath).toLowerCase();
+    let contentType = 'audio/mpeg'; // Default to MP3
+    if (extension === '.m4a') {
+      contentType = 'audio/mp4';
+    }
+
+    if (STORAGE_MODE === 's3') {
+      // --- S3 Streaming Logic ---
+      // Commented out verbose logging
+      // console.log(`[Audio S3] Streaming key: ${audioStoragePath}`);
+      const params = {
+        Bucket: S3_BUCKET_NAME,
+        Key: audioStoragePath,
+      };
+      res.setHeader('Content-Type', contentType);
+
+      // Create a readable stream from S3 and pipe it to the response
+      const s3Stream = s3.getObject(params).createReadStream();
+
+      s3Stream.on('error', (s3Err) => {
+        console.error(`[Audio S3] Stream error for key ${audioStoragePath}:`, s3Err);
+        // Try to send error status only if headers aren't already sent
+        if (!res.headersSent) {
+          res.status(500).send('Error streaming audio from S3');
+        }
+      });
+
+      s3Stream.pipe(res);
+      // --- End S3 Streaming Logic ---
+
+    } else {
+      // --- Local File Serving Logic ---
+      const audioStoragePath = row.audio_file_path; // Re-declare here for clarity
+      const localPath = path.join(__dirname, 'audio', audioStoragePath);
+      console.log(`[Audio Local] Serving path: ${localPath}`); // Keep basic serving path log
+
+      if (fs.existsSync(localPath)) {
+        res.setHeader('Content-Type', contentType);
+        const fileStream = fs.createReadStream(localPath);
+        // Pipe directly, relying on outer try/catch for major errors
+        fileStream.pipe(res); 
+      } else {
+        console.error(`[Audio Local] File not found: ${localPath}`);
+        return res.status(404).send('Audio file not found locally');
+      }
+      // --- End Local File Serving Logic ---
+    }
+
+  } catch (dbErr) {
+    console.error('[Audio Request] Database error:', dbErr);
+    return res.status(500).send('Internal Server Error');
+  }
 });
 
 // Apply authentication middleware to protected routes if auth is enabled
@@ -631,9 +695,8 @@ app.get('/api/calls', (req, res) => {
 
   db.all(
     `
-    SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name, tg.tag AS talk_group_tag
+    SELECT t.*, tg.alpha_tag AS talk_group_name, tg.tag AS talk_group_tag
     FROM transcriptions t
-    LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
     WHERE t.timestamp >= ? AND t.lat IS NOT NULL AND t.lon IS NOT NULL
     ORDER BY t.timestamp DESC
@@ -672,7 +735,6 @@ app.delete('/api/markers/:id', (req, res) => {
         return res.status(500).json({ error: 'Internal server error' });
       }
 
-      db.run('DELETE FROM audio_files WHERE transcription_id = ?', [markerId]);
       res.json({ message: 'Marker deleted successfully' });
     }
   );
@@ -724,9 +786,8 @@ app.get('/api/additional-transcriptions/:callId', (req, res) => {
 
       db.all(
         `
-        SELECT t.id, t.transcription, a.id AS audio_id, t.timestamp, tg.alpha_tag AS talk_group_name
+        SELECT t.id, t.transcription, t.audio_file_path, t.timestamp, tg.alpha_tag AS talk_group_name
         FROM transcriptions t
-        LEFT JOIN audio_files a ON t.id = a.transcription_id
         LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
         WHERE t.talk_group_id = ? AND t.id > ?
         ORDER BY t.id ASC
@@ -738,7 +799,8 @@ app.get('/api/additional-transcriptions/:callId', (req, res) => {
             console.error('Error fetching additional transcriptions:', err);
             return res.status(500).json({ error: 'Internal Server Error' });
           }
-
+          // ADD LOGGING HERE
+          console.log(`[/api/additional-transcriptions] Responding with ${rows.length} rows. First row ID: ${rows.length > 0 ? rows[0].id : 'N/A'}`);
           res.json(rows);
         }
       );
@@ -749,8 +811,9 @@ app.get('/api/additional-transcriptions/:callId', (req, res) => {
 // NEW Endpoint for Talkgroup History
 app.get('/api/talkgroup/:talkgroupId/calls', (req, res) => {
   const talkgroupId = parseInt(req.params.talkgroupId, 10);
-  const hours = parseInt(req.query.hours) || 12; // Default hours for initial load
-  const sinceId = parseInt(req.query.sinceId, 10) || 0; // Get the ID to fetch calls newer than
+  const sinceId = parseInt(req.query.sinceId, 10) || 0; // For polling
+  const limit = parseInt(req.query.limit, 10) || 30; // Default limit 30
+  const offset = parseInt(req.query.offset, 10) || 0; // Default offset 0
 
   if (isNaN(talkgroupId)) {
     return res.status(400).json({ error: 'Invalid talkgroup ID' });
@@ -760,32 +823,30 @@ app.get('/api/talkgroup/:talkgroupId/calls', (req, res) => {
   const params = [];
 
   if (sinceId > 0) {
-    // Polling request: Get calls strictly newer than the last known ID for this talkgroup
-    // console.log(`Polling calls for talkgroup ${talkgroupId} since ID: ${sinceId}`); // Reduced logging
+    // Polling request: Get calls strictly newer than the last known ID (limit doesn't apply here)
+    console.log(`Polling calls for talkgroup ${talkgroupId} since ID: ${sinceId}`);
     query = `
-      SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
+      SELECT t.id, t.transcription, t.timestamp, tg.alpha_tag AS talk_group_name
       FROM transcriptions t
-      LEFT JOIN audio_files a ON t.id = a.transcription_id
       LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
       WHERE t.talk_group_id = ? AND t.id > ?
-        AND t.transcription IS NOT NULL -- ADDED: Ensure transcription exists
-      ORDER BY t.timestamp DESC -- Still return newest first for consistency
+        AND t.transcription IS NOT NULL
+      ORDER BY t.id ASC -- Fetch oldest first when polling since ID 
     `;
     params.push(talkgroupId, sinceId);
   } else {
-    // Initial load request: Get calls within the time range
-    const sinceTimestamp = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-    console.log(`Fetching initial calls for talkgroup ${talkgroupId} since: ${sinceTimestamp} (${hours} hours ago)`);
+    // Initial load or subsequent page request: Use LIMIT and OFFSET
+    console.log(`Fetching calls for talkgroup ${talkgroupId} with limit: ${limit}, offset: ${offset}`);
     query = `
-      SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name
+      SELECT t.id, t.transcription, t.timestamp, tg.alpha_tag AS talk_group_name
       FROM transcriptions t
-      LEFT JOIN audio_files a ON t.id = a.transcription_id
       LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
-      WHERE t.talk_group_id = ? AND t.timestamp >= ?
-        AND t.transcription IS NOT NULL -- ADDED: Ensure transcription exists
-      ORDER BY t.timestamp DESC
+      WHERE t.talk_group_id = ? 
+        AND t.transcription IS NOT NULL
+      ORDER BY t.timestamp DESC -- Show newest first overall
+      LIMIT ? OFFSET ?
     `;
-    params.push(talkgroupId, sinceTimestamp);
+    params.push(talkgroupId, limit, offset);
   }
 
   db.all(query, params, (err, rows) => {
@@ -794,11 +855,10 @@ app.get('/api/talkgroup/:talkgroupId/calls', (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
 
-    // For polling requests, rows might be empty, which is normal
     if (sinceId > 0) {
-       // console.log(`Poll returned ${rows.length} calls for talkgroup ${talkgroupId} since ID ${sinceId}`); // Reduced logging
+       console.log(`Poll returned ${rows.length} calls for talkgroup ${talkgroupId} since ID ${sinceId}`); 
     } else {
-       console.log(`Initial load returned ${rows.length} calls for talkgroup ${talkgroupId}`);
+       console.log(`Paginated load returned ${rows.length} calls for talkgroup ${talkgroupId}`);
     }
     res.json(rows);
   });
@@ -847,9 +907,8 @@ function initializeLastLiveFeedCallId() {
 function checkForNewCalls() {
   db.all(
     `
-    SELECT t.*, a.id AS audio_id, tg.alpha_tag AS talk_group_name, tg.tag AS talk_group_tag
+    SELECT t.*, tg.alpha_tag AS talk_group_name, tg.tag AS talk_group_tag
     FROM transcriptions t
-    LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
     WHERE t.id > ? 
       AND t.lat IS NOT NULL
@@ -927,11 +986,10 @@ function checkForNewCalls() {
 function checkForLiveFeedCalls() {
   db.all(
     `
-    SELECT t.id, t.talk_group_id, t.transcription, t.timestamp, 
-           a.id AS audio_id, 
+    SELECT t.id, t.talk_group_id, t.transcription, t.timestamp,
+           t.audio_file_path, -- Added audio_file_path for potential use
            tg.alpha_tag AS talk_group_name
     FROM transcriptions t
-    LEFT JOIN audio_files a ON t.id = a.transcription_id
     LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
     WHERE t.id > ? 
     ORDER BY t.id ASC
@@ -944,33 +1002,43 @@ function checkForLiveFeedCalls() {
         return;
       }
       
-      let updatedLastFeedId = lastLiveFeedCallId;
+      let highestEmittedId = lastLiveFeedCallId; // Track the highest ID we ACTUALLY emit
+
       if (rows && rows.length > 0) {
           rows.forEach(row => {
-              if (row.id > updatedLastFeedId) {
-                  updatedLastFeedId = row.id; // Track highest ID fetched
-              }
-              
+              let shouldEmit = false;
               // --- Emission Logic with Timeout ---
               if (row.transcription) {
                    // Has transcription, emit immediately
-                  io.emit('liveFeedUpdate', row); 
+                   shouldEmit = true;
               } else {
                    // No transcription yet, check age
                   const callAgeMs = Date.now() - new Date(row.timestamp).getTime();
                   if (callAgeMs > 10000) { // 10 second timeout
                       // Timeout exceeded, emit with placeholder
                       row.transcription = "[Transcription Pending...]"; // Modify row
-                      io.emit('liveFeedUpdate', row);
+                      shouldEmit = true;
                   } else {
-                      // Too new and no transcription, wait
+                      // Too new and no transcription, wait (DO NOTHING)
                   }
               }
               // --- End Emission Logic ---
+              
+              // Emit only if decided
+              if (shouldEmit) {
+                 // REMOVED LOGGING HERE
+                 // console.log(`[LiveFeed Emit] Emitting call ID: ${row.id}, Transcription: ${row.transcription ? row.transcription.substring(0, 30) + '...' : '(empty)'}`); 
+                 io.emit('liveFeedUpdate', row); 
+                 // Update highestEmittedId only when we actually emit
+                 if (row.id > highestEmittedId) {
+                    highestEmittedId = row.id;
+                 }
+              }
           });
-          // Update state variable *after* processing batch with highest ID *fetched*
-          if (updatedLastFeedId > lastLiveFeedCallId) {
-              lastLiveFeedCallId = updatedLastFeedId;
+
+          // Update state variable *after* processing batch using the highest EMITTED ID
+          if (highestEmittedId > lastLiveFeedCallId) {
+              lastLiveFeedCallId = highestEmittedId;
           }
       }
     }
