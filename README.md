@@ -10,6 +10,7 @@ A real-time mapping system that ingests radio calls from SDRTrunk or TrunkRecord
 -   **Flexible Transcription:**
     -   **Local:** Utilizes the `faster-whisper` model running locally for accurate audio-to-text conversion (CPU or NVIDIA GPU).
     -   **Remote:** Option to offload transcription to a separate `faster-whisper-server` (like [speaches](https://github.com/speaches-ai/speaches)) via its API.
+-   **Flexible Audio Storage:** Store audio files locally (`./audio` folder) or in an S3-compatible object storage service (AWS S3, MinIO, etc.).
 -   **AI-Powered Location Extraction & Geocoding:**
     -   Uses a  Ollama LLM (e.g., Llama 3.1) to identify potential addresses mentioned in transmissions for specified talk groups.
     -   Geocodes extracted addresses using either **Google Maps Geocoding API** or **LocationIQ API** (user chooses by selecting the appropriate `geocoding.js` file).
