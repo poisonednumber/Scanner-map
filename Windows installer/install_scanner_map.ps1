@@ -40,6 +40,10 @@ $DefaultTimezone = "US/Eastern"
 $DefaultEnableAuth = "false"
 $DefaultTargetCities = "City1,City2,City3,City4"
 $DefaultSummaryLookbackHours = "1" # Added default summary hours
+# --- NEW: Storage Defaults ---
+$DefaultStorageMode = "local" # Default to local
+$DefaultS3Endpoint = ""
+$DefaultS3BucketName = ""
 
 # Initialize script-level variables
 $script:PyTorchDevice = "cpu" # Default to CPU
@@ -388,6 +392,54 @@ function Create-EnvFile {
     $envContent += "SUMMARY_LOOKBACK_HOURS=$summaryHours"
     $envContent += ""
 
+    # --- NEW: Storage Mode ---
+    $envContent += "#################################################################"
+    $envContent += "##                     STORAGE SETTINGS                        ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Storage Mode ---"
+    $envContent += "# Select 'local' (saves audio files to ./audio folder) or 's3' (saves to S3-compatible storage)"
+    $storageMode = Prompt-Input "Enter STORAGE_MODE ('local' or 's3')" $DefaultStorageMode
+    $envContent += "STORAGE_MODE=$storageMode"
+    $envContent += ""
+    $envContent += "# --- S3 Settings (Only used if STORAGE_MODE=s3) ---"
+    if ($storageMode -eq 's3') {
+        $s3Endpoint = Prompt-Input "Enter S3_ENDPOINT (URL of your S3-compatible storage)" $DefaultS3Endpoint
+        if ([string]::IsNullOrWhiteSpace($s3Endpoint)) {
+             $envContent += "S3_ENDPOINT=                     # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             [void]$script:ManualEditList.Add("S3_ENDPOINT")
+        } else {
+             $envContent += "S3_ENDPOINT=$s3Endpoint"
+        }
+        $s3BucketName = Prompt-Input "Enter S3_BUCKET_NAME" $DefaultS3BucketName
+        if ([string]::IsNullOrWhiteSpace($s3BucketName)) {
+             $envContent += "S3_BUCKET_NAME=                 # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             [void]$script:ManualEditList.Add("S3_BUCKET_NAME")
+        } else {
+             $envContent += "S3_BUCKET_NAME=$s3BucketName"
+        }
+        $s3AccessKeyId = Read-Host -Prompt "Enter S3_ACCESS_KEY_ID"
+        if ([string]::IsNullOrWhiteSpace($s3AccessKeyId)) {
+             $envContent += "S3_ACCESS_KEY_ID=              # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             [void]$script:ManualEditList.Add("S3_ACCESS_KEY_ID")
+        } else {
+             $envContent += "S3_ACCESS_KEY_ID=$s3AccessKeyId"
+        }
+        $s3SecretAccessKey = Read-Host -Prompt "Enter S3_SECRET_ACCESS_KEY"
+        if ([string]::IsNullOrWhiteSpace($s3SecretAccessKey)) {
+             $envContent += "S3_SECRET_ACCESS_KEY=           # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             [void]$script:ManualEditList.Add("S3_SECRET_ACCESS_KEY")
+        } else {
+             $envContent += "S3_SECRET_ACCESS_KEY=$s3SecretAccessKey"
+        }
+    } else {
+        $envContent += "S3_ENDPOINT=                     # Ignored if STORAGE_MODE=local"
+        $envContent += "S3_BUCKET_NAME=                 # Ignored if STORAGE_MODE=local"
+        $envContent += "S3_ACCESS_KEY_ID=              # Ignored if STORAGE_MODE=local"
+        $envContent += "S3_SECRET_ACCESS_KEY=           # Ignored if STORAGE_MODE=local"
+    }
+    $envContent += ""
+
     # --- Talk Groups ---
     $envContent += "#################################################################"
     $envContent += "##                     TALK GROUP MAPPINGS                     ##"
@@ -430,11 +482,11 @@ function Create-EnvFile {
 function Install-NodeDeps {
     Print-Message "Installing Node.js dependencies..."
     Set-Location $InstallDir
-    # Attempt npm install - Added form-data
-    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
+    # Attempt npm install - Added form-data and aws-sdk
+    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
     if (-not $?) {
         Write-Warning "First npm install attempt failed. Trying again..."
-        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
+        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
         if (-not $?) {
              Write-Warning "npm install failed again. Please check errors and try running 'npm install' manually in $InstallDir."
         }
@@ -455,8 +507,8 @@ function Setup-PythonDeps {
         $torchInstallCmd = "pip3 install torch torchvision torchaudio"
     }
     Run-Command { Invoke-Expression $torchInstallCmd } "Failed to install PyTorch."
-    Write-Host "Installing faster-whisper and python-dotenv..."
-    Run-Command { pip3 install faster-whisper python-dotenv } "Failed to install faster-whisper/python-dotenv."
+    Write-Host "Installing faster-whisper, python-dotenv, and pydub..."
+    Run-Command { pip3 install faster-whisper python-dotenv pydub } "Failed to install faster-whisper/python-dotenv/pydub."
     Print-Message "Python dependency installation attempted."
 }
 
@@ -526,6 +578,8 @@ function Manual-StepsReminder {
          Write-Host "      -> (Review all placeholders like 'your_..._here')" -ForegroundColor Red
     }
     # *** UPDATED REMINDERS ***
+    Write-Host "    - Verify STORAGE_MODE is set correctly ('local' or 's3')." -ForegroundColor Yellow
+    Write-Host "    - If STORAGE_MODE=s3, ensure S3_ENDPOINT, S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY are correct." -ForegroundColor Yellow
     Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')." -ForegroundColor Yellow
     Write-Host "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
     Write-Host "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow

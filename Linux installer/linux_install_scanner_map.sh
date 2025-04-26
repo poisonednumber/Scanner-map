@@ -32,6 +32,10 @@ DEFAULT_TIMEZONE="US/Eastern"
 DEFAULT_ENABLE_AUTH="false"
 DEFAULT_TARGET_CITIES="City1,City2,City3,City4"
 DEFAULT_SUMMARY_LOOKBACK_HOURS="1" # Added default summary hours
+# --- NEW: Storage Defaults ---
+DEFAULT_STORAGE_MODE="local" # Default to local
+DEFAULT_S3_ENDPOINT=""
+DEFAULT_S3_BUCKET_NAME=""
 
 
 # --- Helper Functions ---
@@ -349,6 +353,54 @@ create_env_file() {
     append_env "SUMMARY_LOOKBACK_HOURS=$summary_hours"
     append_env ""
 
+    # --- NEW: Storage Mode ---
+    append_env "#################################################################"
+    append_env "##                     STORAGE SETTINGS                        ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Storage Mode ---"
+    append_env "# Select 'local' (saves audio files to ./audio folder) or 's3' (saves to S3-compatible storage)"
+    prompt_input "Enter STORAGE_MODE ('local' or 's3')" "$DEFAULT_STORAGE_MODE" storage_mode
+    append_env "STORAGE_MODE=$storage_mode"
+    append_env ""
+    append_env "# --- S3 Settings (Only used if STORAGE_MODE=s3) ---"
+    if [[ "$storage_mode" == "s3" ]]; then
+        prompt_input "Enter S3_ENDPOINT (URL of your S3-compatible storage)" "$DEFAULT_S3_ENDPOINT" s3_endpoint
+        if [[ -z "$s3_endpoint" ]]; then
+             append_env "S3_ENDPOINT=                     # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             needs_manual_edit+=("S3_ENDPOINT")
+        else
+             append_env "S3_ENDPOINT=$s3_endpoint"
+        fi
+        prompt_input "Enter S3_BUCKET_NAME" "$DEFAULT_S3_BUCKET_NAME" s3_bucket_name
+        if [[ -z "$s3_bucket_name" ]]; then
+             append_env "S3_BUCKET_NAME=                 # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             needs_manual_edit+=("S3_BUCKET_NAME")
+        else
+             append_env "S3_BUCKET_NAME=$s3_bucket_name"
+        fi
+        read -r -p "Enter S3_ACCESS_KEY_ID: " s3_access_key_id
+        if [[ -z "$s3_access_key_id" ]]; then
+             append_env "S3_ACCESS_KEY_ID=              # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             needs_manual_edit+=("S3_ACCESS_KEY_ID")
+        else
+             append_env "S3_ACCESS_KEY_ID=$s3_access_key_id"
+        fi
+        read -r -p "Enter S3_SECRET_ACCESS_KEY: " s3_secret_access_key
+        if [[ -z "$s3_secret_access_key" ]]; then
+             append_env "S3_SECRET_ACCESS_KEY=           # <<< MANUALLY EDIT REQUIRED if STORAGE_MODE=s3"
+             needs_manual_edit+=("S3_SECRET_ACCESS_KEY")
+        else
+             append_env "S3_SECRET_ACCESS_KEY=$s3_secret_access_key"
+        fi
+    else
+        append_env "S3_ENDPOINT=                     # Ignored if STORAGE_MODE=local"
+        append_env "S3_BUCKET_NAME=                 # Ignored if STORAGE_MODE=local"
+        append_env "S3_ACCESS_KEY_ID=              # Ignored if STORAGE_MODE=local"
+        append_env "S3_SECRET_ACCESS_KEY=           # Ignored if STORAGE_MODE=local"
+    fi
+    append_env ""
+
     # --- Talk Group Mappings ---
     append_env "#################################################################"
     append_env "##                     TALK GROUP MAPPINGS                     ##"
@@ -394,13 +446,13 @@ create_env_file() {
 install_node_deps() {
   print_message "Installing Node.js dependencies..."
   cd "$INSTALL_DIR" || exit 1
-  # Attempt npm install - Added form-data
+  # Attempt npm install - Added form-data and aws-sdk
   local original_user=${SUDO_USER:-$(whoami)}
   echo "Running npm install as user: $original_user"
-  sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data
+  sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
   if [ $? -ne 0 ]; then
       echo "npm install failed. Trying again..."
-      sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually as user '$original_user' in $INSTALL_DIR."
+      sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually as user '$original_user' in $INSTALL_DIR."
   fi
   print_message "Node.js dependency installation attempted."
 }
@@ -445,8 +497,8 @@ setup_python_venv() {
       export T_DEVICE="cpu"
   fi
   run_command $torch_install_cmd || { echo "Failed to install PyTorch."; deactivate; return 1; }
-  echo "Installing faster-whisper and python-dotenv..."
-  run_command pip install faster-whisper python-dotenv || { echo "Failed to install faster-whisper/python-dotenv."; deactivate; return 1; }
+  echo "Installing faster-whisper, python-dotenv, and pydub..."
+  run_command pip install faster-whisper python-dotenv pydub || { echo "Failed to install faster-whisper/python-dotenv/pydub."; deactivate; return 1; }
   echo "Deactivating virtual environment."
   deactivate
   print_message "Python environment setup complete."
@@ -525,6 +577,8 @@ manual_steps_reminder() {
       echo "      -> (Review all placeholders like 'your_..._here')"
   fi
   # *** UPDATED REMINDERS ***
+  echo "    - Verify STORAGE_MODE is set correctly ('local' or 's3')."
+  echo "    - If STORAGE_MODE=s3, ensure S3_ENDPOINT, S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY are correct."
   echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')."
   echo "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct."
   echo "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
