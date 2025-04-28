@@ -494,6 +494,14 @@ app.post('/api/call-upload', (req, res) => {
         return;
       }
       
+      // ADD CHECK for field name
+      if (name !== 'file' && name !== 'audio') {
+          logger.warn(`Ignoring unexpected file part with fieldname: ${name}`);
+          file.resume(); // Consume the stream but do nothing
+          return;
+      }
+      // END ADD CHECK
+
       if (isIgnoredFileType(info.filename)) {
         logger.info(`Ignoring unsupported file type: ${info.filename}`);
         file.resume();
@@ -670,7 +678,8 @@ app.post('/api/call-upload', (req, res) => {
               source: fields.source,
               frequency: fields.frequency,
               talkGroupGroup: fields.talkgroupGroup,
-              isTrunkRecorder: true
+              isTrunkRecorder: true,
+              frequencies: fields.frequencies // <-- Pass the frequencies field
             });
             
             return sendResponse(200, 'Call imported successfully.');
@@ -1024,8 +1033,30 @@ function handleNewAudio(audioData) {
     source,
     frequency,
     talkGroupGroup,
-    // isTrunkRecorder // You might use this flag later if needed
+    isTrunkRecorder
   } = audioData;
+
+  // --- NEW: Parse Frequencies for Errors/Spikes (Trunk Recorder) --- 
+  let totalErrors = 0;
+  let totalSpikes = 0;
+  // Make sure audioData.frequencies exists before trying to access it
+  if (isTrunkRecorder && audioData.frequencies) { // <-- Check audioData.frequencies directly
+    try {
+      const frequenciesData = JSON.parse(audioData.frequencies);
+      if (Array.isArray(frequenciesData)) {
+        frequenciesData.forEach(freqInfo => {
+          totalErrors += freqInfo.errorCount || 0;
+          totalSpikes += freqInfo.spikeCount || 0;
+        });
+      }
+      if (totalErrors > 0 || totalSpikes > 0) {
+        logger.info(`Parsed signal quality from Trunk Recorder: ${totalErrors} errors, ${totalSpikes} spikes`);
+      }
+    } catch (parseError) {
+      logger.warn(`Failed to parse frequencies JSON for ${filename}: ${parseError.message}`);
+    }
+  }
+  // --- END NEW --- 
 
   // Double-check file extension before processing (keep this validation)
   if (isIgnoredFileType(filename)) {
@@ -1113,7 +1144,8 @@ function handleNewAudio(audioData) {
                   // Now handle the logic that uses the transcription
                   handleNewTranscription(
                     transcriptionId, transcriptionText, talkGroupID, systemName,
-                    talkGroupName, source, talkGroupGroup, storagePath // Pass storagePath
+                    talkGroupName, source, talkGroupGroup, storagePath, // Pass storagePath
+                    totalErrors, totalSpikes // <-- Pass new counts
                   );
 
                   // Clean up temp file only if storage was S3
@@ -1425,7 +1457,9 @@ async function handleNewTranscription(
   talkGroupName,
   source,
   talkGroupGroup,
-  audioFilePath
+  audioFilePath,
+  totalErrors,
+  totalSpikes
 ) {
   logger.info(`Starting handleNewTranscription for ID ${id}`);
   logger.info(`Transcription text length: ${transcriptionText.length} characters`);
@@ -1458,6 +1492,8 @@ async function handleNewTranscription(
         source, 
         id,  // This is the actual numeric ID that should be used for the audio URL
         talkGroupGroup, 
+        totalErrors, // <-- Add parameter
+        totalSpikes, // <-- Add parameter
         (url) => {
           messageUrl = url;
           resolve();
@@ -1678,6 +1714,8 @@ function sendTranscriptionMessage(
   source,
   audioID, // This is the transcription ID
   talkGroupGroup,
+  totalErrors, // <-- Add parameter
+  totalSpikes, // <-- Add parameter
   callback // Callback to pass the message URL back
 ) {
   // Get the full talkgroup name and county from the database
@@ -1740,9 +1778,17 @@ function sendTranscriptionMessage(
             sourceDisplay = `ID-${source}`;
           }
 
+          // --- Add Signal Quality if available --- 
+          let signalQualityInfo = '';
+          if (totalErrors > 0 || totalSpikes > 0) {
+            // Format as italicized string with space before and after
+            signalQualityInfo = ` _(SQ: ${totalErrors}E/${totalSpikes}S)_ `;
+          }
+          // --- End Signal Quality --- 
+
           // Generate the transcription line with properly formatted source and audio link
-          // Ensure transcriptionText itself is handled correctly (e.g., no excessive length initially)
-          const transcriptionLine = `**${sourceDisplay}:** ${transcriptionText} [Audio](${audioUrl})`;
+          // Place signalQualityInfo immediately after the source display
+          const transcriptionLine = `**${sourceDisplay}**${signalQualityInfo}: ${transcriptionText} [Audio](${audioUrl})`;
 
           // --- Start Modified Block for Length Check ---
 
