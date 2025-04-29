@@ -179,6 +179,13 @@ From ${town}:
 Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.`;
 
     // Call the Ollama API
+    // Add AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        logger.warn(`Ollama request timed out after 5 seconds for address extraction (Google API version).`);
+        controller.abort();
+    }, 5000); // 5-second timeout
+
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -186,8 +193,11 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
         model: OLLAMA_MODEL,
         prompt,
         stream: false
-      })
+      }),
+      signal: controller.signal // Pass the signal here
     });
+
+    clearTimeout(timeoutId); // Clear the timeout if fetch completes
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -205,10 +215,16 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
     
     return extractedAddress;
   } catch (error) {
+    // Check specifically for AbortError (timeout)
+    if (error.name === 'AbortError') {
+         logger.error(`Ollama request timed out during address extraction (Google API version): ${error.message}`);
+         return null; // Return null on timeout
+    }
     logger.error(`Error extracting address with LLM: ${error.message}`);
     return null;
   }
 }
+
 /**
  * Geocodes an address using Google's Geocoding API.
  * @param {string} address - The validated address.

@@ -9,15 +9,15 @@ const path = require('path');
 
 // Environment variables - strict loading from .env only
 const {
-  LOCATIONIQ_API_KEY, 
+  LOCATIONIQ_API_KEY, // Renamed from GOOGLE_MAPS_API_KEY
   GEOCODING_STATE,
   GEOCODING_COUNTRY,
   GEOCODING_TARGET_COUNTIES,
-  GEOCODING_CITY, 
+  GEOCODING_CITY, // Still used as a fallback town name in LLM prompt
   TIMEZONE,
   OLLAMA_URL,
   OLLAMA_MODEL,
-  TARGET_CITIES_LIST 
+  TARGET_CITIES_LIST // Kept for potential future use or reference
 } = process.env;
 
 // Validate required environment variables
@@ -162,6 +162,13 @@ From ${town}:
 
 Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.`;
 
+    // Add AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        logger.warn(`Ollama request timed out after 5 seconds for address extraction.`);
+        controller.abort();
+    }, 5000); // 5-second timeout
+
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -169,8 +176,11 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
         model: OLLAMA_MODEL,
         prompt,
         stream: false
-      })
+      }),
+      signal: controller.signal // Pass the signal here
     });
+
+    clearTimeout(timeoutId); // Clear the timeout if fetch completes
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -186,6 +196,11 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
     }
     return extractedAddress;
   } catch (error) {
+    // Check specifically for AbortError (timeout)
+    if (error.name === 'AbortError') {
+         logger.error(`Ollama request timed out during address extraction: ${error.message}`);
+         return null; // Return null on timeout
+    }
     logger.error(`Error extracting address with LLM: ${error.message}`);
     return null;
   }

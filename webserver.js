@@ -250,6 +250,13 @@ Category:`;
     // --- END REFINED PROMPT ---
 
     // Call the Ollama API
+    // Add AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        console.warn(`Ollama request timed out after 5 seconds during categorization.`);
+        controller.abort();
+    }, 5000); // 5-second timeout
+
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -261,8 +268,11 @@ Category:`;
             // Lower temperature might make the AI less likely to guess creative categories
             temperature: 0.3
         }
-      })
+      }),
+      signal: controller.signal // Pass the signal here
     });
+
+    clearTimeout(timeoutId); // Clear timeout if fetch completes
 
     if (!response.ok) {
       // Log the error and transcript for debugging, then throw
@@ -293,6 +303,11 @@ Category:`;
     // Log the error along with the transcript that caused it
     console.error(`Error categorizing call: "${transcript}". Error: ${error.message}`);
     // Fallback to 'OTHER' in case of any errors during the process
+    // Check specifically for AbortError (timeout)
+    if (error.name === 'AbortError') {
+         console.error(`Ollama request timed out during categorization: ${error.message}`);
+         // Return 'OTHER' on timeout as per existing fallback logic
+    }
     return 'OTHER';
   }
 }
