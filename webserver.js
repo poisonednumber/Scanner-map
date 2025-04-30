@@ -177,41 +177,6 @@ async function validateSession(token) {
 
 async function generateShortSummary(transcript) {
   try {
-    // --- NEW: Pre-check for ambiguity ---
-    // List of keywords that likely indicate a specific event type
-    const incidentKeywords = [
-      'emergency', 'injured', 'person down', 'disturbance', 'collision', 'crash', 'mvc',
-      'burglary', 'break in', 'assault', 'fire', 'smoke', 'flames', 'missing', 'medical',
-      'stolen', 'stop', 'unconscious', 'reckless', 'gun', 'weapon', 'shots fired',
-      'consciousness', 'breathing', 'difficulty breathing', 'fight', 'domestic',
-      'carbon monoxide', 'co', 'abduction', 'kidnapping', 'passed out', 'hazmat',
-      'alarm', 'hazard', 'intoxicated', 'drunk', 'bite', 'animal', 'assist', 'help',
-      'down', 'sick', 'hurt', 'attack', 'robbery', 'theft', 'accident', 'overdose', 'od',
-      'suspicious', 'trespassing', 'vehicle fire', 'cardiac', 'arrest', 'seizure'
-      // This list can be expanded based on common dispatch terms
-    ];
-
-    // Convert transcript to lowercase for case-insensitive matching
-    const lowerCaseTranscript = transcript.toLowerCase();
-
-    // Check if the transcript contains any of the specific incident keywords
-    const containsIncidentKeyword = incidentKeywords.some(keyword =>
-      lowerCaseTranscript.includes(keyword)
-    );
-
-    // Also check for very short transcripts that might lack context
-    // Adjust the word count threshold as needed
-    const wordCount = transcript.trim().split(/\s+/).length;
-    const isVeryShort = wordCount < 4;
-
-    // If no incident keyword is found OR the transcript is very short, classify as OTHER
-    if (!containsIncidentKeyword || isVeryShort) {
-      console.log(`Transcript "${transcript}" lacks specific keywords or is too short (${wordCount} words), defaulting to OTHER.`);
-      // Return 'OTHER' directly, bypassing the AI call
-      return 'OTHER';
-    }
-    // --- END: Pre-check ---
-
     // Get environment variables for Ollama
     const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
     const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b'; // Or your preferred model

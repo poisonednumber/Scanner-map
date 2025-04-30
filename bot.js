@@ -21,7 +21,8 @@ const {
   S3_BUCKET_NAME,
   S3_ACCESS_KEY_ID,
   S3_SECRET_ACCESS_KEY,
-  ASK_AI_LOOKBACK_HOURS // <-- Add this line
+  ASK_AI_LOOKBACK_HOURS, // <-- Add this line
+  MAX_CONCURRENT_TRANSCRIPTIONS // <-- Use the shorter name here
 } = process.env;
 
 // Now initialize derived variables
@@ -56,7 +57,9 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
   ? mappedTalkGroupsString.split(',').map(id => id.trim())
   : [];
 
-
+// Parse MAX_CONCURRENT_TRANSCRIPTIONS from env or use default
+const parsedMaxConcurrent = parseInt(MAX_CONCURRENT_TRANSCRIPTIONS, 10);
+const MAX_CONCURRENT_TRANSCRIPTIONS_VALUE = !isNaN(parsedMaxConcurrent) && parsedMaxConcurrent > 0 ? parsedMaxConcurrent : 3;
 
 // Whitelist patterns for console INFO messages
 const allowedPatterns = [
@@ -279,7 +282,6 @@ let alertChannel;
 const UPLOAD_DIR = path.join(__dirname, 'audio');
 let transcriptionQueue = [];
 let activeTranscriptions = 0;
-const MAX_CONCURRENT_TRANSCRIPTIONS = 3;
 let isBootComplete = false;
 const messageCache = new Map(); // Stores the latest message for each channel
 const MESSAGE_COOLDOWN = 15000; // 15 seconds in milliseconds
