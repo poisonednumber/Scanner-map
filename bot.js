@@ -1426,7 +1426,7 @@ async function handleNewTranscription(
 
   const timeout = setTimeout(() => {
     logger.error(`Timeout occurred in handleNewTranscription for ID ${id}`);
-  }, 15000); // 15 second timeout
+  }, 40000); // Increased timeout from 15 to 40 seconds
 
   try {
     if (transcriptionText.length >= 15 && MAPPED_TALK_GROUPS.includes(talkGroupID)) {
