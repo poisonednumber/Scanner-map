@@ -3436,8 +3436,8 @@ function loadSummary() {
 // Load summary immediately
 loadSummary();
 
-// Set up summary refresh interval (every 2 minutes)
-setInterval(loadSummary, 120000);
+// Set up summary refresh interval (every 3 minutes)
+setInterval(loadSummary, 180000); // Changed from 120000 (2 mins) to 180000 (3 mins)
 // Update volume slider style
 /* // REMOVE THIS BLOCK
 document.addEventListener('input', function(e) {
