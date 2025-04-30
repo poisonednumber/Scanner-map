@@ -40,6 +40,7 @@ $DefaultTimezone = "US/Eastern"
 $DefaultEnableAuth = "false"
 $DefaultTargetCities = "City1,City2,City3,City4"
 $DefaultSummaryLookbackHours = "1" # Added default summary hours
+$DefaultAskAiLookbackHours = "8"   # <-- Add this default
 # --- NEW: Storage Defaults ---
 $DefaultStorageMode = "local" # Default to local
 $DefaultS3Endpoint = ""
@@ -390,6 +391,9 @@ function Create-EnvFile {
     $envContent += "# How many hours back the AI summary should cover"
     $summaryHours = Prompt-Input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" $DefaultSummaryLookbackHours
     $envContent += "SUMMARY_LOOKBACK_HOURS=$summaryHours"
+    $envContent += "# How many hours back the \'Ask AI\' feature should cover"
+    $askAiHours = Prompt-Input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" $DefaultAskAiLookbackHours
+    $envContent += "ASK_AI_LOOKBACK_HOURS=$askAiHours"
     $envContent += ""
 
     # --- NEW: Storage Mode ---
@@ -585,6 +589,7 @@ function Manual-StepsReminder {
     Write-Host "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow
     Write-Host "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup." -ForegroundColor Yellow
     Write-Host "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct." -ForegroundColor Yellow
+    Write-Host "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired." -ForegroundColor Yellow
     # *** END UPDATED REMINDERS ***
     Write-Host "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines." -ForegroundColor Red
     Write-Host ""
