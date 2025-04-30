@@ -1,6 +1,6 @@
 # Scanner Map
 
-A real-time mapping system that ingests radio calls from SDRTrunk or TrunkRecorder (via an RdioScanner compatible endpoint), automatically transcribes audio using local or remote AI, extracts locations using local AI, geocodes them, and displays calls on an interactive web map with integrated audio playback.
+A real-time mapping system that ingests radio calls from SDRTrunk, TrunkRecorder, or **rdio-scanner downstreams** (via an RdioScanner compatible endpoint), automatically transcribes audio using local or remote AI, extracts locations using local AI, geocodes them, and displays calls on an interactive web map with integrated audio playback.
 
 ![Scanner Map Interface 1](https://github.com/user-attachments/assets/4f51548f-e33f-4807-a11d-d91f3a6b4db1) ![Scanner Map Interface 2](https://github.com/user-attachments/assets/873ede4c-b9d6-4abc-9a1d-5d0754ba26b1) ![Scanner Map Interface 3](https://github.com/user-attachments/assets/262f9918-fc20-46c7-9e88-598f75991ced) ![Scanner Map Interface 4](https://github.com/user-attachments/assets/417e1194-3884-4eef-b2b4-33903d4a7e51)
 
@@ -37,7 +37,7 @@ This project can be installed on Windows or Linux. Automated installation script
 
 ### Prerequisites (Common):
 
--   SDRTrunk or TrunkRecorder already configured and running.
+-   SDRTrunk, TrunkRecorder, **or rdio-scanner** already configured and running.
 -   Access to export Talk Group information from RadioReference.com (usually requires a Premium Subscription).
 -   **EITHER** a Google Cloud Platform account with the Geocoding API enabled and an API Key **OR** a LocationIQ account with an API Key. You only need the key for the service you choose to use.
 -   (Optional but Recommended for Local Transcription Speed) An NVIDIA GPU with CUDA support (8GB+ VRAM recommended). Ensure appropriate drivers and CUDA/cuDNN libraries are installed before running the installation script.
@@ -225,11 +225,11 @@ Configure the web map's appearance and behavior:
 
 Stores hashed API keys used by SDRTrunk/TrunkRecorder to authenticate with the `/api/call-upload` endpoint. Generate the hash using `GenApiKey.js`.
 
-## 📡 Configuring SDRTrunk / TrunkRecorder
+## 📡 Configuring SDRTrunk / TrunkRecorder / rdio-scanner
 
-Configure your radio software to send call recordings and metadata to the Scanner Map bot.
+Configure your radio software (SDRTrunk, TrunkRecorder, or rdio-scanner) to send call recordings and metadata to the Scanner Map bot.
 
-### RdioScanner Endpoint
+### RdioScanner Compatible Endpoint
 
 The endpoint URL is: `http://<YOUR_SERVER_IP_OR_DOMAIN>:<BOT_PORT>/api/call-upload`
 
@@ -260,6 +260,16 @@ Edit your `config.json`:
 }
 
 ```
+
+### rdio-scanner Setup (Downstream)
+
+1.  Go to your rdio-scanner web interface > Config > Downstreams.
+2.  Click "New downstream".
+3.  Enter the **Endpoint URL without `/api/call-upload`**: `http://<YOUR_SERVER_IP_OR_DOMAIN>:<BOT_PORT>`.
+4.  Enter the **NON-HASHED / SECRET API Key** (the **original secret key** you defined inside `GenApiKey.js` before running it). **Note:** This differs from SDRTrunk/TrunkRecorder setup. `bot.js` still requires the *hashed* key in `data/apikeys.json` for validation.
+5.  Ensure the "Disabled" switch is OFF.
+6.  Configure Access (Choose systems/talkgroups) as needed.
+7.  Save the downstream configuration.
 
 ## 🤖 Discord Bot Setup
 
