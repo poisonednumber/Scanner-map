@@ -650,12 +650,39 @@ app.post('/api/call-upload', (req, res) => {
         if (!apiKey) {
           return sendResponse(401, 'Invalid or disabled API key.');
         }
-        
-        // Handle TrunkRecorder specific fields
-        if (!fields.source || fields.source === '') {
-          fields.source = `TR-${Math.floor(Math.random() * 9000) + 1000}`;
+
+        // --- START: dateTime Parsing Logic ---
+        let callDateTime;
+        let inferredSourceSystem = 'TrunkRecorder'; // Default assumption
+        if (fields.dateTime) {
+            // Try parsing as Unix timestamp (seconds)
+            const timestampSeconds = parseInt(fields.dateTime, 10);
+            if (!isNaN(timestampSeconds) && timestampSeconds > 1000000000) { // Basic sanity check for Unix timestamp
+                callDateTime = new Date(timestampSeconds * 1000);
+                // Keep inferredSourceSystem as 'TrunkRecorder'
+            } else {
+                // Try parsing as ISO/RFC3339 string
+                callDateTime = new Date(fields.dateTime);
+                if (!isNaN(callDateTime.getTime())) {
+                    // Successfully parsed as ISO string, likely rdio-scanner
+                    inferredSourceSystem = 'rdio-scanner';
+                }
+            }
+            // Final validation
+            if (isNaN(callDateTime.getTime())) {
+                logger.warn(`Could not parse dateTime field: ${fields.dateTime}. Using current time.`);
+                callDateTime = new Date(); // Fallback to now if parsing fails
+                inferredSourceSystem = 'Unknown (dateTime parse failed)'; // Update source if parsing failed
+            }
+        } else {
+             logger.warn('dateTime field missing. Using current time.');
+             callDateTime = new Date(); // Fallback if field is missing
+             inferredSourceSystem = 'Unknown (dateTime missing)';
         }
+        // --- END: dateTime Parsing Logic ---
         
+        // Handle source field explicitly
+        // ... (rest of the existing logic for source, audioName) ...
         // Map audioName to filename for TrunkRecorder if original isn't available
         if (fields.audioName && (!fileInfo || !fileInfo.originalFilename)) {
           fileInfo = fileInfo || {};
@@ -663,7 +690,8 @@ app.post('/api/call-upload', (req, res) => {
         }
         
         if (fileInfo && fileBuffer) {
-          const customFilename = generateCustomFilename(fields, fileInfo.originalFilename);
+          // Use the parsed callDateTime when generating filename and calling handleNewAudio
+          const customFilename = generateCustomFilename({...fields, dateTime: callDateTime.getTime() / 1000}, fileInfo.originalFilename); // Pass seconds for filename generator
           const saveTo = path.join(UPLOAD_DIR, customFilename);
           
           fs.writeFile(saveTo, fileBuffer, (err) => {
@@ -672,7 +700,8 @@ app.post('/api/call-upload', (req, res) => {
               return sendResponse(500, 'Error saving file');
             }
             
-            logger.info(`Received TrunkRecorder audio: ${customFilename}`);
+            // Use the inferred source system for logging
+            logger.info(`Received audio via ${inferredSourceSystem}: ${customFilename}`);
             
             handleNewAudio({
               filename: customFilename,
@@ -680,11 +709,11 @@ app.post('/api/call-upload', (req, res) => {
               talkGroupID: fields.talkgroup,
               systemName: fields.systemLabel,
               talkGroupName: fields.talkgroupLabel,
-              dateTime: fields.dateTime,
+              dateTime: callDateTime.toISOString(), // Pass ISO string to handleNewAudio
               source: fields.source,
               frequency: fields.frequency,
               talkGroupGroup: fields.talkgroupGroup,
-              isTrunkRecorder: true,
+              isTrunkRecorder: inferredSourceSystem === 'TrunkRecorder', // Set based on inference
               frequencies: fields.frequencies // <-- Pass the frequencies field
             });
             
