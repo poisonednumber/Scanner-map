@@ -306,6 +306,9 @@ function Create-EnvFile {
     } else {
         $envContent += "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
     }
+    $envContent += "# Maximum concurrent local transcriptions"
+    $maxConcurrent = Prompt-Input "Enter MAX_CONCURRENT_TRANSCRIPTIONS (e.g., 3)" "3"
+    $envContent += "MAX_CONCURRENT_TRANSCRIPTIONS=$maxConcurrent      # Used only if TRANSCRIPTION_MODE=local"
     $envContent += ""
     $envContent += "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
     $envContent += "# URL of your running faster-whisper-server/speaches API"
@@ -590,6 +593,7 @@ function Manual-StepsReminder {
     Write-Host "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup." -ForegroundColor Yellow
     Write-Host "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct." -ForegroundColor Yellow
     Write-Host "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired." -ForegroundColor Yellow
+    Write-Host "    - If local, ensure MAX_CONCURRENT_TRANSCRIPTIONS is set appropriately." -ForegroundColor Yellow
     # *** END UPDATED REMINDERS ***
     Write-Host "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines." -ForegroundColor Red
     Write-Host ""
