@@ -32,6 +32,7 @@ DEFAULT_TIMEZONE="US/Eastern"
 DEFAULT_ENABLE_AUTH="false"
 DEFAULT_TARGET_CITIES="City1,City2,City3,City4"
 DEFAULT_SUMMARY_LOOKBACK_HOURS="1" # Added default summary hours
+DEFAULT_ASK_AI_LOOKBACK_HOURS="8"   # <-- Add this default
 # --- NEW: Storage Defaults ---
 DEFAULT_STORAGE_MODE="local" # Default to local
 DEFAULT_S3_ENDPOINT=""
@@ -352,6 +353,10 @@ create_env_file() {
     prompt_input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" "$DEFAULT_SUMMARY_LOOKBACK_HOURS" summary_hours
     append_env "SUMMARY_LOOKBACK_HOURS=$summary_hours"
     append_env ""
+    append_env "# How many hours back the \'Ask AI\' feature should cover"
+    prompt_input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" "$DEFAULT_ASK_AI_LOOKBACK_HOURS" ask_ai_hours
+    append_env "ASK_AI_LOOKBACK_HOURS=$ask_ai_hours"
+    append_env ""
 
     # --- NEW: Storage Mode ---
     append_env "#################################################################"
@@ -585,6 +590,7 @@ manual_steps_reminder() {
   echo "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup."
   echo "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct."
   # *** END UPDATED REMINDERS ***
+  echo "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired."
   echo "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines."
   echo ""
   echo "2.  'public/config.js' ('nano $INSTALL_DIR/public/config.js'):"
