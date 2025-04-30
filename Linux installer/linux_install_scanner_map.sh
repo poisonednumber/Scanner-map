@@ -266,6 +266,9 @@ create_env_file() {
     else
         append_env "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
     fi
+    append_env "# Maximum concurrent local transcriptions"
+    prompt_input "Enter MAX_CONCURRENT_TRANSCRIPTIONS (e.g., 3)" "3" max_concurrent
+    append_env "MAX_CONCURRENT_TRANSCRIPTIONS=$max_concurrent      # Used only if TRANSCRIPTION_MODE=local"
     append_env ""
     append_env "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
     append_env "# URL of your running faster-whisper-server/speaches API"
@@ -589,8 +592,8 @@ manual_steps_reminder() {
   echo "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
   echo "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup."
   echo "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct."
-  # *** END UPDATED REMINDERS ***
   echo "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired."
+  echo "    - If local, ensure MAX_CONCURRENT_TRANSCRIPTIONS is set appropriately."
   echo "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines."
   echo ""
   echo "2.  'public/config.js' ('nano $INSTALL_DIR/public/config.js'):"
