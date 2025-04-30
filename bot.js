@@ -20,7 +20,8 @@ const {
   S3_ENDPOINT,
   S3_BUCKET_NAME,
   S3_ACCESS_KEY_ID,
-  S3_SECRET_ACCESS_KEY
+  S3_SECRET_ACCESS_KEY,
+  ASK_AI_LOOKBACK_HOURS // <-- Add this line
 } = process.env;
 
 // Now initialize derived variables
@@ -41,7 +42,7 @@ const readline = require('readline');
 const effectiveTranscriptionMode = TRANSCRIPTION_MODE || 'local'; // Default to local
 const FormData = require('form-data');
 let summaryChannel;
-const SUMMARY_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
+const SUMMARY_INTERVAL = 10 * 60 * 1000; // Changed from 5 to 10 minutes in milliseconds
 let lastSummaryUpdate = 0;
 let summaryMessage = null;
 
@@ -3166,7 +3167,9 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: '❌ No global keywords set.', flags: [MessageFlags.Ephemeral] });
           }
 
+          // Use Promise.all to handle async talk group lookups cleanly
           Promise.all(rows.map(async (row) => {
+            // ... (inner promise logic remains the same)
             if (row.talk_group_id) {
               try {
                 const tgRow = await new Promise((resolve, reject) => {
@@ -3185,7 +3188,9 @@ client.on('interactionCreate', async (interaction) => {
               return `- **${row.keyword}** (Global)`;
             }
           })).then(lines => {
-             const reply = '📝 **Global Keywords:**\\n' + lines.join('\\n');
+             // Fix: Use single backslash for newline
+             const reply = '📝 **Global Keywords:\n' + lines.join('\n');
+             // Handle potential message length limits
              if (reply.length > 2000) {
                  // Use flags instead of ephemeral: true
                  interaction.reply({ content: 'Too many keywords to display. Please refine your query or manage via database.', flags: [MessageFlags.Ephemeral] });
@@ -3283,15 +3288,16 @@ client.on('interactionCreate', async (interaction) => {
       const userQuestion = interaction.fields.getTextInputValue('ai_question');
 
       try {
-        // --- Fetch last 8 hours --- 
+        // --- Read lookback from .env, default to 8 hours --- 
+        const askAiLookbackHours = parseFloat(ASK_AI_LOOKBACK_HOURS) || 8;
         const now = new Date(); 
-        const queryStartDate = new Date(now.getTime() - 8 * 60 * 60 * 1000); // Changed from 4 to 8 hours
+        const queryStartDate = new Date(now.getTime() - askAiLookbackHours * 60 * 60 * 1000); 
         const startTimeISO = queryStartDate.toISOString();
         
         // --- End Time Window Change --- 
 
-        // 1. Fetch transcriptions using the 8-hour window
-        logger.info(`Ask AI: Fetching last 8 hours transcriptions for TG ${talkGroupID} (since ${startTimeISO})`); // Updated log
+        // 1. Fetch transcriptions using the configured window
+        logger.info(`Ask AI: Fetching last ${askAiLookbackHours} hours transcriptions for TG ${talkGroupID} (since ${startTimeISO})`); // Updated log
         const transcriptions = await new Promise((resolve, reject) => {
           db.all(
             `SELECT timestamp, transcription 
@@ -3321,7 +3327,8 @@ client.on('interactionCreate', async (interaction) => {
         const userMessageTimeRange = `${actualStartTime.toLocaleString('en-US', {timeZone: TIMEZONE})} and ${actualEndTime.toLocaleString('en-US', {timeZone: TIMEZONE})}`;
         
         if (transcriptions.length === 0) {
-            await interaction.editReply(`No transcriptions found for talk group ${talkGroupID} in the last 8 hours (since ${queryStartDate.toLocaleString('en-US', {timeZone: TIMEZONE})}).`); // Updated message
+            // Updated message to use variable
+            await interaction.editReply(`No transcriptions found for talk group ${talkGroupID} in the last ${askAiLookbackHours} hours (since ${queryStartDate.toLocaleString('en-US', {timeZone: TIMEZONE})}).`);
             return;
         }
         
@@ -3357,10 +3364,10 @@ client.on('interactionCreate', async (interaction) => {
             tzAbbreviation = moment.tz(TIMEZONE).format('z');
         }
 
-        // Simplified prompt: Always refers to the last 8 hours
+        // Prompt updated to use variable lookback period
         const prompt = `You are an AI assistant analyzing radio transcriptions for the talk group "${talkGroupName}".
 
-The following is a log of radio transmissions from the last 8 hours (approximately ${promptStartTimeFormatted} to ${promptEndTimeFormatted} ${tzAbbreviation}):
+The following is a log of radio transmissions from the last ${askAiLookbackHours} hours (approximately ${promptStartTimeFormatted} to ${promptEndTimeFormatted} ${tzAbbreviation}):
 ---
 ${formattedTranscriptions}
 ---
@@ -3426,7 +3433,8 @@ User Question: ${userQuestion}
         const replyEmbed = new EmbedBuilder()
           .setTitle(`AI Analysis for ${talkGroupName}`)
           .setColor(0x5865F2) // Discord blurple color
-          .setDescription(`**Your Question:**\n${userQuestion}\n\n**AI Answer (based on last 8 hours):**\n>>> ${ollamaResponseText}`)
+          // Updated description to use variable
+          .setDescription(`**Your Question:**\n${userQuestion}\n\n**AI Answer (based on last ${askAiLookbackHours} hours):**\n>>> ${ollamaResponseText}`)
           .setTimestamp();
 
         // Truncate description if too long for Discord embed
