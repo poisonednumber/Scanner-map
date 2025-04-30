@@ -240,6 +240,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  ModalBuilder,       // <-- Add this
+  TextInputBuilder,   // <-- Add this
+  TextInputStyle,     // <-- Add this
 } = require('discord.js');
 const {
   joinVoiceChannel,
@@ -1336,50 +1339,6 @@ function cleanupOldAudioFiles() {
 // Run cleanup every day
 setInterval(cleanupOldAudioFiles, 24 * 60 * 60 * 1000);
 
-// Function to process transcription queue
-/* function processTranscriptionQueue() {
-  while (
-    activeTranscriptions < MAX_CONCURRENT_TRANSCRIPTIONS &&
-    transcriptionQueue.length > 0
-  ) {
-    const audioData = transcriptionQueue.shift();
-    activeTranscriptions++;
-
-    transcribeAudio(audioData.tempPath, (transcriptionText) => {
-      activeTranscriptions--;
-
-      if (!transcriptionText) {
-        logger.warn(`No transcription obtained for ID ${audioData.transcriptionId}`);
-        // Optionally, handle this case (e.g., notify)
-        processTranscriptionQueue();
-        return;
-      }
-
-      updateTranscription(audioData.transcriptionId, transcriptionText, () => {
-        logger.info(`Updated transcription for ID ${audioData.transcriptionId}`);
-
-        handleNewTranscription(
-          audioData.transcriptionId,
-          transcriptionText,
-          audioData.talkGroupID,
-          audioData.systemName,
-          audioData.talkGroupName,
-          audioData.source,
-          audioData.talkGroupGroup,
-          audioData.filename // Assuming this is your audioFilePath
-        );
-
-        fs.unlink(audioData.tempPath, (err) => {
-          if (err) logger.error('Error deleting temp file:', err);
-        });
-
-        logger.info(`Processed: ${audioData.filename}`);
-        processTranscriptionQueue();
-      });
-    });
-  }
-} */
-
 // Function to transcribe audio
 // Function to transcribe audio
 function transcribeAudio(filePath, callback) {
@@ -1874,7 +1833,12 @@ function sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLi
       .setLabel('🎧 Listen Live')
       .setStyle(ButtonStyle.Primary);
 
-    const row = new ActionRowBuilder().addComponents(listenLiveButton);
+    const askAIButton = new ButtonBuilder() // <-- Add this button
+      .setCustomId(`ask_ai_${talkGroupID}`)
+      .setLabel('🤖 Ask AI')
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder().addComponents(listenLiveButton, askAIButton); // <-- Add the new button here
 
     // Create the embed for a new message
     const embed = new EmbedBuilder()
@@ -1886,7 +1850,7 @@ function sendNewTranscriptionMessage(channel, fullTalkGroupName, transcriptionLi
     // Send the new message
     channel.send({
       embeds: [embed],
-      components: [row],
+      components: [row], // Use the row with both buttons
     })
       .then((msg) => {
         const cacheKey = channel.id;
@@ -3090,39 +3054,40 @@ client.on('interactionCreate', async (interaction) => {
     const { commandName, options } = interaction;
 
     if (commandName === 'alert') {
-      // --- Start Alert Command Logic (Existing - Unchanged) ---
+      // --- Start Alert Command Logic ---
       const subcommand = interaction.options.getSubcommand();
       const keyword = options.getString('keyword');
       const talkGroupInput = options.getString('talkgroup');
 
       if (subcommand === 'add') {
         if (!keyword) {
-          return interaction.reply({ content: 'Please provide a keyword to add.', ephemeral: true }); // Added ephemeral
+          // Use flags instead of ephemeral: true
+          return interaction.reply({ content: 'Please provide a keyword to add.', flags: [MessageFlags.Ephemeral] });
         }
 
         let talkGroupID = null;
         if (talkGroupInput) {
-          // Try to find talk group ID by name
           db.get(
             `SELECT id FROM talk_groups WHERE alpha_tag = ?`,
             [talkGroupInput],
             (err, row) => {
               if (err) {
                 logger.error('Database error adding keyword:', err);
-                return interaction.reply({ content: 'Error adding keyword due to database issue.', ephemeral: true }); // Added ephemeral
+                // Use flags instead of ephemeral: true
+                return interaction.reply({ content: 'Error adding keyword due to database issue.', flags: [MessageFlags.Ephemeral] });
               } else if (row) {
                 talkGroupID = row.id;
-                addGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
+                addGlobalKeyword(keyword, talkGroupID, interaction);
               } else {
-                return interaction.reply({ content: `Talk group "${talkGroupInput}" not found.`, ephemeral: true }); // Added ephemeral
+                // Use flags instead of ephemeral: true
+                return interaction.reply({ content: `Talk group \\"${talkGroupInput}\\" not found.`, flags: [MessageFlags.Ephemeral] });
               }
             }
           );
         } else {
-          addGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
+          addGlobalKeyword(keyword, talkGroupID, interaction);
         }
 
-        // Modified function to reply to interaction
         function addGlobalKeyword(keyword, talkGroupID, interaction) {
           db.run(
             `INSERT OR IGNORE INTO global_keywords (keyword, talk_group_id) VALUES (?, ?)`,
@@ -3130,43 +3095,44 @@ client.on('interactionCreate', async (interaction) => {
             function (err) {
               if (err) {
                 logger.error('Error inserting keyword:', err.message);
-                return interaction.reply({ content: 'Error adding keyword.', ephemeral: true }); // Added ephemeral
+                // Use flags instead of ephemeral: true
+                return interaction.reply({ content: 'Error adding keyword.', flags: [MessageFlags.Ephemeral] });
               }
-              interaction.reply({ content: `✅ Keyword "${keyword}" added for alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ''}.`, ephemeral: true }); // Added ephemeral and TG info
+              // Use flags instead of ephemeral: true
+              interaction.reply({ content: `✅ Keyword \\"${keyword}\\" added for alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ''}.`, flags: [MessageFlags.Ephemeral] });
             }
           );
         }
       } else if (subcommand === 'remove') {
         if (!keyword) {
-          return interaction.reply({ content: 'Please provide a keyword to remove.', ephemeral: true }); // Added ephemeral
+          // Use flags instead of ephemeral: true
+          return interaction.reply({ content: 'Please provide a keyword to remove.', flags: [MessageFlags.Ephemeral] });
         }
 
         let talkGroupID = null;
         if (talkGroupInput) {
-          // Try to find talk group ID by name
           db.get(
             `SELECT id FROM talk_groups WHERE alpha_tag = ?`,
             [talkGroupInput],
             (err, row) => {
               if (err) {
                 logger.error('Database error removing keyword:', err);
-                return interaction.reply({ content: 'Error removing keyword due to database issue.', ephemeral: true }); // Added ephemeral
+                // Use flags instead of ephemeral: true
+                return interaction.reply({ content: 'Error removing keyword due to database issue.', flags: [MessageFlags.Ephemeral] });
               } else if (row) {
                 talkGroupID = row.id;
-                removeGlobalKeyword(keyword, talkGroupID, interaction); // Pass interaction
+                removeGlobalKeyword(keyword, talkGroupID, interaction);
               } else {
-                return interaction.reply({ content: `Talk group "${talkGroupInput}" not found.`, ephemeral: true }); // Added ephemeral
+                // Use flags instead of ephemeral: true
+                return interaction.reply({ content: `Talk group \\"${talkGroupInput}\\" not found.`, flags: [MessageFlags.Ephemeral] });
               }
             }
           );
         } else {
-          // If no talkgroup specified, try removing global keyword (talk_group_id IS NULL)
-          removeGlobalKeyword(keyword, null, interaction); // Pass interaction, explicit null for global
+          removeGlobalKeyword(keyword, null, interaction);
         }
 
-        // Modified function to reply to interaction
         function removeGlobalKeyword(keyword, talkGroupID, interaction) {
-          // Adjust query based on whether talkGroupID is provided
           const sql = talkGroupID
             ? `DELETE FROM global_keywords WHERE keyword = ? AND talk_group_id = ?`
             : `DELETE FROM global_keywords WHERE keyword = ? AND talk_group_id IS NULL`;
@@ -3175,12 +3141,15 @@ client.on('interactionCreate', async (interaction) => {
           db.run(sql, params, function (err) {
             if (err) {
               logger.error('Error deleting keyword:', err.message);
-              return interaction.reply({ content: 'Error removing keyword.', ephemeral: true }); // Added ephemeral
+              // Use flags instead of ephemeral: true
+              return interaction.reply({ content: 'Error removing keyword.', flags: [MessageFlags.Ephemeral] });
             }
             if (this.changes > 0) {
-               interaction.reply({ content: `🗑️ Keyword "${keyword}" removed from alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ' (global)'}.`, ephemeral: true }); // Added ephemeral and scope
+               // Use flags instead of ephemeral: true
+               interaction.reply({ content: `🗑️ Keyword \\"${keyword}\\" removed from alerts${talkGroupID ? ` (for TG ${talkGroupID})` : ' (global)'}.`, flags: [MessageFlags.Ephemeral] });
             } else {
-               interaction.reply({ content: `Keyword "${keyword}" not found for the specified scope.`, ephemeral: true}); // Added ephemeral and better message
+               // Use flags instead of ephemeral: true
+               interaction.reply({ content: `Keyword \\"${keyword}\\" not found for the specified scope.`, flags: [MessageFlags.Ephemeral]});
             }
           });
         }
@@ -3188,14 +3157,15 @@ client.on('interactionCreate', async (interaction) => {
         db.all(`SELECT keyword, talk_group_id FROM global_keywords ORDER BY talk_group_id, keyword`, [], (err, rows) => {
           if (err) {
             logger.error('Error fetching keywords:', err.message);
-            return interaction.reply({ content: 'Error fetching keywords.', ephemeral: true }); // Added ephemeral
+            // Use flags instead of ephemeral: true
+            return interaction.reply({ content: 'Error fetching keywords.', flags: [MessageFlags.Ephemeral] });
           }
 
           if (rows.length === 0) {
-            return interaction.reply({ content: '❌ No global keywords set.', ephemeral: true }); // Added ephemeral
+            // Use flags instead of ephemeral: true
+            return interaction.reply({ content: '❌ No global keywords set.', flags: [MessageFlags.Ephemeral] });
           }
 
-          // Use Promise.all to handle async talk group lookups cleanly
           Promise.all(rows.map(async (row) => {
             if (row.talk_group_id) {
               try {
@@ -3215,12 +3185,13 @@ client.on('interactionCreate', async (interaction) => {
               return `- **${row.keyword}** (Global)`;
             }
           })).then(lines => {
-             const reply = '📝 **Global Keywords:**\n' + lines.join('\n');
-             // Handle potential message length limits
+             const reply = '📝 **Global Keywords:**\\n' + lines.join('\\n');
              if (reply.length > 2000) {
-                 interaction.reply({ content: 'Too many keywords to display. Please refine your query or manage via database.', ephemeral: true });
+                 // Use flags instead of ephemeral: true
+                 interaction.reply({ content: 'Too many keywords to display. Please refine your query or manage via database.', flags: [MessageFlags.Ephemeral] });
              } else {
-                 interaction.reply({ content: reply, ephemeral: true }); // Added ephemeral
+                 // Use flags instead of ephemeral: true
+                 interaction.reply({ content: reply, flags: [MessageFlags.Ephemeral] });
              }
           });
         });
@@ -3228,67 +3199,248 @@ client.on('interactionCreate', async (interaction) => {
       // --- End Alert Command Logic ---
 
     } else if (commandName === 'summary') {
-      // --- Start Summary Command Logic (Existing - Unchanged) ---
+      // --- Start Summary Command Logic ---
       const subcommand = interaction.options.getSubcommand();
 
       if (subcommand === 'refresh') {
-        // Defer ephemerally FIRST
-        await interaction.deferReply({ ephemeral: true }); // Changed flags to ephemeral: true
+        // Use flags instead of ephemeral: true
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
         try {
             await updateSummaryEmbed();
             await interaction.editReply('✅ Summary has been refreshed!');
         } catch (error) {
             logger.error("Error during manual summary refresh:", error);
-            await interaction.editReply('❌ Failed to refresh summary. Please check logs.').catch(console.error); // Catch potential edit error
+            await interaction.editReply('❌ Failed to refresh summary. Please check logs.').catch(console.error);
         }
       }
       // --- End Summary Command Logic ---
     }
-    // Handle other commands if you add more...
 
   // Handle Button Interactions
   } else if (interaction.isButton()) {
     const customId = interaction.customId;
 
-    // --- ADDED: Try block for button handling ---
     try {
       if (customId.startsWith('listen_live_')) {
         const talkGroupID = customId.replace('listen_live_', '');
-        // handleListenLive should ideally contain its own deferReply and error handling
+        // Assuming handleListenLive already uses flags correctly based on user comment
         await handleListenLive(interaction, talkGroupID);
 
       } else if (customId === 'refresh_summary') {
-        // Defer ephemerally FIRST
-        // Note: Using ephemeral: true is generally better for status updates like this.
-        await interaction.deferReply({ ephemeral: true }); // Changed flags to ephemeral: true
-
-        // Then run the potentially slow operation
+        // Use flags instead of ephemeral: true
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
         await updateSummaryEmbed();
-
-        // Then edit the reply
         await interaction.editReply('✅ Summary has been refreshed!');
+      
+      } else if (customId.startsWith('ask_ai_')) {
+        const talkGroupID = customId.replace('ask_ai_', '');
+        const modal = new ModalBuilder()
+          .setCustomId(`ask_ai_modal_${talkGroupID}`)
+          .setTitle(`Ask AI about TG ${talkGroupID}`);
+        
+        // Create the text input component
+        const questionInput = new TextInputBuilder()
+          .setCustomId('ai_question')
+          .setLabel("Your question about this talk group:") // Shortened label
+          .setPlaceholder('e.g., "Were there any fire-related incidents?", "List major events."')
+          .setStyle(TextInputStyle.Paragraph) // Use Paragraph for potentially longer questions
+          .setRequired(true);
+
+        // Add the input to an action row and add to the modal
+        const firstActionRow = new ActionRowBuilder().addComponents(questionInput);
+        modal.addComponents(firstActionRow);
+        
+        // Show the modal to the user
+        await interaction.showModal(modal);
       }
-      // Handle other buttons if you add more...
 
     } catch (error) {
-      // --- ADDED: Catch block for button handling ---
       logger.error(`Error handling button interaction ${customId}:`, error);
       try {
-        // Attempt to inform the user ephemerally that something went wrong
         const errorMessage = (error.code === 10062)
          ? '❌ This interaction has expired. Please try the command again or use a newer message.'
          : '❌ There was an error processing your request.';
 
         if (interaction.deferred || interaction.replied) {
-          // If we already deferred or replied, use followUp
-          await interaction.followUp({ content: errorMessage, ephemeral: true });
+          // Use flags instead of ephemeral: true
+          await interaction.followUp({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
         } else {
-          // Otherwise, try to reply (less likely path if deferReply failed, but included for safety)
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+          // Use flags instead of ephemeral: true
+          await interaction.reply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
         }
       } catch (followUpError) {
-        // Log if sending the error message itself fails
         logger.error(`Failed to send error follow-up/reply for interaction ${interaction.id}:`, followUpError);
+      }
+    }
+  // Handle Modal Submissions
+  } else if (interaction.isModalSubmit()) {
+    const customId = interaction.customId;
+
+    if (customId.startsWith('ask_ai_modal_')) {
+      // Make the reply PUBLIC by removing ephemeral flag/option
+      await interaction.deferReply(); // No ephemeral flag needed here
+      const talkGroupID = customId.replace('ask_ai_modal_', '');
+      const userQuestion = interaction.fields.getTextInputValue('ai_question');
+
+      try {
+        // --- Fetch last 8 hours --- 
+        const now = new Date(); 
+        const queryStartDate = new Date(now.getTime() - 8 * 60 * 60 * 1000); // Changed from 4 to 8 hours
+        const startTimeISO = queryStartDate.toISOString();
+        
+        // --- End Time Window Change --- 
+
+        // 1. Fetch transcriptions using the 8-hour window
+        logger.info(`Ask AI: Fetching last 8 hours transcriptions for TG ${talkGroupID} (since ${startTimeISO})`); // Updated log
+        const transcriptions = await new Promise((resolve, reject) => {
+          db.all(
+            `SELECT timestamp, transcription 
+             FROM transcriptions 
+             WHERE talk_group_id = ? AND timestamp > ? AND transcription != '' 
+             ORDER BY timestamp ASC`, 
+            [talkGroupID, startTimeISO], 
+            (err, rows) => {
+              if (err) {
+                logger.error(`Error fetching transcriptions for Ask AI (TG: ${talkGroupID}):`, err);
+                reject(err);
+              } else {
+                logger.info(`Ask AI: Retrieved ${rows.length} transcriptions for TG ${talkGroupID}.`);
+                if (rows.length > 0) {
+                    logger.info(` -> First timestamp: ${rows[0].timestamp}`);
+                    logger.info(` -> Last timestamp: ${rows[rows.length - 1].timestamp}`);
+                }
+                resolve(rows);
+              }
+            }
+          );
+        });
+
+        // Format the actual start/end time of the *fetched data* for user message
+        const actualStartTime = transcriptions.length > 0 ? new Date(transcriptions[0].timestamp) : queryStartDate;
+        const actualEndTime = transcriptions.length > 0 ? new Date(transcriptions[transcriptions.length - 1].timestamp) : now; // End time is now
+        const userMessageTimeRange = `${actualStartTime.toLocaleString('en-US', {timeZone: TIMEZONE})} and ${actualEndTime.toLocaleString('en-US', {timeZone: TIMEZONE})}`;
+        
+        if (transcriptions.length === 0) {
+            await interaction.editReply(`No transcriptions found for talk group ${talkGroupID} in the last 8 hours (since ${queryStartDate.toLocaleString('en-US', {timeZone: TIMEZONE})}).`); // Updated message
+            return;
+        }
+        
+        // 2. Get Talk Group Name for context
+        const talkGroupInfo = await getTalkGroupName(talkGroupID);
+        const talkGroupName = talkGroupInfo.name || `TG ${talkGroupID}`;
+
+        // Format start/end times for the prompt (using actual data times)
+        const promptStartTimeFormatted = actualStartTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE });
+        const promptEndTimeFormatted = actualEndTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE });
+        
+        // 3. Format transcriptions using simple toLocaleString
+        const formattedTranscriptions = transcriptions.map(t => {
+          const formattedDateTime = new Date(t.timestamp).toLocaleString('en-US', {
+            year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', second: '2-digit',
+            hour12: true,
+            timeZone: TIMEZONE 
+          });
+          return `[${formattedDateTime}] ${t.transcription}`; 
+        }).join('\n'); // Join with newline
+        
+        // 4. Create the simplified prompt for Ollama
+        // Get timezone abbreviation 
+        let tzAbbreviation = '';
+        try {
+            const dateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: TIMEZONE, timeZoneName: 'short' });
+            const parts = dateFormatter.formatToParts(new Date());
+            const tzPart = parts.find(part => part.type === 'timeZoneName');
+            tzAbbreviation = tzPart ? tzPart.value : moment.tz(TIMEZONE).format('z');
+        } catch (e) {
+            logger.warn(`Could not get timezone abbreviation for ${TIMEZONE}, using moment fallback: ${e.message}`);
+            tzAbbreviation = moment.tz(TIMEZONE).format('z');
+        }
+
+        // Simplified prompt: Always refers to the last 8 hours
+        const prompt = `You are an AI assistant analyzing radio transcriptions for the talk group "${talkGroupName}".
+
+The following is a log of radio transmissions from the last 8 hours (approximately ${promptStartTimeFormatted} to ${promptEndTimeFormatted} ${tzAbbreviation}):
+---
+${formattedTranscriptions}
+---
+
+Using only the transcriptions provided above, please answer the user's question concisely:
+User Question: ${userQuestion}
+
+**Instructions:**
+- Answer concisely based *only* on the provided transcriptions.
+- Focus on events and details directly relevant to the user's question.
+- Avoid including minor details or unrelated events unless specifically asked.
+- If you cannot find relevant information for the question within the provided log, state that clearly.`;
+
+        logger.info(`Ask AI Prompt for TG ${talkGroupID} (Length: ${prompt.length}, First 100 chars): ${prompt.substring(0, 100)}...`);
+
+        // 5. Call Ollama API (Keep 60s timeout for potentially long context)
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000); 
+
+        let ollamaResponseText = 'Error: Could not get response from AI.';
+        try {
+            const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                model: OLLAMA_MODEL,
+                prompt: prompt,
+                stream: false,
+                // --- ADDED: Context Window Size ---
+                options: {
+                  num_ctx: 35000
+                }
+                // --- END ADDED ---
+                }),
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                logger.error(`Ask AI Ollama Error: ${response.status} ${response.statusText}`);
+                ollamaResponseText = `Error: AI service returned status ${response.status}.`;
+            } else {
+                const data = await response.json();
+                ollamaResponseText = data.response || 'Error: AI returned an empty response.';
+                
+                // --- ADDED: Remove <think> block ---
+                const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/;
+                ollamaResponseText = ollamaResponseText.replace(thinkBlockRegex, '').trim();
+                // --- END ADDED ---
+            }
+        } catch (fetchError) {
+            clearTimeout(timeout); 
+            if (fetchError.name === 'AbortError') {
+                logger.error(`Ask AI Ollama Error: Request timed out (60s) for TG ${talkGroupID}`);
+                ollamaResponseText = 'Error: The request to the AI timed out.';
+            } else {
+                logger.error(`Ask AI Ollama Fetch Error for TG ${talkGroupID}:`, fetchError);
+                ollamaResponseText = 'Error: Could not connect to the AI service.';
+            }
+        }
+
+        // 6. Send the response back to the user (publicly, in an embed)
+        const replyEmbed = new EmbedBuilder()
+          .setTitle(`AI Analysis for ${talkGroupName}`)
+          .setColor(0x5865F2) // Discord blurple color
+          .setDescription(`**Your Question:**\n${userQuestion}\n\n**AI Answer (based on last 8 hours):**\n>>> ${ollamaResponseText}`)
+          .setTimestamp();
+
+        // Truncate description if too long for Discord embed
+        if (replyEmbed.data.description.length > 4096) {
+            const truncatedDesc = replyEmbed.data.description.substring(0, 4093) + '...';
+            replyEmbed.setDescription(truncatedDesc);
+        }
+
+        await interaction.editReply({ embeds: [replyEmbed] });
+
+      } catch (error) {
+        logger.error(`Error handling Ask AI modal submission for TG ${talkGroupID}:`, error);
+        // Keep error message ephemeral
+        await interaction.followUp({ content: '❌ An error occurred while processing your request. Please check the bot logs.', flags: [MessageFlags.Ephemeral] });
       }
     }
   }

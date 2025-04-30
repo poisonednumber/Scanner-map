@@ -283,7 +283,12 @@ Category:`;
     const result = await response.json();
 
     // Trim whitespace and convert to uppercase for consistency
-    let category = result.response.trim().toUpperCase();
+    let category = result.response.trim(); // Changed to let
+
+    // --- ADDED: Remove <think> block ---
+    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/; // Corrected escaping
+    category = category.replace(thinkBlockRegex, '').trim().toUpperCase(); // Apply replace and uppercase here
+    // --- END ADDED ---
 
     // Validate the AI's response against the known categories (including OTHER)
     const validCategoriesUppercase = categories.map(cat => cat.toUpperCase());

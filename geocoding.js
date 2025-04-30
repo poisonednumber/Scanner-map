@@ -1,4 +1,4 @@
-// geocoding.js - Address extraction and geocoding module
+// geocoding.js - Address extraction and geocoding module (using LocationIQ)
 
 require('dotenv').config();
 const fetch = require('node-fetch');
@@ -9,19 +9,20 @@ const path = require('path');
 
 // Environment variables - strict loading from .env only
 const {
-  GOOGLE_MAPS_API_KEY,
+  LOCATIONIQ_API_KEY, // Renamed from GOOGLE_MAPS_API_KEY
   GEOCODING_STATE,
   GEOCODING_COUNTRY,
   GEOCODING_TARGET_COUNTIES,
-  GEOCODING_CITY,
+  GEOCODING_CITY, // Still used as a fallback town name in LLM prompt
   TIMEZONE,
   OLLAMA_URL,
   OLLAMA_MODEL,
-  TARGET_CITIES_LIST
+  TARGET_CITIES_LIST // Kept for potential future use or reference
 } = process.env;
 
 // Validate required environment variables
-const requiredVars = ['GOOGLE_MAPS_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
+// Updated to check for LOCATIONIQ_API_KEY
+const requiredVars = ['LOCATIONIQ_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
@@ -31,8 +32,9 @@ if (missingVars.length > 0) {
 
 // Parse target counties into array
 const TARGET_COUNTIES = GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
+const COUNTRY_CODES = GEOCODING_COUNTRY; // LocationIQ uses country codes
 
-// Logger setup
+// Logger setup (remains the same)
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -40,32 +42,19 @@ const logger = winston.createLogger({
       format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
     }),
     winston.format.printf(({ timestamp, level, message }) => {
-      // Define patterns that should be yellow
-      if (message.includes('Talk Group') || 
+      if (message.includes('Talk Group') ||
           message.includes('Incoming Request')) {
-        // ANSI yellow color code
         return `${timestamp} \x1b[33m[${level.toUpperCase()}] ${message}\x1b[0m`;
       }
-      
-      // Define patterns that should be green
-      if (message.includes('Extracted Address') || 
+      if (message.includes('Extracted Address') ||
           message.includes('Geocoded Address')) {
-        // ANSI green color code
         return `${timestamp} \x1b[32m[${level.toUpperCase()}] ${message}\x1b[0m`;
       }
-      
-      // White color for other info messages
       if (level === 'info') {
         return `${timestamp} \x1b[37m[${level.toUpperCase()}] ${message}\x1b[0m`;
       }
-      
-      // Default colors for other log levels
-      const colors = {
-        error: '\x1b[31m', // red
-        warn: '\x1b[33m',  // yellow
-        debug: '\x1b[36m'  // cyan
-      };
-      const color = colors[level] || '\x1b[37m'; // default to white
+      const colors = { error: '\x1b[31m', warn: '\x1b[33m', debug: '\x1b[36m' };
+      const color = colors[level] || '\x1b[37m';
       return `${timestamp} ${color}[${level.toUpperCase()}] ${message}\x1b[0m`;
     })
   ),
@@ -76,13 +65,11 @@ const logger = winston.createLogger({
   ]
 });
 
-// Override logger.info to only allow specific messages
+// Override logger.info (remains the same)
 const originalInfo = logger.info.bind(logger);
 const allowedPatterns = [
-  // Core information only
   /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/
 ];
-
 logger.info = function (...args) {
   const message = args.join(' ');
   const shouldLog = allowedPatterns.some((pattern) => pattern.test(message));
@@ -91,7 +78,7 @@ logger.info = function (...args) {
   }
 };
 
-// Build TALK_GROUPS from environment variables
+// Build TALK_GROUPS from environment variables (remains the same)
 const TALK_GROUPS = {};
 Object.keys(process.env).forEach(key => {
   if (key.startsWith('TALK_GROUP_')) {
@@ -99,14 +86,12 @@ Object.keys(process.env).forEach(key => {
     TALK_GROUPS[talkGroupId] = process.env[key];
   }
 });
-
-// Log the loaded talk groups
 logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups from environment variables`);
 
-// Keep the TARGET_CITIES list for reference and backward compatibility
+// Keep the TARGET_CITIES list for reference (remains the same)
 const TARGET_CITIES = TARGET_CITIES_LIST ? TARGET_CITIES_LIST.split(',').map(city => city.trim()) : [];
 
-// Function to load talk groups from env vars
+// Function to load talk groups from env vars (remains the same)
 function loadTalkGroups(db) {
   logger.info(`Using talk groups from environment variables. Found ${Object.keys(TALK_GROUPS).length} talk groups`);
   return Promise.resolve(TALK_GROUPS);
@@ -117,7 +102,7 @@ function loadTalkGroups(db) {
  */
 
 /**
- * Escapes special characters in a string for use in a regular expression.
+ * Escapes special characters in a string for use in a regular expression. (remains the same)
  * @param {string} string - The string to escape.
  * @returns {string} - The escaped string.
  */
@@ -126,7 +111,7 @@ function escapeRegExp(string) {
 }
 
 /**
- * Uses local LLM to extract and complete addresses from the full transcript.
+ * Uses local LLM to extract and complete addresses from the full transcript. (remains the same)
  * @param {string} transcript - The full transcript text.
  * @param {string} town - The town associated with the transcript.
  * @returns {Promise<string|null>} - The extracted and completed address or null if not found.
@@ -134,16 +119,15 @@ function escapeRegExp(string) {
 async function extractAddressWithLLM(transcript, town) {
   try {
     const countiesString = TARGET_COUNTIES.join(', ');
-    
     const prompt = `
-You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
+You are an assistant that extracts and completes addresses from first responder dispatch transcripts.
 Focus on extracting a single full address, block, or intersection from the transcript provided below.
 If an address is incomplete, attempt to complete it based on the given town.
 Only extract addresses for ${town}.
 The address could be in one of these counties: ${countiesString}.
 
 VERY IMPORTANT INSTRUCTIONS:
-1. If no valid address is found in the transcript, respond with exactly "No address found". 
+1. If no valid address is found in the transcript, respond with exactly "No address found".
 2. DO NOT make up or hallucinate addresses that aren't clearly mentioned in the transcript.
 3. DO NOT include ANY notes, comments, explanations, or parentheticals in your response.
 4. Respond with ONLY the address in one line, nothing else.
@@ -178,13 +162,12 @@ From ${town}:
 
 Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.`;
 
-    // Call the Ollama API
     // Add AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-        logger.warn(`Ollama request timed out after 5 seconds for address extraction (Google API version).`);
+        logger.warn(`Ollama request timed out after 30 seconds for address extraction.`);
         controller.abort();
-    }, 5000); // 5-second timeout
+    }, 30000);
 
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
@@ -204,20 +187,23 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
     }
 
     const result = await response.json();
-    const extractedAddress = result.response.trim();
-    
-    logger.info(`LLM Extracted Address: "${extractedAddress}"`);
-    
-    // Check for "No address found" response
+    let extractedAddress = result.response.trim();
+
+    // --- ADDED: Remove <think> block --- 
+    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/; // Corrected escaping
+    extractedAddress = extractedAddress.replace(thinkBlockRegex, '').trim();
+    // --- END ADDED ---
+
+    logger.info(`LLM Extracted Address: \"${extractedAddress}\"`);
+
     if (extractedAddress === "No address found" || extractedAddress === "No address found.") {
       return null;
     }
-    
     return extractedAddress;
   } catch (error) {
     // Check specifically for AbortError (timeout)
     if (error.name === 'AbortError') {
-         logger.error(`Ollama request timed out during address extraction (Google API version): ${error.message}`);
+         logger.error(`Ollama request timed out during address extraction: ${error.message}`);
          return null; // Return null on timeout
     }
     logger.error(`Error extracting address with LLM: ${error.message}`);
@@ -226,120 +212,145 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
 }
 
 /**
- * Geocodes an address using Google's Geocoding API.
- * @param {string} address - The validated address.
+ * Geocodes an address using LocationIQ's Geocoding API, filtering for specific results.
+ * @param {string} address - The address query string.
  * @returns {Promise<{ lat: number, lng: number, formatted_address: string, county: string } | null>} - Geocoded data or null.
  */
 async function geocodeAddress(address) {
-  // FIX: Add explicit check for null, undefined, or empty address
+  // 1. Input Validation
   if (!address || address.trim() === '') {
     logger.info('No address provided for geocoding.');
     return null;
   }
-  
-  const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
-  
+
+  // 2. Prepare API Request
+  const endpoint = `https://us1.locationiq.com/v1/search`;
   const params = new URLSearchParams({
-    address: address,
-    key: GOOGLE_MAPS_API_KEY,
-    components: `country:${GEOCODING_COUNTRY}|administrative_area:${GEOCODING_STATE}`
+    q: address,
+    key: LOCATIONIQ_API_KEY,
+    format: 'json',
+    addressdetails: '1',
+    normalizeaddress: '1',
+    countrycodes: COUNTRY_CODES,
+    limit: '1'
   });
 
   try {
+    // 3. Make API Call
     const response = await fetch(`${endpoint}?${params.toString()}`);
     if (!response.ok) {
-      logger.error(`Geocoding API error: ${response.status} ${response.statusText}`);
+      logger.error(`LocationIQ API error: ${response.status} ${response.statusText}`);
+      const errorBody = await response.text();
+      logger.error(`LocationIQ Error Body: ${errorBody} for query: "${address}"`);
       return null;
     }
 
+    // 4. Parse Response
     const data = await response.json();
-
-    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
-      logger.warn(`Geocoding API returned status: ${data.status} for address: "${address}"`);
-      return null;
-    }
-    
-    // Find the most specific result (preferring street_address over locality)
-    const preferredTypes = ['street_address', 'premise', 'subpremise', 'route', 'intersection', 'establishment', 'point_of_interest'];
-    let bestResult = null;
-    
-    // First try to find results with preferred types
-    for (const type of preferredTypes) {
-      const matchingResult = data.results.find(r => r.types.includes(type));
-      if (matchingResult) {
-        bestResult = matchingResult;
-        break;
-      }
-    }
-    
-    // If no preferred type found, use the first result
-    const result = bestResult || data.results[0];
-    const { lat, lng } = result.geometry.location;
-    const formatted_address = result.formatted_address;
-    const resultTypes = result.types;
-
-    // Skip generic city-level results
-    if (formatted_address.match(new RegExp(`^${GEOCODING_CITY}, ${GEOCODING_STATE} \\d{5}, USA$`))) {
-      logger.info(`Skipping city-level result for ${GEOCODING_CITY}: "${formatted_address}"`);
+    if (!Array.isArray(data) || data.length === 0) {
+      logger.warn(`LocationIQ API returned no results for address: "${address}"`);
       return null;
     }
 
-    // Skip only generic city-level results while keeping useful partial matches
-    if (resultTypes.includes('locality') && resultTypes.length <= 3 && !formatted_address.includes('Caravan')) {
-      logger.info(`Skipping city-level result: "${formatted_address}"`);
-      return null;
-    }
-    
-    // Check for county-level results
-    if (TARGET_COUNTIES.some(county => formatted_address === `${county}, ${GEOCODING_STATE}, USA`) || 
-        (resultTypes.includes('administrative_area_level_2') && resultTypes.length <= 3)) {
-      logger.info(`Skipping county-level result: "${formatted_address}"`);
-      return null;
+    const result = data[0];
+
+    // Extract key fields
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    const display_name = result.display_name;
+    const resultType = result.type;
+    const resultClass = result.class;
+    const addressDetails = result.address || {};
+    const county = addressDetails.county || null;
+
+    // Basic check for essential coordinates and display name
+    if (isNaN(lat) || isNaN(lon) || !display_name) {
+       logger.warn(`LocationIQ response missing essential fields (lat/lon/display_name) for address: "${address}"`);
+       return null;
     }
 
-    // Verify that the result is in one of the target counties
-    const countyComponent = result.address_components.find(component => 
-      component.types.includes('administrative_area_level_2') && 
-      TARGET_COUNTIES.includes(component.long_name)
-    );
+    // --- START: Final Revised Filtering Logic ---
 
-    if (countyComponent) {
-      const county = countyComponent.long_name;
-      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng}) in ${county}`);
-      return { lat, lng, formatted_address, county };
-    } else {
+    // 5. Specificity Filtering - Require road info unless it's a specific non-admin place/highway.
+    const hasRoadInfo = !!(addressDetails.road);
+    const isCityAdminType = ['city', 'town', 'village', 'municipality', 'administrative', 'county', 'state', 'postcode'].includes(resultType);
+
+    // Is it a highway/intersection? (Specific enough)
+    const isHighwayOrIntersection = (resultClass === 'highway' || resultType === 'intersection');
+
+    // Is it classified as a 'place' BUT NOT also typed as a city/admin area? (Specific enough POI)
+    const isSpecificPlace = (resultClass === 'place' && !isCityAdminType);
+
+    // If there is NO road information AND it's NOT a specific place AND it's NOT a highway/intersection, filter it out.
+    if (!hasRoadInfo && !isSpecificPlace && !isHighwayOrIntersection) {
+        logger.info(`[Filter Action] Skipping result lacking road info and not a specific place/highway (Type: ${resultType}, Class: ${resultClass}): "${display_name}"`);
+        return null;
+    }
+
+    // --- END: Final Revised Filtering Logic ---
+
+
+    // 6. Target County Filtering
+    if (!county || !TARGET_COUNTIES.includes(county)) {
       const countiesList = TARGET_COUNTIES.join(' or ');
-      logger.warn(`Geocoded address "${formatted_address}" is not within ${countiesList}.`);
+      if (!county) {
+        logger.warn(`[Filter Action] Specific address "${display_name}" OK but LocationIQ did not return county information. Cannot verify target county.`);
+      } else {
+        logger.warn(`[Filter Action] Specific address "${display_name}" OK but geocoded county "${county}" is not within target counties: ${countiesList}.`);
+      }
       return null;
     }
+
+    // 7. Success: Return Formatted Result
+    logger.info(`Geocoded Address: "${display_name}" with coordinates (${lat}, ${lon}) in ${county}`);
+    return {
+        lat: lat,
+        lng: lon,
+        formatted_address: display_name,
+        county: county
+    };
+
   } catch (error) {
-    logger.error(`Error geocoding address "${address}": ${error.message}`);
+    logger.error(`Unexpected error in geocodeAddress for query "${address}": ${error.message}`, { stack: error.stack });
     return null;
   }
 }
 
+
 /**
- * Hyperlinks an address within the transcript text.
+ * Hyperlinks an address within the transcript text using coordinates.
  * @param {string} transcript - The transcript text.
- * @param {string} address - The address to hyperlink.
+ * @param {string} address - The address text to find and replace.
+ * @param {number} lat - Latitude.
+ * @param {number} lng - Longitude.
  * @returns {string} - Transcription with hyperlinked address.
  */
-function hyperlinkAddress(transcript, address) {
-  // FIX: Add explicit check for null, undefined, or empty address
-  if (!address || address.trim() === '') {
+function hyperlinkAddress(transcript, address, lat, lng) {
+  // Use a generic Google Maps URL with coordinates for the link
+  if (!address || address.trim() === '' || lat === null || lng === null) {
     return transcript;
   }
 
-  const encodedAddress = encodeURIComponent(`${address}`);
-  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
-  
-  // Use a global, case-insensitive regex to replace all instances
-  const regex = new RegExp(`\\b${escapeRegExp(address)}\\b`, 'gi');
-  return transcript.replace(regex, `[${address}](${googleMapsUrl})`);
+  const encodedCoords = `${lat},${lng}`;
+  // Link to Google Maps centered on the coordinates
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodedCoords}`;
+
+  try {
+      // Use a global, case-insensitive regex to replace all instances of the plain address text
+      // Escape special regex characters in the address string
+      const escapedAddress = escapeRegExp(address);
+      const regex = new RegExp(`\\b${escapedAddress}\\b`, 'gi');
+      // Replace with Markdown link using the coordinate-based URL
+      return transcript.replace(regex, `[${address}](${mapUrl})`);
+  } catch (e) {
+      logger.error(`Error creating regex for hyperlinking address "${address}": ${e.message}`);
+      return transcript; // Return original transcript if regex fails
+  }
 }
 
+
 /**
- * Extracts potential addresses from a transcript using local LLM.
+ * Extracts potential addresses from a transcript using local LLM. (remains the same)
  * @param {string} transcript - The transcript text.
  * @param {string} talkGroupId - The talk group ID associated with the transcript.
  * @returns {Promise<string|null>} - Extracted and completed addresses or null if none are found.
@@ -347,38 +358,31 @@ function hyperlinkAddress(transcript, address) {
 async function extractAddress(transcript, talkGroupId) {
   // Use loaded talk groups, or fall back to a generic area
   const town = TALK_GROUPS[talkGroupId] || `${TARGET_COUNTIES.join(' or ')}, ${GEOCODING_STATE}`;
-  
+
   logger.info(`Extracting address for talk group ID: ${talkGroupId} (${town})`);
-  
+
   let extractedAddress = await extractAddressWithLLM(transcript, town);
-  
+
   if (!extractedAddress) {
     return null;
   }
-  
-  // Remove any explanatory text in parentheses or notes
+
+  // Clean up potentially messy LLM responses (remains the same)
   extractedAddress = extractedAddress
-    .replace(/\([^)]*\)/g, '') // Remove text in parentheses
-    .replace(/Note:.*$/i, '')   // Remove any "Note:" text
-    .replace(/Town Not Specified/gi, GEOCODING_CITY) // Replace "Town Not Specified" with default city
+    .replace(/\([^)]*\)/g, '')
+    .replace(/Note:.*$/i, '')
+    .replace(/Town Not Specified/gi, GEOCODING_CITY)
     .trim();
-  
-  // If the address contains more than 3 commas or a newline, it likely includes explanatory text
+
   if (extractedAddress.split(',').length > 3 || extractedAddress.includes('\n')) {
-    // Try to extract just the first line or first part of the response
     const firstLine = extractedAddress.split('\n')[0].trim();
     const firstPart = extractedAddress.split(',').slice(0, 3).join(',').trim();
-    
     extractedAddress = firstLine.length < firstPart.length ? firstLine : firstPart;
     logger.warn(`Fixed malformed address response from LLM: "${extractedAddress}"`);
   }
-  
-  // Clean up the address format:
-  // 1. Remove commas from numbers (e.g., 12,325 → 12325)
-  extractedAddress = extractedAddress.replace(/(\d),(\d)/g, '$1$2');
-  
-  // 2. Fix other common formatting issues
-  // Standardize abbreviations
+
+  extractedAddress = extractedAddress.replace(/(?<=\d),(?=\d)/g, '');
+  extractedAddress = extractedAddress.replace(/(?<=\d)-(?=\d)/g, '');
   extractedAddress = extractedAddress
     .replace(/\bAvenue\b/gi, 'Ave')
     .replace(/\bRoad\b/gi, 'Rd')
@@ -389,25 +393,27 @@ async function extractAddress(transcript, talkGroupId) {
     .replace(/\bPlace\b/gi, 'Pl')
     .replace(/\bParkway\b/gi, 'Pkwy')
     .replace(/\bHighway\b/gi, 'Hwy');
-  
-  // If the address doesn't contain the state, add it
+
   if (!extractedAddress.includes(GEOCODING_STATE)) {
     extractedAddress += `, ${GEOCODING_STATE}`;
   }
-  
-  // Log the found address
-  logger.info(`Extracted Address for ID ${talkGroupId}: ${extractedAddress}`);
+  extractedAddress = extractedAddress.trim();
+
+  // LLM extraction log moved inside extractAddressWithLLM
+  // logger.info(`Extracted Address for ID ${talkGroupId}: ${extractedAddress}`);
   return extractedAddress;
 }
 
+
 /**
  * Processes a transcript to extract and geocode addresses.
+ * Note: Now relies on the updated geocodeAddress and hyperlinkAddress.
  * @param {string} transcript - The transcript text.
  * @param {string} talkGroupId - The talk group ID associated with the transcript.
- * @returns {Promise<Array<{ lat: number, lng: number, formatted_address: string, county: string }> | null>} - Array of geocoded data or null.
+ * @returns {Promise<{ geocodedResult: { lat: number, lng: number, formatted_address: string, county: string }, linkedTranscript: string } | null>} - Geocoded data and updated transcript or null.
  */
-async function processTranscript(transcript, talkGroupId) {
-  // Verify that Ollama is running before proceeding
+async function processTranscriptAndLink(transcript, talkGroupId) {
+  // Verify Ollama is running (remains the same)
   try {
     const response = await fetch(`${OLLAMA_URL}/api/version`);
     if (!response.ok) {
@@ -418,40 +424,32 @@ async function processTranscript(transcript, talkGroupId) {
     logger.error(`Ollama server connection error: ${error.message}. Make sure Ollama is running at ${OLLAMA_URL}`);
     return null;
   }
-  
-  const extractedAddresses = await extractAddress(transcript, talkGroupId);
-  
-  // FIX: Add explicit check for null result
-  if (!extractedAddresses) {
-    logger.info('No valid addresses extracted from transcript.');
-    return null;
+
+  const extractedAddress = await extractAddress(transcript, talkGroupId);
+
+  if (!extractedAddress) {
+    logger.info('No valid address extracted from transcript.');
+    return null; // Return null if no address extracted
   }
 
-  const addresses = extractedAddresses.split(';').map(addr => addr.trim());
-  const geocodedResults = [];
+  // Geocode the single extracted address
+  const geocodeResult = await geocodeAddress(extractedAddress);
 
-  for (const address of addresses) {
-    // FIX: Skip empty addresses
-    if (!address || address.trim() === '') continue;
-    
-    const geocodeResult = await geocodeAddress(address);
-    if (geocodeResult) {
-      geocodedResults.push(geocodeResult);
-    }
+  if (geocodeResult) {
+    // Hyperlink the address in the original transcript using the geocoded coordinates
+    const linkedTranscript = hyperlinkAddress(transcript, geocodeResult.formatted_address, geocodeResult.lat, geocodeResult.lng);
+    return { geocodedResult: geocodeResult, linkedTranscript: linkedTranscript };
+  } else {
+    logger.warn(`Failed to geocode extracted address: "${extractedAddress}"`);
+    return null; // Return null if geocoding failed
   }
-
-  if (geocodedResults.length === 0) {
-    logger.warn(`Failed to geocode any extracted addresses: "${extractedAddresses}"`);
-    return null;
-  }
-
-  return geocodedResults;
 }
+
 
 module.exports = {
   extractAddress,
   geocodeAddress,
-  hyperlinkAddress,
-  processTranscript,
+  hyperlinkAddress, // Note: Signature changed slightly if used directly
+  processTranscriptAndLink, // Renamed for clarity, returns linked text now
   loadTalkGroups
 };
