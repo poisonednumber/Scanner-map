@@ -1137,7 +1137,7 @@ function handleNewAudio(audioData) {
     // Insert initial record into transcriptions table
     db.run(
       `INSERT INTO transcriptions (talk_group_id, timestamp, transcription, audio_file_path, address, lat, lon) VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
-      [talkGroupID, new Date(parseInt(dateTime) * 1000).toISOString(), '', storagePath], // Use determined storage path
+      [talkGroupID, dateTime, '', storagePath], // Use the already formatted ISO string directly
       function (err) {
         if (err) {
           logger.error(`Error inserting initial transcription record for ${filename}:`, err);
