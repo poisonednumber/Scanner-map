@@ -676,9 +676,11 @@ app.delete('/api/users/:id', adminAuth, (req, res) => {
 // API Routes for call data
 app.get('/api/calls', (req, res) => {
   const hours = parseInt(req.query.hours) || 12;
-  const sinceTimestamp = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  // Convert the ISO string timestamp to Unix timestamp (seconds)
+  const sinceTimestampISO = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const sinceTimestampUnix = Math.floor(new Date(sinceTimestampISO).getTime() / 1000);
 
-  console.log(`Fetching calls since: ${sinceTimestamp} (${hours} hours ago)`);
+  console.log(`Fetching calls since: ${sinceTimestampISO} (${hours} hours ago) [Unix: ${sinceTimestampUnix}]`);
 
   db.all(
     `
@@ -688,7 +690,8 @@ app.get('/api/calls', (req, res) => {
     WHERE t.timestamp >= ? AND t.lat IS NOT NULL AND t.lon IS NOT NULL
     ORDER BY t.timestamp DESC
     `,
-    [sinceTimestamp],
+    // Use the Unix timestamp for the query parameter
+    [sinceTimestampUnix],
     (err, rows) => {
       if (err) {
         console.error('Error fetching calls:', err);

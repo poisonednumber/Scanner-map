@@ -1949,10 +1949,11 @@ async function getOrCreateSummaryChannel(guild) {
 // Function to fetch recent transcriptions from the database
 function getRecentTranscriptions() {
   return new Promise((resolve, reject) => {
-    const thirtyMinutesAgo = new Date(Date.now() - LOOKBACK_PERIOD);
-    const thirtyMinutesAgoFormatted = thirtyMinutesAgo.toISOString();
+    const thirtyMinutesAgoMs = Date.now() - LOOKBACK_PERIOD;
+    // Convert to Unix timestamp (seconds) for the query
+    const thirtyMinutesAgoUnix = Math.floor(thirtyMinutesAgoMs / 1000);
     
-    logger.info(`Fetching transcriptions from ${thirtyMinutesAgoFormatted} to now (lookback: ${LOOKBACK_HOURS} hours)`);
+    logger.info(`Fetching transcriptions since Unix timestamp ${thirtyMinutesAgoUnix} (lookback: ${LOOKBACK_HOURS} hours)`);
     
     // Add some debug output
     logger.info(`LOOKBACK_PERIOD in milliseconds: ${LOOKBACK_PERIOD}`);
@@ -1965,13 +1966,14 @@ function getRecentTranscriptions() {
        WHERE t.timestamp > ?
        AND t.transcription != ''
        ORDER BY t.timestamp DESC`,
-      [thirtyMinutesAgoFormatted],
+      // Use the Unix timestamp in the query parameter
+      [thirtyMinutesAgoUnix],
       (err, rows) => {
         if (err) {
           logger.error('Error fetching recent transcriptions:', err);
           reject(err);
         } else {
-          logger.info(`Retrieved ${rows.length} transcriptions spanning from ${thirtyMinutesAgoFormatted} to now`);
+          logger.info(`Retrieved ${rows.length} transcriptions spanning from ${thirtyMinutesAgoUnix} to now`);
           // Add some sample data to debug
           if (rows.length > 0) {
             logger.info(`Earliest transcription: ${rows[rows.length-1].timestamp}`);
@@ -2087,15 +2089,16 @@ async function generateSummary(transcriptions) {
     // Prepare the transcriptions in a format useful for the AI
     const formattedTranscriptions = transcriptions
       .map(t => {
-        // Format timestamp for human readability
-        const formattedTime = new Date(t.timestamp).toLocaleTimeString('en-US', {
+        // Format timestamp for human readability - Multiply by 1000
+        const callDate = new Date(t.timestamp * 1000);
+        const formattedTime = callDate.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
           hour12: true
         });
         
-        // Add minutes ago for easier time reference
-        const minutesAgo = Math.floor((Date.now() - new Date(t.timestamp).getTime()) / (60 * 1000));
+        // Add minutes ago for easier time reference - Multiply by 1000
+        const minutesAgo = Math.floor((Date.now() - (t.timestamp * 1000)) / (60 * 1000));
         
         // Extract more meaningful information
         return {
@@ -2128,11 +2131,13 @@ async function generateSummary(transcriptions) {
     // Get time range for the analyzed data
     const earliest = new Date(now.getTime() - LOOKBACK_PERIOD);
     const earliestTime = formattedTranscriptions.length > 0 ? 
-      new Date(Math.min(...formattedTranscriptions.map(t => new Date(t.timestamp).getTime()))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
+      // Multiply by 1000
+      new Date(Math.min(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
       earliest.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     
     const latestTime = formattedTranscriptions.length > 0 ? 
-      new Date(Math.max(...formattedTranscriptions.map(t => new Date(t.timestamp).getTime()))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
+      // Multiply by 1000
+      new Date(Math.max(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
       now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     
     // Generate time period descriptions for the AI
@@ -2414,9 +2419,9 @@ async function updateSummaryEmbed() {
     // Add time span information
     let timeSpanInfo = "";
     if (transcriptions.length > 0) {
-      const sortedTranscriptions = [...transcriptions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-      const earliest = new Date(sortedTranscriptions[0].timestamp);
-      const latest = new Date(sortedTranscriptions[sortedTranscriptions.length - 1].timestamp);
+      const sortedTranscriptions = [...transcriptions].sort((a, b) => new Date(a.timestamp * 1000) - new Date(b.timestamp * 1000)); // Multiply by 1000
+      const earliest = new Date(sortedTranscriptions[0].timestamp * 1000); // Multiply by 1000
+      const latest = new Date(sortedTranscriptions[sortedTranscriptions.length - 1].timestamp * 1000); // Multiply by 1000
       
       const formatTime = (date) => date.toLocaleTimeString('en-US', { 
         hour: 'numeric', 
@@ -2460,8 +2465,8 @@ async function updateSummaryEmbed() {
         // Fix timestamp display - use timestamp directly from database
         let timestampDisplay;
         try {
-          // Parse the timestamp from the database
-          const originalTimestamp = new Date(highlight.timestamp);
+          // Parse the timestamp from the database - Multiply by 1000
+          const originalTimestamp = new Date(highlight.timestamp * 1000);
           
           // Format the database timestamp directly
           timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', { 
@@ -3323,19 +3328,21 @@ client.on('interactionCreate', async (interaction) => {
         const askAiLookbackHours = parseFloat(ASK_AI_LOOKBACK_HOURS) || 8;
         const now = new Date(); 
         const queryStartDate = new Date(now.getTime() - askAiLookbackHours * 60 * 60 * 1000); 
-        const startTimeISO = queryStartDate.toISOString();
+        // Convert start date to Unix seconds for the query
+        const startTimeUnix = Math.floor(queryStartDate.getTime() / 1000);
         
         // --- End Time Window Change --- 
 
         // 1. Fetch transcriptions using the configured window
-        logger.info(`Ask AI: Fetching last ${askAiLookbackHours} hours transcriptions for TG ${talkGroupID} (since ${startTimeISO})`); // Updated log
+        logger.info(`Ask AI: Fetching last ${askAiLookbackHours} hours transcriptions for TG ${talkGroupID} (since ${startTimeUnix})`); // Updated log
         const transcriptions = await new Promise((resolve, reject) => {
           db.all(
             `SELECT timestamp, transcription 
              FROM transcriptions 
              WHERE talk_group_id = ? AND timestamp > ? AND transcription != '' 
              ORDER BY timestamp ASC`, 
-            [talkGroupID, startTimeISO], 
+            // Use Unix timestamp for query parameter
+            [talkGroupID, startTimeUnix], 
             (err, rows) => {
               if (err) {
                 logger.error(`Error fetching transcriptions for Ask AI (TG: ${talkGroupID}):`, err);
@@ -3373,7 +3380,7 @@ client.on('interactionCreate', async (interaction) => {
         
         // 3. Format transcriptions using simple toLocaleString
         const formattedTranscriptions = transcriptions.map(t => {
-          const formattedDateTime = new Date(t.timestamp).toLocaleString('en-US', {
+          const formattedDateTime = new Date(t.timestamp * 1000).toLocaleString('en-US', {
             year: 'numeric', month: 'numeric', day: 'numeric',
             hour: 'numeric', minute: '2-digit', second: '2-digit',
             hour12: true,
