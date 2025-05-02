@@ -92,10 +92,10 @@ const db = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) =>
   }
 });
 
-db.run(`ALTER TABLE transcriptions ADD COLUMN summary TEXT`, err => {
+db.run(`ALTER TABLE transcriptions ADD COLUMN category TEXT`, err => {
   // Ignore error if column already exists
   if (!err || err.message.includes('duplicate column name')) {
-    console.log('Summary column exists or was created successfully');
+    console.log('Category column exists or was created successfully');
   }
 });
 
@@ -201,13 +201,15 @@ Analyze the following first responder radio transmission and categorize it into 
 Choose the category that best fits the main subject of the transmission.
 Focus on the primary reason for the dispatch if multiple events are mentioned.
 
-**IMPORTANT:** If the transmission primarily contains only location information (like an address and cross streets) OR if it lacks specific details to determine the nature of the event, respond with exactly 'Other'.
+**PRIORITIZATION:**
+- If a clear event type (like Vehicle Collision, Fire, Assault, Medical Emergency, etc.) is mentioned, **use that category even if the dispatcher says "no details"** or the information is minimal.
+- Use the 'Other' category ONLY if the transmission primarily contains just location/unit information OR if no specific event type from the list is mentioned at all.
 
 It is CRUCIAL that your response is ONLY one of the category names from this list and nothing else.
 
 Categories:
 ${categories.map(cat => `- ${cat}`).join('\n')}
-- Other (Use ONLY if no other category truly fits OR if the transmission lacks sufficient detail for specific categorization)
+- Other
 
 Transmission: "${transcript}"
 
