@@ -614,7 +614,8 @@ function removeExpiredMarkers() {
   const filterTime = new Date(now.getTime() - timeRangeHours * 60 * 60 * 1000);
 
   Object.keys(allMarkers).forEach(callId => {
-    const callTime = new Date(allMarkers[callId].timestamp);
+    // Multiply Unix timestamp by 1000 for correct comparison
+    const callTime = new Date(allMarkers[callId].timestamp * 1000);
     // Only act on markers that are currently visible
     if (allMarkers[callId].visible && callTime < filterTime) {
         // Remove from map
@@ -938,7 +939,8 @@ function handleNewCall(call) {
     }
 
     if (isValidCall(call)) {
-        const callTimestamp = new Date(call.timestamp);
+        // Multiply Unix timestamp by 1000 for correct date comparison
+        const callTimestamp = new Date(call.timestamp * 1000);
         const sinceTimestamp = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000);
 
         if (callTimestamp >= sinceTimestamp) {
@@ -965,7 +967,9 @@ function handleNewCall(call) {
                     
                     // Only animate to the new marker if tracking is enabled
                     if (isTrackingNewCalls) {
+                        console.log(`[Track New Call] Tracking enabled. Enqueuing animation for call ID ${call.id}.`);
                         enqueueAnimation(marker, () => {
+                            console.log(`[Track New Call] Animation completed. Calling handleMarkerVisibility for call ID ${call.id}.`);
                             handleMarkerVisibility(marker);
                         });
                     }
@@ -1842,6 +1846,7 @@ function getMarkerIcon(talkGroupName, talkGroupId, audioFilePath) {
 
 // Smoothly Pan and Zoom to Marker with Animation Queue
 function smoothFlyToNewMarker(marker, callback) {
+    console.log('[Track New Call] smoothFlyToNewMarker started.');
     const maxZoom = map.getMaxZoom();
     const minZoom = map.getMinZoom();
     const targetZoom = Math.min(appConfig.animation.targetZoom, maxZoom);
@@ -1867,6 +1872,7 @@ function smoothFlyToNewMarker(marker, callback) {
             map.flyTo(marker.getLatLng(), targetZoom, { duration: appConfig.animation.duration });
 
             map.once('moveend', function() {
+                console.log('[Track New Call] Final animation step ended. Executing callback.');
                 callback();
 
                 // Re-enable map interactions
@@ -1882,6 +1888,7 @@ function smoothFlyToNewMarker(marker, callback) {
 }
 
 function handleMarkerVisibility(marker) {
+    console.log('[Track New Call] handleMarkerVisibility started.');
     const visibleParent = markerGroups.getVisibleParent(marker);
 
     if (visibleParent === marker) {
@@ -1953,7 +1960,7 @@ function processNextAnimation() {
         isAnimating = false;
         return;
     }
-
+    console.log('[Track New Call] processNextAnimation dequeuing and starting animation.');
     isAnimating = true;
     const { marker, callback } = animationQueue.shift();
     smoothFlyToNewMarker(marker, () => {
@@ -1963,6 +1970,7 @@ function processNextAnimation() {
 }
 
 function enqueueAnimation(marker, callback) {
+    console.log('[Track New Call] enqueueAnimation adding item to queue.');
     animationQueue.push({ marker, callback });
     if (!isAnimating) {
         processNextAnimation();
@@ -2134,7 +2142,8 @@ function fitMapToMarkers() {
 }
 
 function formatTimestamp(timestamp) {
-    const date = new Date(timestamp);
+    // Multiply Unix timestamp by 1000
+    const date = new Date(timestamp * 1000);
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -2197,7 +2206,7 @@ function applyFilters() {
     // Process each marker
     Object.keys(allMarkers).forEach(callId => {
         const { marker, transcription, category, timestamp } = allMarkers[callId];
-        const callTime = new Date(timestamp);
+        const callTime = new Date(timestamp * 1000);
         const isWithinTimeRange = callTime >= filterTime;
         
         // Check if search term matches transcription or category
@@ -2248,7 +2257,13 @@ function applyFilters() {
 
     // If only one marker is visible, open its popup
     if (visibleMarkers === 1 && lastVisibleMarker) {
-        openMarkerPopup(lastVisibleMarker);
+      // Add a small delay to prevent race condition with WaveSurfer init
+      setTimeout(() => {
+          // Ensure the marker still exists and is visible before opening
+          if (allMarkers[getCallIdFromMarker(lastVisibleMarker)]?.visible) {
+              openMarkerPopup(lastVisibleMarker);
+          }
+      }, 500); // 500ms delay
     }
 }
 
