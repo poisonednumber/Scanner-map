@@ -126,7 +126,7 @@ function escapeRegExp(string) {
 }
 
 /**
- * Uses local LLM to extract and complete addresses from the full transcript.
+ * Uses local LLM to extract and complete addresses from the full transcript. (remains the same)
  * @param {string} transcript - The full transcript text.
  * @param {string} town - The town associated with the transcript.
  * @returns {Promise<string|null>} - The extracted and completed address or null if not found.
@@ -134,32 +134,31 @@ function escapeRegExp(string) {
 async function extractAddressWithLLM(transcript, town) {
   try {
     const countiesString = TARGET_COUNTIES.join(', ');
-    
     const prompt = `
-You are an assistant that extracts and completes addresses from first responder dispatch transcripts. 
+You are an assistant that extracts and completes addresses from first responder dispatch transcripts.
 Focus on extracting a single full address, block, or intersection from the transcript provided below.
 If an address is incomplete, attempt to complete it based on the given town.
 Only extract addresses for ${town}.
 The address could be in one of these counties: ${countiesString}.
 
 VERY IMPORTANT INSTRUCTIONS:
-1. If no valid address is found in the transcript, respond with exactly "No address found". 
-2. DO NOT make up or hallucinate addresses that aren't clearly mentioned in the transcript.
+1. If no valid street name, intersection, or specific place (like a mall or park name) is clearly mentioned in the transcript, respond with exactly "No address found". A sequence of numbers alone (e.g., "5-9-1-6-9") is NOT enough; a street name or named location from the transcript must accompany it.
+2. DO NOT make up or hallucinate addresses or street names that aren't clearly mentioned in the transcript.
 3. DO NOT include ANY notes, comments, explanations, or parentheticals in your response.
 4. Respond with ONLY the address in one line, nothing else.
-5. NEVER include phrases like "Town Not Specified" - if you don't know the town, use "${GEOCODING_CITY}" as default.
+5. The town "${GEOCODING_CITY}" should ONLY be used to COMPLETE a partially extracted address (e.g., if "123 Main Street" is found, you can append ", ${GEOCODING_CITY}, ${GEOCODING_STATE}"). DO NOT use "${GEOCODING_CITY}" if no other address components are found.
 
-Be extremely strict - only extract if there are actual street names present in the text.
-Phrases like "Copy following it" or general chatter should NEVER result in address extraction.
-When you hear patterns like "7-9-0-8, Cindy Lane" extract as "7908 Cindy Lane".
+Be extremely strict - only extract if there are actual street names or specific, named locations present in the text. Isolated numbers are not sufficient.
+Phrases like "Copy following it" or general chatter should ALWAYS result in "No address found".
+If the transcript says, for example, "units respond to 7-9-0-8 Cindy Lane", then extract "7908 Cindy Lane". However, if it only says "reference 7-9-0-8", respond with "No address found".
 When in doubt, respond with "No address found" rather than guessing.
 
-Valid examples:
+Valid examples (assuming ${town} is the target and the street/place is mentioned in the transcript):
 - "123 Main Street"
 - "Main Street and Park Avenue" (intersection)
 - "300 block of Maple Drive"
 - "Fire reported at the Town Center Mall"
-- "Elm Street" (if street name is clearly mentioned as a location)
+- "Elm Street" (if street name is clearly mentioned as a location for an incident)
 
 Invalid examples (respond "No address found"):
 - "Copy that"
@@ -168,6 +167,8 @@ Invalid examples (respond "No address found"):
 - "We're on our way"
 - "Copy following it"
 - "10-4 received"
+- "Just the city name like '${GEOCODING_CITY}'"
+- "5916" (if no street name follows in the transcript)
 
 Format full addresses as: "123 Main St, Town, ${GEOCODING_STATE}".
 Format blocks as: "100 block of Main St, Town, ${GEOCODING_STATE}" into "100 Main St, Town, ${GEOCODING_STATE}".
@@ -178,13 +179,12 @@ From ${town}:
 
 Respond with ONLY the address in one line, no commentary or explanation. If no address, respond exactly: No address found.`;
 
-    // Call the Ollama API
     // Add AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-        logger.warn(`Ollama request timed out after 30 seconds for address extraction (Google API version).`);
+        logger.warn(`Ollama request timed out after 30 seconds for address extraction.`);
         controller.abort();
-    }, 30000); // Increased from 5000 to 30000 (30 seconds)
+    }, 30000);
 
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
@@ -205,23 +205,34 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
 
     const result = await response.json();
     let extractedAddress = result.response.trim();
-    
-    // Remove <think> block
-    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/;
+
+    // --- ADDED: Remove <think> block --- 
+    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/; // Corrected escaping
     extractedAddress = extractedAddress.replace(thinkBlockRegex, '').trim();
-    
-    logger.info(`LLM Extracted Address: "${extractedAddress}"`);
-    
-    // Check for "No address found" response
+    // --- END ADDED ---
+
+    logger.info(`LLM Extracted Address: \"${extractedAddress}\"`);
+
     if (extractedAddress === "No address found" || extractedAddress === "No address found.") {
       return null;
     }
-    
+
+    // --- ADDED: Check for overly generic LLM response ---
+    const trimmedLlmOutput = extractedAddress.trim();
+    const genericCityStatePattern = new RegExp(`^${escapeRegExp(GEOCODING_CITY)},\s*${escapeRegExp(GEOCODING_STATE)}$`, 'i');
+    const justCityPattern = new RegExp(`^${escapeRegExp(GEOCODING_CITY)}$`, 'i');
+
+    if (genericCityStatePattern.test(trimmedLlmOutput) || justCityPattern.test(trimmedLlmOutput)) {
+      logger.info(`LLM returned a generic city/state or just city: "${trimmedLlmOutput}". Treating as no address found.`);
+      return null;
+    }
+    // --- END ADDED ---
+
     return extractedAddress;
   } catch (error) {
     // Check specifically for AbortError (timeout)
     if (error.name === 'AbortError') {
-         logger.error(`Ollama request timed out during address extraction (Google API version): ${error.message}`);
+         logger.error(`Ollama request timed out during address extraction: ${error.message}`);
          return null; // Return null on timeout
     }
     logger.error(`Error extracting address with LLM: ${error.message}`);
