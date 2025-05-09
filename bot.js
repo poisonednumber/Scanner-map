@@ -2123,9 +2123,25 @@ async function generateSummary(transcriptions) {
     
     // Sort transcriptions into time buckets
     formattedTranscriptions.forEach(t => {
+      // Assign minutes_ago to the object if it wasn't already done (it is done earlier)
       const minutesAgo = t.minutes_ago;
+      
       const bucketIndex = Math.min(periodCount - 1, Math.floor(minutesAgo / periodLength));
-      timeBuckets[bucketIndex].push(t);
+
+      // --- DEBUG LOGGING ---
+      // Use debug level for potentially verbose logs
+      logger.debug(`[SummaryBucket] TS: ${t.timestamp}, MinutesAgo: ${minutesAgo}, PeriodLength: ${periodLength}, BucketIndex: ${bucketIndex}`);
+      // --- END DEBUG LOGGING ---
+
+      // --- GUARD CONDITION ---
+      if (bucketIndex >= 0 && bucketIndex < periodCount && timeBuckets[bucketIndex]) {
+        timeBuckets[bucketIndex].push(t);
+      } else {
+        logger.warn(`[SummaryBucket] Invalid bucketIndex (${bucketIndex}) or undefined bucket for timestamp ${t.timestamp}. Skipping push.`);
+        // Optionally log the problematic transcription object:
+        // logger.warn(`Problematic transcription object: ${JSON.stringify(t)}`);
+      }
+      // --- END GUARD CONDITION ---
     });
     
     // Get time range for the analyzed data
