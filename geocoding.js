@@ -68,10 +68,18 @@ const logger = winston.createLogger({
 // Override logger.info (remains the same)
 const originalInfo = logger.info.bind(logger);
 const allowedPatterns = [
-  /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/
+  /^Geocoded Address: ".+" with coordinates \(.+, .+\) in .+$/,
+  /^LLM Extracted Address:/
 ];
 logger.info = function (...args) {
   const message = args.join(' ');
+
+  // Specific check to exclude "No address found" messages for LLM extractions
+  if (message.startsWith('LLM Extracted Address:') && 
+      (message.endsWith('"No address found"') || message.endsWith('"No address found."'))) {
+    return; // Do not log this specific message
+  }
+
   const shouldLog = allowedPatterns.some((pattern) => pattern.test(message));
   if (shouldLog) {
     originalInfo(...args);
@@ -127,23 +135,23 @@ Only extract addresses for ${town}.
 The address could be in one of these counties: ${countiesString}.
 
 VERY IMPORTANT INSTRUCTIONS:
-1. If no valid address is found in the transcript, respond with exactly "No address found".
-2. DO NOT make up or hallucinate addresses that aren't clearly mentioned in the transcript.
+1. If no valid street name, intersection, or specific place (like a mall or park name) is clearly mentioned in the transcript, respond with exactly "No address found". A sequence of numbers alone (e.g., "5-9-1-6-9") is NOT enough; a street name or named location from the transcript must accompany it.
+2. DO NOT make up or hallucinate addresses or street names that aren't clearly mentioned in the transcript.
 3. DO NOT include ANY notes, comments, explanations, or parentheticals in your response.
 4. Respond with ONLY the address in one line, nothing else.
-5. NEVER include phrases like "Town Not Specified" - if you don't know the town, use "${GEOCODING_CITY}" as default.
+5. The town "${GEOCODING_CITY}" should ONLY be used to COMPLETE a partially extracted address (e.g., if "123 Main Street" is found, you can append ", ${GEOCODING_CITY}, ${GEOCODING_STATE}"). DO NOT use "${GEOCODING_CITY}" if no other address components are found.
 
-Be extremely strict - only extract if there are actual street names present in the text.
-Phrases like "Copy following it" or general chatter should NEVER result in address extraction.
-When you hear patterns like "7-9-0-8, Cindy Lane" extract as "7908 Cindy Lane".
+Be extremely strict - only extract if there are actual street names or specific, named locations present in the text. Isolated numbers are not sufficient.
+Phrases like "Copy following it" or general chatter should ALWAYS result in "No address found".
+If the transcript says, for example, "units respond to 7-9-0-8 Cindy Lane", then extract "7908 Cindy Lane". However, if it only says "reference 7-9-0-8", respond with "No address found".
 When in doubt, respond with "No address found" rather than guessing.
 
-Valid examples:
+Valid examples (assuming ${town} is the target and the street/place is mentioned in the transcript):
 - "123 Main Street"
 - "Main Street and Park Avenue" (intersection)
 - "300 block of Maple Drive"
 - "Fire reported at the Town Center Mall"
-- "Elm Street" (if street name is clearly mentioned as a location)
+- "Elm Street" (if street name is clearly mentioned as a location for an incident)
 
 Invalid examples (respond "No address found"):
 - "Copy that"
@@ -152,6 +160,8 @@ Invalid examples (respond "No address found"):
 - "We're on our way"
 - "Copy following it"
 - "10-4 received"
+- "Just the city name like '${GEOCODING_CITY}'"
+- "5916" (if no street name follows in the transcript)
 
 Format full addresses as: "123 Main St, Town, ${GEOCODING_STATE}".
 Format blocks as: "100 block of Main St, Town, ${GEOCODING_STATE}" into "100 Main St, Town, ${GEOCODING_STATE}".
@@ -199,6 +209,18 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
     if (extractedAddress === "No address found" || extractedAddress === "No address found.") {
       return null;
     }
+
+    // --- ADDED: Check for overly generic LLM response ---
+    const trimmedLlmOutput = extractedAddress.trim();
+    const genericCityStatePattern = new RegExp(`^${escapeRegExp(GEOCODING_CITY)},\s*${escapeRegExp(GEOCODING_STATE)}$`, 'i');
+    const justCityPattern = new RegExp(`^${escapeRegExp(GEOCODING_CITY)}$`, 'i');
+
+    if (genericCityStatePattern.test(trimmedLlmOutput) || justCityPattern.test(trimmedLlmOutput)) {
+      logger.info(`LLM returned a generic city/state or just city: "${trimmedLlmOutput}". Treating as no address found.`);
+      return null;
+    }
+    // --- END ADDED ---
+
     return extractedAddress;
   } catch (error) {
     // Check specifically for AbortError (timeout)
@@ -356,12 +378,23 @@ function hyperlinkAddress(transcript, address, lat, lng) {
  * @returns {Promise<string|null>} - Extracted and completed addresses or null if none are found.
  */
 async function extractAddress(transcript, talkGroupId) {
-  // Use loaded talk groups, or fall back to a generic area
-  const town = TALK_GROUPS[talkGroupId] || `${TARGET_COUNTIES.join(' or ')}, ${GEOCODING_STATE}`;
+  // Use loaded talk groups for logging, and determine a simpler town for the LLM prompt
+  const descriptiveTownForLog = TALK_GROUPS[talkGroupId] || `${TARGET_COUNTIES.join(' or ')}, ${GEOCODING_STATE}`;
+  logger.info(`Extracting address for talk group ID: ${talkGroupId} (${descriptiveTownForLog})`);
 
-  logger.info(`Extracting address for talk group ID: ${talkGroupId} (${town})`);
+  let townForLLMPrompt;
+  const specificTownFromTalkgroup = TALK_GROUPS[talkGroupId];
 
-  let extractedAddress = await extractAddressWithLLM(transcript, town);
+  // Use the specific talkgroup town if it's simple, otherwise default to GEOCODING_CITY for the LLM
+  if (specificTownFromTalkgroup &&
+      !specificTownFromTalkgroup.toLowerCase().includes('county') &&
+      !specificTownFromTalkgroup.toLowerCase().includes(' or ')) {
+    townForLLMPrompt = specificTownFromTalkgroup;
+  } else {
+    townForLLMPrompt = GEOCODING_CITY; // Default to the main city for LLM prompt completion guidance
+  }
+
+  let extractedAddress = await extractAddressWithLLM(transcript, townForLLMPrompt);
 
   if (!extractedAddress) {
     return null;

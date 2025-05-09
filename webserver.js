@@ -855,6 +855,36 @@ app.get('/api/talkgroup/:talkgroupId/calls', (req, res) => {
 });
 // END NEW Endpoint
 
+// NEW Endpoint to get details for a single call (for live feed retries)
+app.get('/api/call/:id/details', (req, res) => {
+  const callId = parseInt(req.params.id, 10);
+
+  if (isNaN(callId)) {
+    return res.status(400).json({ error: 'Invalid call ID' });
+  }
+
+  db.get(
+    `
+    SELECT t.id, t.transcription, t.timestamp, t.talk_group_id, tg.alpha_tag AS talk_group_name
+    FROM transcriptions t
+    LEFT JOIN talk_groups tg ON t.talk_group_id = tg.id
+    WHERE t.id = ?
+    `,
+    [callId],
+    (err, row) => {
+      if (err) {
+        console.error(`Error fetching details for call ${callId}:`, err);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+      if (!row) {
+        return res.status(404).json({ error: 'Call not found' });
+      }
+      // console.log(`[API Call Details] Returning details for ID: ${callId}`); // Optional: verbose log
+      res.json(row);
+    }
+  );
+});
+
 // Socket.IO Setup
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
