@@ -26,6 +26,7 @@ const talkgroupPageLimit = 30; // How many calls to fetch per page
 let currentTalkgroupOffset = 0;
 let isLoadingMoreTalkgroupCalls = false;
 let hasMoreTalkgroupCalls = true;
+let isSearchingForTargetCall = false; // NEW: State for target search
 // NEW: Variables for Talkgroup Modal
 let isTalkgroupModalOpen = false;
 let currentOpenTalkgroupId = null;
@@ -47,6 +48,8 @@ let isLiveFeedAudioEnabled = false;
 let allLiveFeedTalkgroups = []; // Cache for the full talkgroup list
 const MAX_LIVE_FEED_ITEMS = 5;
 const LIVE_FEED_ITEM_DURATION = 15000; // 15 seconds in milliseconds
+const LIVE_FEED_RETRY_INTERVAL = 3000; // 3 seconds for retry
+const MAX_LIVE_FEED_RETRIES = 5; // Max 5 retries (total 15 seconds)
 
 // Add references for the UI elements that will be assigned in setupLiveFeed
 // REMOVED liveFeedEnableCheckbox
@@ -1100,7 +1103,7 @@ function addMarker(call, isNew = false) {
                     <input type="checkbox" id="popup-live-feed-toggle-${call.id}" class="popup-live-feed-toggle" data-tg-id="${call.talk_group_id}">
                     <label for="popup-live-feed-toggle-${call.id}">Add to Live Feed</label> <!-- Changed Label Text -->
                 </div>
-                <button class="talkgroup-history-btn" data-talkgroup-id="${call.talk_group_id}" data-talkgroup-name="${call.talk_group_name || 'Unknown Talk Group'}">More Info</button>
+                <button class="talkgroup-history-btn" data-talkgroup-id="${call.talk_group_id}" data-call-id="${call.id}" data-talkgroup-name="${call.talk_group_name || 'Unknown Talk Group'}">More Info</button>
                 <!-- REMOVED: <input type="range" class="volume" min="0" max="1" step="0.1" value="1" data-call-id="${call.id}" aria-label="Volume control for call ${call.id}"> -->
             </div>
             <!-- REMOVED: <div class="additional-info"></div> -->
@@ -2654,8 +2657,10 @@ function handleShowTalkgroupHistory(event) {
     const button = event.target;
     const talkgroupId = button.getAttribute('data-talkgroup-id');
     const talkgroupName = button.getAttribute('data-talkgroup-name');
+    const callIdToScrollTo = button.getAttribute('data-call-id'); // NEW
+
     if (talkgroupId) {
-        showTalkgroupModal(parseInt(talkgroupId, 10), talkgroupName);
+        showTalkgroupModal(parseInt(talkgroupId, 10), talkgroupName, callIdToScrollTo ? parseInt(callIdToScrollTo, 10) : null); // Pass callId
     } else {
         console.error("Talkgroup ID not found on button");
     }
@@ -2736,7 +2741,7 @@ function createTalkgroupListItem(call) {
 }
 
 // NEW: Function to show the talkgroup modal
-function showTalkgroupModal(talkgroupId, talkgroupName) {
+function showTalkgroupModal(talkgroupId, talkgroupName, targetCallId = null) {
     const modal = document.getElementById('talkgroup-modal');
     const titleElement = document.getElementById('talkgroup-modal-title');
     const listElement = document.getElementById('talkgroup-list');
@@ -2757,6 +2762,7 @@ function showTalkgroupModal(talkgroupId, talkgroupName) {
     currentTalkgroupOffset = 0;
     isLoadingMoreTalkgroupCalls = false;
     hasMoreTalkgroupCalls = true; // Assume there might be more initially
+    isSearchingForTargetCall = !!targetCallId; // NEW: Set based on if targetCallId is provided
 
     // Clear previous wavesurfers immediately before fetching new data
     Object.keys(talkgroupModalWavesurfers).forEach(callId => {
@@ -2768,31 +2774,123 @@ function showTalkgroupModal(talkgroupId, talkgroupName) {
         delete talkgroupModalWavesurfers[key];
     }
 
-    // --- Fetch initial page --- 
-    const initialUrl = `/api/talkgroup/${talkgroupId}/calls?limit=${talkgroupPageLimit}&offset=0`;
-    console.log(`[TalkgroupModal] Fetching initial page: ${initialUrl}`);
-    fetch(initialUrl)
-        .then(response => response.json())
-        .then(calls => {
-            listElement.innerHTML = ''; // Clear loading placeholder
+    // --- Fetch initial page or start target search --- 
+    listElement.innerHTML = '<div class="loading-placeholder">Loading history...</div>';
+
+    // Define the recursive fetcher for finding the target
+    async function fetchPageAndFindTarget(offset) {
+        if (!isTalkgroupModalOpen || !isSearchingForTargetCall) {
+            // Modal closed or search aborted/completed
+            isLoadingMoreTalkgroupCalls = false;
+            return;
+        }
+
+        isLoadingMoreTalkgroupCalls = true;
+        if (offset === 0) { // Only show "Searching..." on the very first call of this recursive function
+            listElement.innerHTML = '<div class="loading-placeholder">Searching for specific call...</div>';
+        }
+        
+        const loadingIndicatorWhileSearching = document.createElement('div');
+        if (offset > 0) { // Add a small indicator for subsequent fetches during search
+            loadingIndicatorWhileSearching.className = 'loading-placeholder subtle-loader';
+            loadingIndicatorWhileSearching.textContent = 'Loading more to find call...';
+            listElement.appendChild(loadingIndicatorWhileSearching);
+        }
+
+        try {
+            const response = await fetch(`/api/talkgroup/${talkgroupId}/calls?limit=${talkgroupPageLimit}&offset=${offset}`);
+            const calls = await response.json();
+
+            if (offset === 0 && listElement.querySelector('.loading-placeholder')) {
+                listElement.innerHTML = ''; // Clear "Searching..." or initial "Loading..." placeholder
+            }
+            if (loadingIndicatorWhileSearching.parentNode) {
+                loadingIndicatorWhileSearching.remove();
+            }
+
             if (calls && calls.length > 0) {
                 calls.forEach(call => {
                     const listItem = createTalkgroupListItem(call);
                     listElement.appendChild(listItem);
                 });
-                // Update pagination state
-                currentTalkgroupOffset = calls.length;
-                hasMoreTalkgroupCalls = calls.length === talkgroupPageLimit; // If we got less than limit, no more pages
-            } else {
-                listElement.innerHTML = '<div class="loading-placeholder">No calls found for this talkgroup.</div>';
-                hasMoreTalkgroupCalls = false; // No calls found, definitely no more
+                currentTalkgroupOffset += calls.length;
+                hasMoreTalkgroupCalls = calls.length === talkgroupPageLimit;
+
+                const targetElement = listElement.querySelector(`.talkgroup-list-item[data-call-id="${targetCallId}"]`);
+                if (targetElement) {
+                    targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    targetElement.classList.add('scrolled-to-highlight');
+                    setTimeout(() => targetElement.classList.remove('scrolled-to-highlight'), 2500);
+                    console.log(`[TalkgroupModal] Target call ID ${targetCallId} found and scrolled to.`);
+                    isSearchingForTargetCall = false; // Target found, stop special search mode
+                    isLoadingMoreTalkgroupCalls = false;
+                    return; // Exit recursive search
+                }
             }
-        })
-        .catch(error => {
-            console.error('Error fetching initial talkgroup history:', error);
-            listElement.innerHTML = '<div class="loading-placeholder error">Error loading call history.</div>';
-            hasMoreTalkgroupCalls = false;
-        });
+
+            if (hasMoreTalkgroupCalls && isSearchingForTargetCall) {
+                // Target not found yet, and more calls exist, and we are still in search mode
+                fetchPageAndFindTarget(currentTalkgroupOffset); // Recursively fetch next page
+            } else if (!hasMoreTalkgroupCalls && isSearchingForTargetCall) {
+                // No more calls, and target not found
+                console.log(`[TalkgroupModal] Target call ID ${targetCallId} not found in the entire history.`);
+                // Optionally, add a message to the listElement
+                const notFoundMsg = document.createElement('div');
+                notFoundMsg.className = 'loading-placeholder';
+                notFoundMsg.textContent = 'Target call not found in history.';
+                listElement.appendChild(notFoundMsg);
+                isSearchingForTargetCall = false;
+                isLoadingMoreTalkgroupCalls = false;
+            } else {
+                 // This case means: either target was found (handled above), or no target search was active.
+                 // Or, no more calls and search was not active.
+                 isLoadingMoreTalkgroupCalls = false;
+            }
+
+        } catch (error) {
+            console.error('Error fetching talkgroup page during target search:', error);
+            if (loadingIndicatorWhileSearching.parentNode) loadingIndicatorWhileSearching.remove();
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'loading-placeholder error';
+            errorMsg.textContent = 'Error searching for call.';
+            if(listElement.innerHTML.includes('Searching for specific call')) listElement.innerHTML = ''; // Clear search message
+            listElement.appendChild(errorMsg);
+            isSearchingForTargetCall = false;
+            isLoadingMoreTalkgroupCalls = false;
+            hasMoreTalkgroupCalls = false; // Stop trying on error
+        }
+    }
+
+    if (targetCallId) {
+        fetchPageAndFindTarget(0); // Start the search for the target call
+    } else {
+        // No targetCallId, just load the first page normally
+        isLoadingMoreTalkgroupCalls = true;
+        fetch(`/api/talkgroup/${talkgroupId}/calls?limit=${talkgroupPageLimit}&offset=0`)
+            .then(response => response.json())
+            .then(calls => {
+                listElement.innerHTML = ''; // Clear loading placeholder
+                if (calls && calls.length > 0) {
+                    calls.forEach(call => {
+                        const listItem = createTalkgroupListItem(call);
+                        listElement.appendChild(listItem);
+                    });
+                    currentTalkgroupOffset = calls.length;
+                    hasMoreTalkgroupCalls = calls.length === talkgroupPageLimit;
+                } else {
+                    listElement.innerHTML = '<div class="loading-placeholder">No calls found for this talkgroup.</div>';
+                    hasMoreTalkgroupCalls = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching initial talkgroup history:', error);
+                listElement.innerHTML = '<div class="loading-placeholder error">Error loading call history.</div>';
+                hasMoreTalkgroupCalls = false;
+            })
+            .finally(() => {
+                isLoadingMoreTalkgroupCalls = false;
+            });
+    }
 
     // --- Add Scroll Listener --- 
     // Remove previous listener first (safety check)
@@ -3771,42 +3869,37 @@ function displayLiveFeedItem(call) {
     // MODIFIED: Removed check for isLiveFeedEnabled
     if (!liveFeedDisplayContainer) return; 
 
+    const existingItem = liveFeedDisplayContainer.querySelector(`#live-feed-item-${call.id}`);
+    if (existingItem) {
+        // console.log(`[LiveFeed] Item ${call.id} already displayed. Skipping duplicate.`);
+        return; // Avoid adding duplicates if event fires rapidly
+    }
+
     const newItem = document.createElement('div');
     newItem.className = 'live-feed-item';
-    
+    newItem.id = `live-feed-item-${call.id}`; // Assign an ID for easy targeting
+
     // Wrap content in a span for measurement and scrolling
     const contentSpan = document.createElement('span');
     contentSpan.className = 'scroll-content';
-    contentSpan.innerHTML = `<strong>${call.talk_group_name || 'Unknown TG'}</strong>: ${call.transcription || '...'}`;
+    // Initial content based on whether transcription is pending
+    const initialTranscription = (call.transcription && call.transcription !== "[Transcription Pending...]") 
+                               ? call.transcription 
+                               : "[Transcription Pending...]";
+    contentSpan.innerHTML = `<strong>${call.talk_group_name || 'Unknown TG'}</strong>: <span class="transcription-text">${initialTranscription}</span>`;
     newItem.appendChild(contentSpan);
-    
+
     liveFeedDisplayContainer.prepend(newItem);
 
     // Check for overflow AFTER adding to DOM and applying styles
-    // Use requestAnimationFrame to ensure layout is calculated
     requestAnimationFrame(() => {
         const itemWidth = newItem.clientWidth;
         const contentWidth = contentSpan.scrollWidth;
-        
-        // console.log(`[LiveFeed Item] Item Width: ${itemWidth}, Content Width: ${contentWidth}`);
-        
         if (contentWidth > itemWidth) {
             newItem.classList.add('scrolling');
-            
-            // Optional: Adjust animation speed based on overflow amount
-            const overflowAmount = contentWidth - itemWidth;
-            // Base speed (pixels per second) - adjust as needed
-            const scrollSpeed = 50; 
-            const duration = contentWidth / scrollSpeed; // Time = distance / speed
-            
-            // Apply dynamic duration (ensure minimum duration)
+            const scrollSpeed = 50;
+            const duration = contentWidth / scrollSpeed;
             contentSpan.style.animationDuration = `${Math.max(5, duration)}s`;
-            // console.log(`[LiveFeed Item] Applying scroll, duration: ${Math.max(5, duration)}s`);
-            
-            // Adjust keyframe animation to scroll the full content width
-            // We need to modify the animation rule itself or create dynamic ones if durations vary wildly
-            // For simplicity here, we assume the default -100% transform in CSS is sufficient for most cases
-            // If more precision is needed, dynamic keyframes would be required.
         }
     });
 
@@ -3814,20 +3907,96 @@ function displayLiveFeedItem(call) {
         liveFeedDisplayContainer.removeChild(liveFeedDisplayContainer.lastElementChild);
     }
 
-    setTimeout(() => {
+    // Setup removal timer
+    const removalTimeoutId = setTimeout(() => {
         newItem.classList.add('fading-out');
         setTimeout(() => {
-             if (newItem.parentNode === liveFeedDisplayContainer) { 
+            if (newItem.parentNode === liveFeedDisplayContainer) {
                 liveFeedDisplayContainer.removeChild(newItem);
-             }
-        }, 1500); 
+            }
+        }, 1500);
     }, LIVE_FEED_ITEM_DURATION - 1500);
-    
-    // Live Audio Logic (Unchanged -> CHANGED)
-    if (isLiveFeedAudioEnabled && call.id) { // Check for call.id instead of call.audio_id
-        console.log(`[LiveFeed] Attempting live audio for TG ${call.talk_group_id}, Call ${call.id}`);
-        playLiveAudio(call); // Pass the entire call object as it contains the needed ID
+
+    // Retry logic if transcription is pending
+    if (initialTranscription === "[Transcription Pending...]") {
+        attemptLiveFeedRetry(call.id, newItem, 0, removalTimeoutId);
     }
+
+    // Live Audio Logic
+    if (isLiveFeedAudioEnabled && call.id && call.transcription !== "[Transcription Pending...]") { 
+        // Only play audio if transcription is not pending initially
+        // console.log(`[LiveFeed] Attempting live audio for TG ${call.talk_group_id}, Call ${call.id}`);
+        playLiveAudio(call);
+    }
+}
+
+function attemptLiveFeedRetry(callId, itemElement, retryCount, removalTimeoutId) {
+    if (!itemElement || !itemElement.parentNode) {
+        // console.log(`[LiveFeed Retry] Item ${callId} no longer in DOM. Stopping retries.`);
+        return; // Item removed, stop retrying
+    }
+    if (retryCount >= MAX_LIVE_FEED_RETRIES) {
+        // console.log(`[LiveFeed Retry] Max retries reached for ${callId}.`);
+        return; // Max retries reached
+    }
+
+    setTimeout(async () => {
+        // Double check item is still in DOM before fetch
+        if (!itemElement || !itemElement.parentNode) return;
+
+        try {
+            // console.log(`[LiveFeed Retry] Attempt ${retryCount + 1} for call ID ${callId}`);
+            const response = await fetch(`/api/call/${callId}/details`);
+            if (!response.ok) {
+                // console.warn(`[LiveFeed Retry] API error for ${callId}: ${response.status}`);
+                // Optionally retry on certain server errors, or just give up
+                if (response.status !== 404) { // Don't retry if call truly not found
+                    // Recursive call for next attempt
+                    attemptLiveFeedRetry(callId, itemElement, retryCount + 1, removalTimeoutId);
+                }
+                return;
+            }
+            const callDetails = await response.json();
+
+            // Check again if item is still in DOM after await
+            if (!itemElement || !itemElement.parentNode) return;
+
+            if (callDetails && callDetails.transcription && callDetails.transcription !== "[Transcription Pending...]") {
+                // console.log(`[LiveFeed Retry] SUCCESS for ${callId}. New transcription: ${callDetails.transcription}`);
+                const contentSpan = itemElement.querySelector('.scroll-content');
+                const transcriptionSpan = contentSpan ? contentSpan.querySelector('.transcription-text') : null;
+                if (transcriptionSpan) {
+                    transcriptionSpan.textContent = callDetails.transcription;
+                    // Re-evaluate scrolling if content changed
+                    requestAnimationFrame(() => {
+                        const itemWidth = itemElement.clientWidth;
+                        const newContentWidth = contentSpan.scrollWidth;
+                        if (newContentWidth > itemWidth && !itemElement.classList.contains('scrolling')) {
+                            itemElement.classList.add('scrolling');
+                            const scrollSpeed = 50;
+                            const duration = newContentWidth / scrollSpeed;
+                            contentSpan.style.animationDuration = `${Math.max(5, duration)}s`;
+                        } else if (newContentWidth <= itemWidth && itemElement.classList.contains('scrolling')) {
+                            itemElement.classList.remove('scrolling');
+                            contentSpan.style.animationDuration = '';
+                        }
+                    });
+                    // Play audio now that transcription is available, if it wasn't played before
+                    if (isLiveFeedAudioEnabled && callId) { 
+                        playLiveAudio(callDetails); // Pass full details in case playLiveAudio needs more than ID
+                    }
+                }
+            } else {
+                // Still pending, retry if not maxed out
+                // console.log(`[LiveFeed Retry] Still pending for ${callId}. Retrying...`);
+                attemptLiveFeedRetry(callId, itemElement, retryCount + 1, removalTimeoutId);
+            }
+        } catch (error) {
+            console.error(`[LiveFeed Retry] Fetch error for ${callId}:`, error);
+            // Potentially retry on network errors too
+            attemptLiveFeedRetry(callId, itemElement, retryCount + 1, removalTimeoutId);
+        }
+    }, LIVE_FEED_RETRY_INTERVAL);
 }
 
 // playLiveAudio function (use window.audioContext)
@@ -4074,9 +4243,9 @@ function handleTalkgroupScroll() {
     const scrollThreshold = 200; // Pixels from bottom to trigger load
     const nearBottom = listElement.scrollHeight - listElement.scrollTop <= listElement.clientHeight + scrollThreshold;
 
-    // console.log(`Scroll check: nearBottom=${nearBottom}, isLoading=${isLoadingMoreTalkgroupCalls}, hasMore=${hasMoreTalkgroupCalls}`);
+    // console.log(`Scroll check: nearBottom=${nearBottom}, isLoading=${isLoadingMoreTalkgroupCalls}, hasMore=${hasMoreTalkgroupCalls}, isSearching=${isSearchingForTargetCall}`);
 
-    if (nearBottom && !isLoadingMoreTalkgroupCalls && hasMoreTalkgroupCalls) {
+    if (nearBottom && !isLoadingMoreTalkgroupCalls && hasMoreTalkgroupCalls && !isSearchingForTargetCall) {
         console.log('[TalkgroupModal] Reached bottom, fetching more calls...');
         fetchMoreTalkgroupCalls();
     }

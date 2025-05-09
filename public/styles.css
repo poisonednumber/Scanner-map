@@ -2452,3 +2452,18 @@ input[type="time"] {
     border-color: var(--primary-color);
     box-shadow: 0 0 5px var(--primary-color);
 }
+
+/* ... existing code ... */
+
+/* --- END Live Feed Display Styles --- */
+
+.scrolled-to-highlight {
+  background-color: var(--hover-color) !important; /* Or another distinct highlight color */
+  border: 1px dashed var(--primary-color) !important; /* Add a dashed border for more emphasis */
+  box-shadow: 0 0 10px var(--primary-color);
+  transition: background-color 0.3s ease-in-out, border 0.3s ease-in-out;
+}
+
+.subtle-loader {
+  font-style: italic;
+  color: #aaa !important; /* Lighter color */
