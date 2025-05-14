@@ -27,6 +27,9 @@ let currentTalkgroupOffset = 0;
 let isLoadingMoreTalkgroupCalls = false;
 let hasMoreTalkgroupCalls = true;
 let isSearchingForTargetCall = false; // NEW: State for target search
+
+const USER_LOCATION_ZOOM_LEVEL = 16; // ENSURE THIS GLOBAL CONSTANT IS DECLARED
+
 // NEW: Variables for Talkgroup Modal
 let isTalkgroupModalOpen = false;
 let currentOpenTalkgroupId = null;
@@ -198,39 +201,114 @@ const CATEGORY_COLORS = {
     'OTHER':                             '#90A4AE', // Lighter Blue Grey
 };
 
-// Pulsing Icon Implementation
+// Pulsing Icon Implementation (Original - for existing markers)
 L.Icon.Pulse = L.DivIcon.extend({
     options: {
         className: '',
         iconSize: [12, 12],
-        color: 'red'
+        color: 'red', // Default for existing alerts
+        heartbeat: 1 // Default pulse speed (lower is faster) for existing alerts
     },
     initialize: function(options) {
         L.setOptions(this, options);
-        
-        // Generate a unique class name for this icon instance
         var uniqueClassName = 'lpi-' + (new Date()).getTime() + '-' + Math.round(Math.random() * 100000);
         this.options.className = this.options.className + ' leaflet-pulsing-icon ' + uniqueClassName;
-        
-        // Create a style element with custom CSS for this specific icon
         var style = document.createElement('style');
-        // Only apply color to the pulse effect, not the center dot
-        var css = '.' + uniqueClassName + ':after{box-shadow: 0 0 6px 2px ' + this.options.color + ';}';
-        
+        var css = '.' + uniqueClassName + ':after{box-shadow: 0 0 6px 2px ' + this.options.color + '; animation: pulsate ' + this.options.heartbeat + 's ease-out infinite;}';
         if (style.styleSheet) {
             style.styleSheet.cssText = css;
         } else {
             style.appendChild(document.createTextNode(css));
         }
         document.getElementsByTagName('head')[0].appendChild(style);
-        
         L.DivIcon.prototype.initialize.call(this, options);
     }
 });
 
-// Helper function to create a new pulsing icon
+// Helper function to create a new original pulsing icon
 L.icon.pulse = function(options) {
     return new L.Icon.Pulse(options);
+};
+
+// NEW: User Location Pulsing Icon (Solid dot with pulse)
+L.Icon.UserLocationPulse = L.DivIcon.extend({
+    options: {
+        className: '', // Base class for styling if needed
+        iconSize: [16, 16], // Slightly larger for user location dot
+        color: '#007bff', // Blue for user location
+        heartbeat: 1.2 // Pulse speed for user location
+    },
+    initialize: function(options) {
+        L.setOptions(this, options);
+
+        const uniqueDotClass = 'user-location-dot-' + Date.now();
+        const uniquePulseClass = 'user-location-pulse-effect-' + Date.now();
+
+        // Apply the dot class to the main element via options.className
+        this.options.className = (this.options.className || '') + ' ' + uniqueDotClass;
+
+        const style = document.createElement('style');
+        const css = `
+            .${uniqueDotClass} {
+                background-color: ${this.options.color};
+                width: ${this.options.iconSize[0]}px;
+                height: ${this.options.iconSize[1]}px;
+                border-radius: 50%;
+                box-shadow: 0 0 2px rgba(0,0,0,0.7); /* Sharper shadow for the dot */
+                position: relative; /* Needed for :after positioning */
+                display: flex; /* For centering if iconSize was just for container */
+                align-items: center; /* For centering */
+                justify-content: center; /* For centering */
+            }
+            .${uniqueDotClass}:after {
+                content: '';
+                position: absolute;
+                /* Centering the pulse relative to the dot */
+                left: 50%; 
+                top: 50%;
+                transform: translate(-50%, -50%);
+                width: ${this.options.iconSize[0] * 2.5}px; 
+                height: ${this.options.iconSize[1] * 2.5}px; 
+                border-radius: 50%;
+                /* Using a direct animation definition here to avoid conflicts */
+                animation-name: userLocationPulsate;
+                animation-duration: ${this.options.heartbeat}s;
+                animation-timing-function: ease-out;
+                animation-iteration-count: infinite;
+                box-shadow: 0 0 8px 2px ${this.options.color}; /* Ensure pulse shadow is visible */
+                opacity: 0.8; /* Make pulse slightly more opaque */
+                z-index: -1; /* Ensure pulse is behind the main dot if dot has content */
+            }
+            /* Define the keyframes for this specific pulse to avoid global conflicts */
+            @keyframes userLocationPulsate {
+                0% {
+                    transform: translate(-50%, -50%) scale(0.5);
+                    opacity: 0.8;
+                }
+                70% {
+                    transform: translate(-50%, -50%) scale(1);
+                    opacity: 0;
+                }
+                100% {
+                    transform: translate(-50%, -50%) scale(0.5);
+                    opacity: 0;
+                }
+            }
+        `;
+
+        if (style.styleSheet) {
+            style.styleSheet.cssText = css;
+        } else {
+            style.appendChild(document.createTextNode(css));
+        }
+        document.getElementsByTagName('head')[0].appendChild(style);
+        L.DivIcon.prototype.initialize.call(this, options);
+    }
+});
+
+// Helper function for the new user location pulsing icon
+L.icon.userLocationPulse = function(options) {
+    return new L.Icon.UserLocationPulse(options);
 };
 
 // Animation Queue Variables
@@ -3432,6 +3510,7 @@ function initializeApp() {
     setupTimeFilter();
     setupHeatmapControls();
     setupLiveFeed();
+    setupUserLocationButton(); // ADDED: Setup for the new location button
     loadCalls(timeRangeHours);
     setupUserManagement();
     setupSidebarToggle();
@@ -4303,3 +4382,176 @@ function fetchMoreTalkgroupCalls() {
         });
 }
 // --- END NEW: Scroll Handling Functions ---
+
+// NEW: User Location Feature
+function setupUserLocationButton() {
+    const LocationControl = L.Control.extend({
+        options: {
+            position: 'topright' // CHANGED to topright
+        },
+        onAdd: function (mapInstance) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control-custom');
+            container.id = 'location-control-container'; // ADD THIS LINE
+            this._mapInstance = mapInstance; // Store map reference
+
+            // Initialize control-specific state variables
+            this.isUserLocationActive = false; // ADDED
+            this.hasCenteredOnUserLocation = false; // ADDED
+            this.userLocationMarker = null; // ADDED
+            this.userLocationWatchId = null; // ADDED
+            // REMOVED: this._isProcessingClick = false;
+
+            this._locationButton = L.DomUtil.create('a', 'location-button', container);
+            // Ensure NO INLINE FILL on the path, CSS will control it.
+            this._locationButton.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z" /></svg>';
+            this._locationButton.href = '#';
+            this._locationButton.role = 'button';
+            this._locationButton.title = 'Toggle My Location';
+
+            // Store the bound function for adding/removing listener
+            this._boundToggleUserLocation = this._toggleUserLocation.bind(this);
+
+            L.DomEvent.on(this._locationButton, 'click', L.DomEvent.stopPropagation)
+                      .on(this._locationButton, 'click', L.DomEvent.preventDefault)
+                      .on(this._locationButton, 'click', this._boundToggleUserLocation, this) // USE BOUND HANDLER
+                      .on(this._locationButton, 'dblclick', L.DomEvent.stopPropagation);
+            return container;
+        },
+
+        _toggleUserLocation: function () {
+            // REMOVED _isProcessingClick check
+            console.log('[LocationControl] _toggleUserLocation called. isUserLocationActive:', this.isUserLocationActive);
+
+            if (this.isUserLocationActive) { 
+                this._stopWatchingLocation();
+            } else {
+                this._startWatchingLocation();
+            }
+            // REMOVED setTimeout for _isProcessingClick
+        },
+
+        _startWatchingLocation: function () {
+            console.log('[LocationControl] _startWatchingLocation called.'); 
+            if (navigator.geolocation) {
+                this.hasCenteredOnUserLocation = false; // CHANGED to this.
+                const options = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+                this.userLocationWatchId = navigator.geolocation.watchPosition( // CHANGED to this.
+                    (position) => this._updateUserLocationDisplay(position),
+                    (error) => this._handleLocationError(error),
+                    options
+                );
+                this.isUserLocationActive = true; // CHANGED to this.
+                L.DomUtil.addClass(this._locationButton, 'active');
+                console.log('[LocationControl] Added "active" class. Button classes:', this._locationButton.className);
+                showNotification('Tracking your location...', 'success');
+            } else {
+                showNotification('Geolocation is not supported by your browser.', 'error');
+                this._stopWatchingLocation(); 
+                // this._isProcessingClick = false; // Already handled by setTimeout in _toggleUserLocation
+            }
+        },
+
+        _stopWatchingLocation: function () {
+            console.log('[LocationControl] _stopWatchingLocation CALLED (Top of function)'); 
+            console.log('[LocationControl] At stop: userLocationWatchId is:', this.userLocationWatchId);
+            console.log('[LocationControl] At stop: userLocationMarker is:', this.userLocationMarker);
+
+            if (navigator.geolocation && this.userLocationWatchId !== null) { 
+                console.log('[LocationControl] Attempting to clear watch ID:', this.userLocationWatchId);
+                navigator.geolocation.clearWatch(this.userLocationWatchId); 
+                console.log('[LocationControl] Geolocation watch clearWatch called.'); // Confirms clearWatch was called
+            } else {
+                console.log('[LocationControl] Skipped clearWatch. Has geolocation? ', navigator.geolocation, 'Watch ID null? ', this.userLocationWatchId === null);
+            }
+
+            if (this.userLocationMarker) { 
+                console.log('[LocationControl] userLocationMarker exists. Attempting to remove from map.');
+                if (this._mapInstance && this._mapInstance.hasLayer(this.userLocationMarker)) { 
+                    this._mapInstance.removeLayer(this.userLocationMarker); 
+                    console.log('[LocationControl] User location marker removeLayer called.'); // Confirms removeLayer was called
+                } else {
+                    console.log('[LocationControl] Skipped removeLayer. Map instance? ', !!this._mapInstance, 'Marker on map? ', this._mapInstance ? this._mapInstance.hasLayer(this.userLocationMarker) : 'N/A');
+                }
+                this.userLocationMarker = null; 
+                console.log('[LocationControl] userLocationMarker set to null.');
+            } else {
+                console.log('[LocationControl] userLocationMarker was null or undefined already.');
+            }
+
+            this.userLocationWatchId = null; 
+            this.isUserLocationActive = false; 
+            if (this._locationButton) { 
+              L.DomUtil.removeClass(this._locationButton, 'active');
+              console.log('[LocationControl] Removed "active" class. Button classes:', this._locationButton.className);
+            } else {
+              console.log('[LocationControl] _stopWatchingLocation: _locationButton not found.');
+            }
+        },
+
+        _updateUserLocationDisplay: function (position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            if (!this._mapInstance) return; 
+
+            if (!this.userLocationMarker) { 
+                const userLocationIcon = L.icon.userLocationPulse({
+                    iconSize: [16, 16], 
+                    color: '#007bff', 
+                    heartbeat: 1.2 
+                });
+                this.userLocationMarker = L.marker([lat, lon], { 
+                    icon: userLocationIcon, 
+                    zIndexOffset: 2000, 
+                    interactive: false
+                }).addTo(this._mapInstance);
+            } else {
+                this.userLocationMarker.setLatLng([lat, lon]); 
+            }
+
+            if (!this.hasCenteredOnUserLocation) { 
+                console.log('[LocationControl] Centering map. Disabling button click temporarily.');
+
+                this._mapInstance.setView([lat, lon], USER_LOCATION_ZOOM_LEVEL);
+                this.hasCenteredOnUserLocation = true; 
+
+                // The block that was here, starting with a commented-out
+                // "this._mapInstance.once('zoomend', ...)", should be deleted.
+            }
+        },
+        // ... (rest of LocationControl methods are fine)
+        _handleLocationError: function (error) {
+            console.error('[LocationControl] _handleLocationError CALLED:', error.code, error.message);
+            let message = 'Error getting location: ';
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    message = "Geolocation permission denied. Please enable it in your browser settings.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message += "Location information is unavailable.";
+                    break;
+                case error.TIMEOUT:
+                    message += "The request to get user location timed out.";
+                    break;
+                case error.UNKNOWN_ERROR:
+                    message += "An unknown error occurred.";
+                    break;
+            }
+            showNotification(message, 'error');
+            console.error(message, error);
+            this._stopWatchingLocation(); 
+        },
+        
+        onRemove: function(mapInstance) {
+            this._stopWatchingLocation();
+        }
+    });
+
+    if (map) { 
+        map.addControl(new LocationControl());
+        console.log("[App] User Location Control added to map.");
+    } else {
+        console.error("[App] Map not initialized, cannot add User Location Control.");
+    }
+}
+// END NEW: User Location Feature

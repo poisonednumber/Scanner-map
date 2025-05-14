@@ -1981,6 +1981,46 @@ input[type="time"] {
 }
 
 /* --- END Scrollbar Styles for Category Sidebar --- */
+
+/* NEW: Custom Location Control Button Styles */
+.leaflet-control-custom.leaflet-bar { /* Container for our button */
+    background-color: var(--background-color);
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.4); /* Match Leaflet's default control shadow */
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.leaflet-control-custom .location-button { /* The button itself */
+    background-color: transparent; /* Uses container background */
+    width: 30px; /* Slightly larger for easier touch interaction */
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-bottom: none; /* Remove default leaflet-bar border between items if only one */
+    text-decoration: none;
+}
+
+.leaflet-control-custom .location-button:hover {
+    background-color: var(--hover-color);
+}
+
+.leaflet-control-custom .location-button svg {
+    fill: var(--primary-color); /* CHANGED: Default icon color to primary theme color */
+    transition: fill 0.2s ease-in-out;
+    width: 20px; /* Ensure SVG size is consistent */
+    height: 20px;
+}
+
+.leaflet-control-custom .location-button.active svg {
+    fill: var(--primary-color); /* Icon color when active (already primary, but good to be explicit) */
+}
+
+/* END NEW: Custom Location Control Button Styles */
+
+
 /* End of CSS file */
 
 /* --- Talkgroup Modal Styles --- */
@@ -2467,3 +2507,67 @@ input[type="time"] {
 .subtle-loader {
   font-style: italic;
   color: #aaa !important; /* Lighter color */
+}
+
+/* ... existing code ... */
+.leaflet-control-custom .location-button:hover {
+    background-color: var(--hover-color);
+}
+
+/* NEW: Explicitly set color on the button itself to avoid interference */
+.leaflet-control-custom .location-button {
+    color: initial !important; /* Try to reset any inherited link color */
+}
+
+.leaflet-control-custom .location-button:active,
+.leaflet-control-custom .location-button:focus {
+    color: transparent !important; /* Prevent link active/focus color from affecting SVG */
+    text-decoration: none !important; /* Ensure no underline */
+    outline: none !important; /* Remove focus outline that might interfere */
+    box-shadow: none !important; /* Remove any box shadow */
+}
+
+/* More specific rule for :active on the button */
+.leaflet-control-custom a.location-button:active {
+    background-color: var(--hover-color) !important; /* Match hover background, prevent flash */
+}
+
+/* STYLES FOR LOCATION BUTTON ICON STATES (Grey default, Green active) */
+.leaflet-control-custom .location-button svg path {
+    fill: #757575 !important; /* Default: Grey icon */
+    transition: fill 0.2s ease-in-out;
+}
+
+.leaflet-control-custom .location-button:hover svg path {
+    fill: var(--primary-color) !important; /* Hover on non-active: Green (theme color) */
+}
+
+/* When location service is active AND button has .active class */
+.leaflet-control-custom .location-button.active svg path {
+    fill: #00C853 !important; /* Active: A distinct, clear green */
+}
+
+/* Optional: if you want hover on an active button to be different */
+.leaflet-control-custom .location-button.active:hover svg path {
+    fill: #00E676 !important; /* Active + Hover: Brighter green */
+}
+/* === Location Button End === */
+
+/* Base (Desktop) positioning for the location button container */
+#location-control-container.leaflet-control-custom.leaflet-bar.leaflet-control {
+    top: 190px; /* ADJUSTED: Increased top margin further for desktop */
+    right: 10px; 
+    z-index: 1000; 
+}
+
+
+/* Mobile specific positioning for the location button */
+@media screen and (max-width: 768px) {
+    #location-control-container.leaflet-control-custom.leaflet-bar.leaflet-control { 
+        top: 55px !important;    /* Position higher on mobile */
+        right: 10px !important;  /* Keep it to the right */
+        /* bottom: auto !important; left: auto !important; are implicitly handled or not needed */
+        z-index: 1001 !important; 
+    }
+}
+
