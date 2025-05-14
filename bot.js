@@ -2275,6 +2275,26 @@ Include no other text besides this JSON.`;
             );
           }
           
+          // --- ADD THIS: Ensure timestamps in highlights are numbers ---
+          if (parsedJson.highlights && Array.isArray(parsedJson.highlights)) {
+            parsedJson.highlights.forEach(highlight => {
+              if (highlight.timestamp && typeof highlight.timestamp === 'string') {
+                const numericTimestamp = parseFloat(highlight.timestamp);
+                if (!isNaN(numericTimestamp)) {
+                  highlight.timestamp = numericTimestamp;
+                } else {
+                  logger.warn(`[generateSummary] Could not convert timestamp string "${highlight.timestamp}" to number for highlight ID ${highlight.id}. Leaving as is.`);
+                }
+              } else if (typeof highlight.timestamp !== 'number') {
+                // If it's not a string and not a number, log a warning and attempt to parse or set to a default
+                logger.warn(`[generateSummary] Timestamp for highlight ID ${highlight.id} is not a string or number: ${typeof highlight.timestamp}, value: ${highlight.timestamp}. Attempting to parse or default.`);
+                const numericTimestamp = parseFloat(highlight.timestamp); // Attempt to parse whatever it is
+                highlight.timestamp = !isNaN(numericTimestamp) ? numericTimestamp : 0; // Default to 0 if unparseable
+              }
+            });
+          }
+          // --- END ADDED CODE ---
+
           // Log summary creation success with time details
           logger.info(`Successfully generated summary with ${parsedJson.highlights?.length || 0} highlights`);
           
