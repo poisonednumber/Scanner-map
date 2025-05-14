@@ -2365,22 +2365,28 @@ function saveSummaryToJson(summary, highlights) {
     
     // Format highlights for the website (omitting audio links)
     const formattedHighlights = highlights.map(highlight => {
-      // Get the timestamp from the original data
       let timestampDisplay;
-      try {
-        const originalTimestamp = new Date(highlight.timestamp);
-        timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', { 
-          hour: 'numeric', 
-          minute: '2-digit',
-          hour12: true
-        });
-      } catch (err) {
-        logger.error(`Error formatting timestamp: ${err.message}`);
-        timestampDisplay = new Date().toLocaleTimeString('en-US', {
-          hour: 'numeric', 
-          minute: '2-digit',
-          hour12: true
-        });
+      // Ensure highlight.timestamp is a number and not NaN
+      if (typeof highlight.timestamp === 'number' && !isNaN(highlight.timestamp)) {
+        try {
+          const originalTimestamp = new Date(highlight.timestamp * 1000); // Multiply by 1000
+          timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+
+          if (timestampDisplay === 'Invalid Date') {
+            logger.warn(`[saveSummaryToJson] Formatted time is \'Invalid Date\' for highlight ID ${highlight.id} (timestamp value: ${highlight.timestamp}). Original Date obj was: ${originalTimestamp.toISOString()}`);
+            timestampDisplay = 'Time N/A';
+          }
+        } catch (err) {
+          logger.error(`[saveSummaryToJson] Error formatting timestamp for highlight ID ${highlight.id} (timestamp value: ${highlight.timestamp}): ${err.message}`);
+          timestampDisplay = 'Time N/A';
+        }
+      } else {
+        logger.warn(`[saveSummaryToJson] highlight.timestamp (\'${highlight.timestamp}\') is invalid or missing for highlight ID ${highlight.id}. Full highlight: ${JSON.stringify(highlight)}`);
+        timestampDisplay = 'Time N/A';
       }
       
       return {
@@ -2388,7 +2394,7 @@ function saveSummaryToJson(summary, highlights) {
         talk_group: highlight.talk_group,
         importance: highlight.importance,
         description: highlight.description,
-        time: timestampDisplay
+        time: timestampDisplay // Use the processed timestampDisplay
       };
     });
     
@@ -2480,21 +2486,30 @@ async function updateSummaryEmbed() {
         
         // Fix timestamp display - use timestamp directly from database
         let timestampDisplay;
-        try {
-          // Parse the timestamp from the database - Multiply by 1000
-          const originalTimestamp = new Date(highlight.timestamp * 1000);
-          
-          // Format the database timestamp directly
-          timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit',
-            hour12: true
-          });
-        } catch (err) {
-          logger.error(`Error formatting timestamp: ${err.message}`);
-          // Simple fallback
-          timestampDisplay = new Date().toLocaleTimeString();
-          logger.warn('Failed to parse timestamp from database, using current time as fallback');
+        // Ensure highlight.timestamp is a number and not NaN
+        if (typeof highlight.timestamp === 'number' && !isNaN(highlight.timestamp)) {
+          try {
+            const originalTimestamp = new Date(highlight.timestamp * 1000); // Multiply by 1000
+
+            // Format the database timestamp directly
+            timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            });
+
+            // Explicitly check if toLocaleTimeString returned "Invalid Date"
+            if (timestampDisplay === 'Invalid Date') {
+              logger.warn(`[updateSummaryEmbed] Formatted time is \'Invalid Date\' for highlight ID ${highlight.id} (timestamp value: ${highlight.timestamp}). Original Date obj was: ${originalTimestamp.toISOString()}`);
+              timestampDisplay = 'Time N/A'; // Fallback for "Invalid Date" string
+            }
+          } catch (err) {
+            logger.error(`[updateSummaryEmbed] Error formatting timestamp for highlight ID ${highlight.id} (timestamp value: ${highlight.timestamp}): ${err.message}`);
+            timestampDisplay = 'Time N/A'; // Fallback for other errors during date processing
+          }
+        } else {
+          logger.warn(`[updateSummaryEmbed] highlight.timestamp (\'${highlight.timestamp}\') is invalid or missing for highlight ID ${highlight.id}. Full highlight: ${JSON.stringify(highlight)}`);
+          timestampDisplay = 'Time N/A'; // Fallback if timestamp is not a valid number
         }
         
         // Format the field
