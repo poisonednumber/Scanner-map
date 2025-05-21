@@ -573,7 +573,7 @@ app.post('/api/call-upload', (req, res) => {
               talkGroupID: fields.talkgroup,
               systemName: fields.systemLabel,
               talkGroupName: fields.talkgroupLabel,
-              dateTime: fields.dateTime,
+              dateTime: fields.dateTime, // Pass the original fields.dateTime for SDRTrunk
               source: fields.source,
               frequency: fields.frequency,
               talkGroupGroup: fields.talkgroupGroup,
@@ -709,7 +709,7 @@ app.post('/api/call-upload', (req, res) => {
               talkGroupID: fields.talkgroup,
               systemName: fields.systemLabel,
               talkGroupName: fields.talkgroupLabel,
-              dateTime: callDateTime.toISOString(), // Pass ISO string to handleNewAudio
+              dateTime: Math.floor(callDateTime.getTime() / 1000), // Pass Unix timestamp (seconds)
               source: fields.source,
               frequency: fields.frequency,
               talkGroupGroup: fields.talkgroupGroup,
@@ -1135,9 +1135,19 @@ function handleNewAudio(audioData) {
     }
 
     // Insert initial record into transcriptions table
+    const unixTimestampSeconds = Number(dateTime); // Directly use dateTime, ensuring it's a number
+    if (isNaN(unixTimestampSeconds)) {
+      logger.error(`Invalid dateTime encountered in handleNewAudio: ${dateTime} for filename ${filename}. Cannot insert into DB.`);
+      // Clean up temp file if timestamp is invalid
+      fs.unlink(tempPath, (errUnlink) => {
+          if (errUnlink) logger.error(`Error deleting temp file after invalid dateTime ${tempPath}:`, errUnlink);
+      });
+      return;
+    }
+
     db.run(
       `INSERT INTO transcriptions (talk_group_id, timestamp, transcription, audio_file_path, address, lat, lon) VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
-      [talkGroupID, dateTime, '', storagePath], // Use the already formatted ISO string directly
+      [talkGroupID, unixTimestampSeconds, '', storagePath], // Use the Unix timestamp
       function (err) {
         if (err) {
           logger.error(`Error inserting initial transcription record for ${filename}:`, err);
@@ -1987,7 +1997,16 @@ function getRecentTranscriptions() {
               }
             });
           }
-          resolve(rows);
+          // Convert timestamp strings to Unix timestamps (seconds)
+          const processedRows = rows.map(row => {
+            const numericTimestamp = Math.floor(new Date(row.timestamp).getTime() / 1000);
+            if (isNaN(numericTimestamp)) {
+              logger.warn(`[getRecentTranscriptions] Failed to parse timestamp string: ${row.timestamp} for row ID: ${row.id}. Setting to 0.`);
+              return { ...row, timestamp: 0 }; // Return 0 or handle as error
+            }
+            return { ...row, timestamp: numericTimestamp };
+          });
+          resolve(processedRows);
         }
       }
     );

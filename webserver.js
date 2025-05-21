@@ -676,11 +676,10 @@ app.delete('/api/users/:id', adminAuth, (req, res) => {
 // API Routes for call data
 app.get('/api/calls', (req, res) => {
   const hours = parseInt(req.query.hours) || 12;
-  // Convert the ISO string timestamp to Unix timestamp (seconds)
-  const sinceTimestampISO = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-  const sinceTimestampUnix = Math.floor(new Date(sinceTimestampISO).getTime() / 1000);
+  // Convert hours to a Unix timestamp (seconds) for the WHERE clause
+  const sinceTimestampUnix = Math.floor((Date.now() - hours * 60 * 60 * 1000) / 1000);
 
-  console.log(`Fetching calls since: ${sinceTimestampISO} (${hours} hours ago) [Unix: ${sinceTimestampUnix}]`);
+  console.log(`Fetching calls since Unix timestamp: ${sinceTimestampUnix} (${hours} hours ago)`);
 
   db.all(
     `
@@ -690,8 +689,7 @@ app.get('/api/calls', (req, res) => {
     WHERE t.timestamp >= ? AND t.lat IS NOT NULL AND t.lon IS NOT NULL
     ORDER BY t.timestamp DESC
     `,
-    // Use the Unix timestamp for the query parameter
-    [sinceTimestampUnix],
+    [sinceTimestampUnix], // Use Unix timestamp for the query
     (err, rows) => {
       if (err) {
         console.error('Error fetching calls:', err);
@@ -700,11 +698,12 @@ app.get('/api/calls', (req, res) => {
       }
 
       console.log(`Returning ${rows.length} calls`);
+      // Timestamps are now already Unix seconds from the DB
       if (rows.length > 0) {
-        console.log(`Oldest call in result: ${rows[rows.length - 1].timestamp}`);
-        console.log(`Newest call in result: ${rows[0].timestamp}`);
+        console.log(`Oldest call in result (Unix ts): ${rows[rows.length - 1].timestamp}`);
+        console.log(`Newest call in result (Unix ts): ${rows[0].timestamp}`);
       }
-      res.json(rows);
+      res.json(rows); // Send rows directly as timestamps are already numeric
     }
   );
 });
@@ -976,17 +975,26 @@ function checkForNewCalls() {
               }
               // --- End Category Processing ---
 
+              // Timestamp from DB is now Unix seconds
+              // const numericTimestamp = Math.floor(new Date(row.timestamp).getTime() / 1000);
+              // if (isNaN(numericTimestamp)) {
+              //  console.error(`Invalid timestamp in polling (newCall): ${row.timestamp} for call ID ${row.id}`);
+              //  continue; // Skip this row
+              // }
+              // const processedRow = { ...row, timestamp: numericTimestamp };
+
               // --- Emission Logic with Timeout --- 
               if (row.transcription) {
                    // Has transcription, emit immediately
-                  io.emit('newCall', row);
+                  io.emit('newCall', row); // row.timestamp is already Unix seconds
               } else {
                   // No transcription yet, check age
-                  const callAgeMs = Date.now() - new Date(row.timestamp).getTime();
+                  // row.timestamp is Unix seconds, multiply by 1000 for JS Date
+                  const callAgeMs = Date.now() - (row.timestamp * 1000);
                   if (callAgeMs > 10000) { // 10 second timeout
                       // Timeout exceeded, emit with placeholder
-                      row.transcription = "[Transcription Pending...]"; // Modify row
-                      io.emit('newCall', row);
+                      const rowWithPlaceholder = { ...row, transcription: "[Transcription Pending...]" };
+                      io.emit('newCall', rowWithPlaceholder);
                   } else {
                       // Too new and no transcription, wait 
                   }
@@ -1026,6 +1034,14 @@ function checkForLiveFeedCalls() {
 
       if (rows && rows.length > 0) {
           rows.forEach(row => {
+              // Timestamp from DB is now Unix seconds
+              // const numericTimestamp = Math.floor(new Date(row.timestamp).getTime() / 1000);
+              // if (isNaN(numericTimestamp)) {
+              //  console.error(`Invalid timestamp in polling (liveFeedUpdate): ${row.timestamp} for call ID ${row.id}`);
+              //  return; // Skip this iteration of forEach
+              // }
+              // const processedRow = { ...row, timestamp: numericTimestamp };
+
               let shouldEmit = false;
               // --- Emission Logic with Timeout ---
               if (row.transcription) {
@@ -1033,10 +1049,15 @@ function checkForLiveFeedCalls() {
                    shouldEmit = true;
               } else {
                    // No transcription yet, check age
-                  const callAgeMs = Date.now() - new Date(row.timestamp).getTime();
+                   // row.timestamp is Unix seconds, multiply by 1000 for JS Date
+                  const callAgeMs = Date.now() - (row.timestamp * 1000);
                   if (callAgeMs > 10000) { // 10 second timeout
                       // Timeout exceeded, emit with placeholder
-                      row.transcription = "[Transcription Pending...]"; // Modify row
+                      // Create a new object for the row with placeholder to avoid modifying original row in loop
+                      // const rowWithPlaceholder = { ...row, transcription: "[Transcription Pending...]" };
+                      // io.emit('liveFeedUpdate', rowWithPlaceholder);
+                      // shouldEmit = true; // This was incorrect, emission is handled below
+                      row.transcription = "[Transcription Pending...]"; // Modify row for this emission
                       shouldEmit = true;
                   } else {
                       // Too new and no transcription, wait (DO NOTHING)
@@ -1046,9 +1067,7 @@ function checkForLiveFeedCalls() {
               
               // Emit only if decided
               if (shouldEmit) {
-                 // REMOVED LOGGING HERE
-                 // console.log(`[LiveFeed Emit] Emitting call ID: ${row.id}, Transcription: ${row.transcription ? row.transcription.substring(0, 30) + '...' : '(empty)'}`); 
-                 io.emit('liveFeedUpdate', row); 
+                 io.emit('liveFeedUpdate', row); // row.timestamp is already Unix seconds
                  // Update highestEmittedId only when we actually emit
                  if (row.id > highestEmittedId) {
                     highestEmittedId = row.id;
