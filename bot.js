@@ -1382,7 +1382,6 @@ function cleanupOldAudioFiles() {
 setInterval(cleanupOldAudioFiles, 24 * 60 * 60 * 1000);
 
 // Function to transcribe audio
-// Function to transcribe audio
 function transcribeAudio(filePath, callback) {
   // First check if the file exists before attempting transcription
   if (!fs.existsSync(filePath)) {
@@ -1998,15 +1997,33 @@ function getRecentTranscriptions() {
             });
           }
           // Convert timestamp strings to Unix timestamps (seconds)
-          const processedRows = rows.map(row => {
-            const numericTimestamp = Math.floor(new Date(row.timestamp).getTime() / 1000);
-            if (isNaN(numericTimestamp)) {
-              logger.warn(`[getRecentTranscriptions] Failed to parse timestamp string: ${row.timestamp} for row ID: ${row.id}. Setting to 0.`);
-              return { ...row, timestamp: 0 }; // Return 0 or handle as error
-            }
-            return { ...row, timestamp: numericTimestamp };
-          });
-          resolve(processedRows);
+           const processedRows = rows.map(row => {
+             let numericTimestampSeconds;
+             if (typeof row.timestamp === 'string') {
+                 const tsDate = new Date(row.timestamp);
+                 if (!isNaN(tsDate.getTime())) {
+                     numericTimestampSeconds = Math.floor(tsDate.getTime() / 1000);
+                 } else {
+                     logger.warn(`[getRecentTranscriptions] Failed to parse timestamp string: '${row.timestamp}' for row ID: ${row.id}. Setting to 0.`);
+                     numericTimestampSeconds = 0;
+                 }
+             } else if (typeof row.timestamp === 'number') {
+                 // If the number is very large (e.g. > 100000000000, which is roughly year 5138 in seconds), assume it's milliseconds.
+                 // A more common threshold might be around 30_000_000_000 (year 2920 in seconds) if only expecting up to ms.
+                 // For this context, timestamps from DB are expected to be seconds primarily.
+                 // If a number is much larger than typical seconds timestamps (e.g. > 3 * 10^9, roughly year 2065), it might be ms.
+                 if (row.timestamp > 4000000000) { // Heuristic: if it's a large number (e.g. > year 2096 in secs), likely ms
+                      numericTimestampSeconds = Math.floor(row.timestamp / 1000);
+                 } else { // Assumed to be seconds
+                      numericTimestampSeconds = row.timestamp;
+                 }
+             } else {
+                 logger.warn(`[getRecentTranscriptions] Unexpected timestamp type for row ID ${row.id}: ${typeof row.timestamp} value: ${row.timestamp}. Setting to 0.`);
+                 numericTimestampSeconds = 0;
+             }
+             return { ...row, timestamp: numericTimestampSeconds };
+           });
+           resolve(processedRows);
         }
       }
     );
@@ -2113,7 +2130,8 @@ async function generateSummary(transcriptions) {
         const formattedTime = callDate.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
-          hour12: true
+          hour12: true,
+          timeZone: TIMEZONE
         });
         
         // Add minutes ago for easier time reference - Multiply by 1000
@@ -2167,13 +2185,13 @@ async function generateSummary(transcriptions) {
     const earliest = new Date(now.getTime() - LOOKBACK_PERIOD);
     const earliestTime = formattedTranscriptions.length > 0 ? 
       // Multiply by 1000
-      new Date(Math.min(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
-      earliest.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      new Date(Math.min(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE }) : 
+      new Date(Date.now() - LOOKBACK_PERIOD).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE });
     
     const latestTime = formattedTranscriptions.length > 0 ? 
       // Multiply by 1000
-      new Date(Math.max(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 
-      now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      new Date(Math.max(...formattedTranscriptions.map(t => t.timestamp * 1000))).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE }) : 
+      new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: TIMEZONE });
     
     // Generate time period descriptions for the AI
     const timePeriodsInfo = timeBuckets.map((bucket, index) => {
@@ -2487,7 +2505,8 @@ async function updateSummaryEmbed() {
       const formatTime = (date) => date.toLocaleTimeString('en-US', { 
         hour: 'numeric', 
         minute: '2-digit',
-        hour12: true
+        hour12: true,
+        timeZone: TIMEZONE
       });
       
       timeSpanInfo = `(${formatTime(earliest)} to ${formatTime(latest)})`;
@@ -2534,7 +2553,8 @@ async function updateSummaryEmbed() {
             timestampDisplay = originalTimestamp.toLocaleTimeString('en-US', {
               hour: 'numeric',
               minute: '2-digit',
-              hour12: true
+              hour12: true,
+              timeZone: TIMEZONE
             });
 
             // Explicitly check if toLocaleTimeString returned "Invalid Date"
