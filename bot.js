@@ -2534,7 +2534,7 @@ async function updateSummaryEmbed() {
       .setDescription(summary.summary)
       .setTimestamp()
       .setColor(0x3498db)
-      .setFooter({ text: 'Updates every 5 minutes • Powered by AI' });
+      .setFooter({ text: 'Updates every 10 minutes • Powered by AI' });
     
     // Add highlights
     if (summary.highlights && summary.highlights.length > 0) {
