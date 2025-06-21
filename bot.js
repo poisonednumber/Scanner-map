@@ -1161,6 +1161,19 @@ function handleNewAudio(audioData) {
         const transcriptionId = this.lastID; // Get the ID from the database insert
         logger.info(`Created transcription record ID ${transcriptionId} using storage path: ${storagePath}`);
 
+        // --- ADDED: Insert audio blob for Listen Live feature ---
+        db.run(
+          `INSERT INTO audio_files (transcription_id, audio_data) VALUES (?, ?)`,
+          [transcriptionId, fileBuffer],
+          (err) => {
+            if (err) {
+              logger.error(`Error inserting audio blob for transcription ID ${transcriptionId}:`, err);
+            } else {
+              logger.info(`Saved audio blob for transcription ID ${transcriptionId}`);
+            }
+          }
+        );
+
         // --- NEW: Define function to handle transcription *after* storage is complete ---
         const afterStorageComplete = (finalPathIfLocal) => { // finalPathIfLocal is null for S3, path string for local
 
