@@ -915,7 +915,7 @@ function startTranscriptionProcess() {
   transcriptionProcess.stderr.on('data', (data) => {
     const errorMsg = data.toString().trim();
     if (errorMsg) { // Avoid logging empty lines
-       logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
+       // logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
     }
   });
 
