@@ -31,7 +31,13 @@ const {
   S3_ENDPOINT,
   S3_BUCKET_NAME,
   S3_ACCESS_KEY_ID,
-  S3_SECRET_ACCESS_KEY
+  S3_SECRET_ACCESS_KEY,
+  // --- NEW: AI Provider Env Vars ---
+  AI_PROVIDER = 'ollama', // Can be 'ollama' or 'openai'
+  OPENAI_API_KEY,
+  OPENAI_MODEL = 'gpt-4o-mini', // A good, fast, and cheap model for this task
+  OLLAMA_URL = 'http://localhost:11434',
+  OLLAMA_MODEL = 'llama3.1:8b'
 } = process.env;
 
 // Validate required environment variables
@@ -177,10 +183,6 @@ async function validateSession(token) {
 
 async function generateShortSummary(transcript) {
   try {
-    // Get environment variables for Ollama
-    const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b'; // Or your preferred model
-
     // Original list of categories for the AI
     const categories = [
       'Medical Emergency', 'Injured Person', 'Disturbance', 'Vehicle Collision',
@@ -194,8 +196,8 @@ async function generateShortSummary(transcript) {
       'Assist'
     ];
 
-    // Refined prompt for the AI, explicitly mentioning the 'Other' case for ambiguity
-    const prompt = `
+    // This prompt works well for both Ollama and OpenAI's chat models
+    const commonPrompt = `
 You are an expert emergency service dispatcher categorizing radio transmissions.
 Analyze the following first responder radio transmission and categorize it into EXACTLY ONE of the categories listed below.
 Choose the category that best fits the main subject of the transmission.
@@ -214,73 +216,102 @@ ${categories.map(cat => `- ${cat}`).join('\n')}
 Transmission: "${transcript}"
 
 Category:`;
-    // --- END REFINED PROMPT ---
 
-    // Call the Ollama API
-    // Add AbortController for timeout
+    let category = 'OTHER'; // Default value
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-        console.warn(`Ollama request timed out after 5 seconds during categorization.`);
+        console.warn(`[Webserver] AI request timed out after 10 seconds during categorization.`);
         controller.abort();
-    }, 5000); // 5-second timeout
+    }, 10000); // 10-second timeout
 
-    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        prompt,
-        stream: false,
-        options: {
-            // Lower temperature might make the AI less likely to guess creative categories
-            temperature: 0.3
+    // --- AI Provider Logic ---
+    if (AI_PROVIDER.toLowerCase() === 'openai') {
+        if (!OPENAI_API_KEY) {
+            console.error('[Webserver] FATAL: AI_PROVIDER is set to openai, but OPENAI_API_KEY is not configured!');
+            return 'OTHER'; // Fallback if key is missing
         }
-      }),
-      signal: controller.signal // Pass the signal here
-    });
+        console.log(`[Webserver] Categorizing with OpenAI model: ${OPENAI_MODEL}`);
 
-    clearTimeout(timeoutId); // Clear timeout if fetch completes
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: OPENAI_MODEL,
+                messages: [{ role: 'user', content: commonPrompt }],
+                temperature: 0.2, // Lower temp for more deterministic category
+                max_tokens: 20    // A category name is short
+            }),
+            signal: controller.signal
+        });
 
-    if (!response.ok) {
-      // Log the error and transcript for debugging, then throw
-      console.error(`HTTP error! status: ${response.status} for transcript: ${transcript}`);
-      throw new Error(`HTTP error! status: ${response.status}`);
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[Webserver] OpenAI API error! status: ${response.status}, transcript: ${transcript}, details: ${errorText}`);
+          throw new Error(`OpenAI API error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (result.choices && result.choices.length > 0 && result.choices[0].message) {
+            category = result.choices[0].message.content.trim();
+        }
+
+    } else { // Default to Ollama
+        console.log(`[Webserver] Categorizing with Ollama model: ${OLLAMA_MODEL}`);
+
+        const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            model: OLLAMA_MODEL,
+            prompt: commonPrompt, // The prompt is compatible
+            stream: false,
+            options: {
+                temperature: 0.3
+            }
+          }),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.error(`[Webserver] Ollama API error! status: ${response.status} for transcript: ${transcript}`);
+          throw new Error(`Ollama API error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        category = result.response.trim();
     }
+    // --- End AI Provider Logic ---
 
-    const result = await response.json();
 
-    // Trim whitespace and convert to uppercase for consistency
-    let category = result.response.trim(); // Changed to let
-
-    // --- ADDED: Remove <think> block ---
-    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/; // Corrected escaping
-    category = category.replace(thinkBlockRegex, '').trim().toUpperCase(); // Apply replace and uppercase here
-    // --- END ADDED ---
+    // The existing post-processing logic is generic enough to work for both
+    const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/;
+    category = category.replace(thinkBlockRegex, '').trim().toUpperCase();
 
     // Validate the AI's response against the known categories (including OTHER)
     const validCategoriesUppercase = categories.map(cat => cat.toUpperCase());
-    validCategoriesUppercase.push('OTHER'); // Ensure 'OTHER' is always valid
+    validCategoriesUppercase.push('OTHER');
 
     if (!validCategoriesUppercase.includes(category)) {
-       // Log the unexpected response from the AI before defaulting
-       console.warn(`Ollama returned an unexpected or invalid category: "${result.response}". Defaulting to OTHER for transcript: "${transcript}"`);
+       console.warn(`[Webserver] AI returned an unexpected or invalid category: "${category}". Defaulting to OTHER for transcript: "${transcript}"`);
        category = 'OTHER';
     }
-
-    //console.log(`Categorized call "${transcript}" as: "${category}"`);
-    // Return the determined category (uppercase)
+    
     return category;
 
   } catch (error) {
-    // Log the error along with the transcript that caused it
-    console.error(`Error categorizing call: "${transcript}". Error: ${error.message}`);
-    // Fallback to 'OTHER' in case of any errors during the process
-    // Check specifically for AbortError (timeout)
+    console.error(`[Webserver] Error categorizing call: "${transcript}". Error: ${error.message}`);
     if (error.name === 'AbortError') {
-         console.error(`Ollama request timed out during categorization: ${error.message}`);
-         // Return 'OTHER' on timeout as per existing fallback logic
+         console.error(`[Webserver] AI request timed out during categorization: ${error.message}`);
     }
-    return 'OTHER';
+    return 'OTHER'; // Fallback to 'OTHER' in case of any errors
   }
 }
 
@@ -423,74 +454,85 @@ const adminAuth = (req, res, next) => {
   }
 };
 
-// Public Routes (No Auth Required)
-app.get('/audio/:id', async (req, res) => { // Added async
-  const transcriptionId = req.params.id;
-  // Commented out verbose logging
-  // console.log(`[Audio Request] ID: ${transcriptionId}, Mode: ${STORAGE_MODE}`);
+// --- NEW HELPER FUNCTION ---
+async function serveAudioFromDb(res, transcriptionId) {
+    console.log(`[Audio DB] Serving audio for ID ${transcriptionId} from database blob.`);
+    try {
+        const audioRow = await new Promise((resolve, reject) => {
+            db.get('SELECT audio_data FROM audio_files WHERE transcription_id = ?', [transcriptionId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
 
+        if (audioRow && audioRow.audio_data) {
+            const pathRow = await new Promise((resolve, reject) => {
+                 db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [transcriptionId], (err, row) => {
+                    if (err) reject(err); else resolve(row);
+                });
+            });
+
+            const filePath = pathRow ? pathRow.audio_file_path : '';
+            const extension = path.extname(filePath).toLowerCase();
+            const contentType = extension === '.m4a' ? 'audio/mp4' : 'audio/mpeg';
+            
+            res.setHeader('Content-Type', contentType);
+            res.send(audioRow.audio_data);
+        } else {
+            console.error(`[Audio DB] Audio data not found in DB for ID: ${transcriptionId}`);
+            if (!res.headersSent) {
+                res.status(404).send('Audio not found in any storage location.');
+            }
+        }
+    } catch (dbErr) {
+        console.error(`[Audio DB] DB error for ID ${transcriptionId}:`, dbErr);
+        if (!res.headersSent) {
+            res.status(500).send('Internal Server Error during DB fallback.');
+        }
+    }
+}
+
+// Public Routes (No Auth Required)
+app.get('/audio/:id', async (req, res) => {
+  const transcriptionId = req.params.id;
+  
   try {
-    // Fetch the audio file path/key from the transcriptions table
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [transcriptionId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
+    const transcriptionRow = await new Promise((resolve, reject) => {
+        db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [transcriptionId], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
     });
 
-    if (!row || !row.audio_file_path) {
-      console.error(`[Audio Request] Audio path not found for ID: ${transcriptionId}`);
-      return res.status(404).send('Audio record not found');
-    }
+    if (transcriptionRow && transcriptionRow.audio_file_path) {
+        const audioStoragePath = transcriptionRow.audio_file_path;
+        const extension = path.extname(audioStoragePath).toLowerCase();
+        const contentType = extension === '.m4a' ? 'audio/mp4' : 'audio/mpeg';
 
-    const audioStoragePath = row.audio_file_path;
-    const extension = path.extname(audioStoragePath).toLowerCase();
-    let contentType = 'audio/mpeg'; // Default to MP3
-    if (extension === '.m4a') {
-      contentType = 'audio/mp4';
-    }
-
-    if (STORAGE_MODE === 's3') {
-      // --- S3 Streaming Logic ---
-      // Commented out verbose logging
-      // console.log(`[Audio S3] Streaming key: ${audioStoragePath}`);
-      const params = {
-        Bucket: S3_BUCKET_NAME,
-        Key: audioStoragePath,
-      };
-      res.setHeader('Content-Type', contentType);
-
-      // Create a readable stream from S3 and pipe it to the response
-      const s3Stream = s3.getObject(params).createReadStream();
-
-      s3Stream.on('error', (s3Err) => {
-        console.error(`[Audio S3] Stream error for key ${audioStoragePath}:`, s3Err);
-        // Try to send error status only if headers aren't already sent
-        if (!res.headersSent) {
-          res.status(500).send('Error streaming audio from S3');
+        if (STORAGE_MODE === 's3') {
+            const params = { Bucket: S3_BUCKET_NAME, Key: audioStoragePath };
+            const s3Stream = s3.getObject(params).createReadStream();
+            s3Stream.on('error', (s3Err) => {
+                console.warn(`[Audio S3] S3 stream error for key ${audioStoragePath}: ${s3Err.code}. Falling back to DB.`);
+                serveAudioFromDb(res, transcriptionId);
+            });
+            res.setHeader('Content-Type', contentType);
+            s3Stream.pipe(res);
+            return; 
+        } else { // Local storage
+            const localPath = path.join(__dirname, 'audio', audioStoragePath);
+            if (fs.existsSync(localPath)) {
+                res.setHeader('Content-Type', contentType);
+                fs.createReadStream(localPath).pipe(res);
+                return;
+            } else {
+                 console.warn(`[Audio Local] File not found at ${localPath}. Falling back to DB.`);
+            }
         }
-      });
-
-      s3Stream.pipe(res);
-      // --- End S3 Streaming Logic ---
-
-    } else {
-      // --- Local File Serving Logic ---
-      const audioStoragePath = row.audio_file_path; // Re-declare here for clarity
-      const localPath = path.join(__dirname, 'audio', audioStoragePath);
-      console.log(`[Audio Local] Serving path: ${localPath}`); // Keep basic serving path log
-
-      if (fs.existsSync(localPath)) {
-        res.setHeader('Content-Type', contentType);
-        const fileStream = fs.createReadStream(localPath);
-        // Pipe directly, relying on outer try/catch for major errors
-        fileStream.pipe(res); 
-      } else {
-        console.error(`[Audio Local] File not found: ${localPath}`);
-        return res.status(404).send('Audio file not found locally');
-      }
-      // --- End Local File Serving Logic ---
     }
+    
+    // Fallback to serving from the database blob if file not found or path missing.
+    serveAudioFromDb(res, transcriptionId);
 
   } catch (dbErr) {
     console.error('[Audio Request] Database error:', dbErr);

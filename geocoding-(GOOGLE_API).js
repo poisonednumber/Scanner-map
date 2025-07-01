@@ -15,10 +15,36 @@ const {
   GEOCODING_TARGET_COUNTIES,
   GEOCODING_CITY,
   TIMEZONE,
+  // --- NEW: AI Provider Env Vars ---
+  AI_PROVIDER,
+  OPENAI_API_KEY,
+  OPENAI_MODEL,
   OLLAMA_URL,
   OLLAMA_MODEL,
   TARGET_CITIES_LIST
 } = process.env;
+
+// --- VALIDATE AI-RELATED ENV VARS ---
+if (!AI_PROVIDER) {
+    console.error("FATAL: [Geocoding] AI_PROVIDER is not set in the .env file. Please specify 'ollama' or 'openai'.");
+    process.exit(1);
+}
+
+if (AI_PROVIDER.toLowerCase() === 'openai') {
+    if (!OPENAI_API_KEY || !OPENAI_MODEL) {
+        console.error("FATAL: [Geocoding] AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
+        process.exit(1);
+    }
+} else if (AI_PROVIDER.toLowerCase() === 'ollama') {
+    if (!OLLAMA_URL || !OLLAMA_MODEL) {
+        console.error("FATAL: [Geocoding] AI_PROVIDER is 'ollama', but OLLAMA_URL or OLLAMA_MODEL is missing in the .env file.");
+        process.exit(1);
+    }
+} else {
+    console.error(`FATAL: [Geocoding] Invalid AI_PROVIDER specified in .env file: '${AI_PROVIDER}'. Must be 'openai' or 'ollama'.`);
+    process.exit(1);
+}
+// --- END VALIDATION ---
 
 // Validate required environment variables
 const requiredVars = ['GOOGLE_MAPS_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
@@ -182,29 +208,66 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
     // Add AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-        logger.warn(`Ollama request timed out after 30 seconds for address extraction.`);
+        logger.warn(`AI request timed out after 30 seconds for address extraction.`);
         controller.abort();
     }, 30000);
 
-    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        prompt,
-        stream: false
-      }),
-      signal: controller.signal // Pass the signal here
-    });
+    let extractedAddress = '';
 
-    clearTimeout(timeoutId); // Clear the timeout if fetch completes
+    if (AI_PROVIDER.toLowerCase() === 'openai') {
+        if (!OPENAI_API_KEY) {
+            logger.error("[Geocoding] FATAL: AI_PROVIDER is set to openai, but OPENAI_API_KEY is not configured!");
+            return null;
+        }
+        logger.info(`[Geocoding] Extracting address with OpenAI model: ${OPENAI_MODEL}`);
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: OPENAI_MODEL,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                max_tokens: 50
+            }),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`OpenAI API error! status: ${response.status}. Body: ${errorBody}`);
+        }
+        const result = await response.json();
+        if (result.choices && result.choices.length > 0 && result.choices[0].message) {
+            extractedAddress = result.choices[0].message.content.trim();
+        }
+
+    } else { // Default to Ollama
+        logger.info(`[Geocoding] Extracting address with Ollama model: ${OLLAMA_MODEL}`);
+
+        const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            model: OLLAMA_MODEL,
+            prompt,
+            stream: false
+          }),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama API error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        extractedAddress = result.response.trim();
     }
 
-    const result = await response.json();
-    let extractedAddress = result.response.trim();
+    clearTimeout(timeoutId); // Clear the timeout if fetch completes
 
     // --- ADDED: Remove <think> block --- 
     const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/; // Corrected escaping
@@ -232,7 +295,7 @@ Respond with ONLY the address in one line, no commentary or explanation. If no a
   } catch (error) {
     // Check specifically for AbortError (timeout)
     if (error.name === 'AbortError') {
-         logger.error(`Ollama request timed out during address extraction: ${error.message}`);
+         logger.error(`AI request timed out during address extraction: ${error.message}`);
          return null; // Return null on timeout
     }
     logger.error(`Error extracting address with LLM: ${error.message}`);

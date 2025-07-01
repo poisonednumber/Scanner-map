@@ -10,8 +10,6 @@ const {
   MAPPED_TALK_GROUPS: mappedTalkGroupsString, 
   TIMEZONE,
   API_KEY_FILE,
-  OLLAMA_URL, 
-  OLLAMA_MODEL,
   SUMMARY_LOOKBACK_HOURS,
   TRANSCRIPTION_MODE,
   FASTER_WHISPER_SERVER_URL,
@@ -21,9 +19,58 @@ const {
   S3_BUCKET_NAME,
   S3_ACCESS_KEY_ID,
   S3_SECRET_ACCESS_KEY,
-  ASK_AI_LOOKBACK_HOURS, // <-- Add this line
-  MAX_CONCURRENT_TRANSCRIPTIONS // <-- Use the shorter name here
+  ASK_AI_LOOKBACK_HOURS,
+  MAX_CONCURRENT_TRANSCRIPTIONS,
+  // --- NEW: AI Provider Env Vars ---
+  AI_PROVIDER,
+  OPENAI_API_KEY,
+  OPENAI_MODEL,
+  OLLAMA_URL,
+  OLLAMA_MODEL,
+  TRANSCRIPTION_DEVICE
 } = process.env;
+
+// --- VALIDATE AI-RELATED ENV VARS ---
+if (!AI_PROVIDER) {
+  console.error("FATAL: AI_PROVIDER is not set in the .env file. Please specify 'ollama' or 'openai'.");
+  process.exit(1);
+}
+
+if (AI_PROVIDER.toLowerCase() === 'openai') {
+  if (!OPENAI_API_KEY || !OPENAI_MODEL) {
+      console.error("FATAL: AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
+      process.exit(1);
+  }
+} else if (AI_PROVIDER.toLowerCase() === 'ollama') {
+  if (!OLLAMA_URL || !OLLAMA_MODEL) {
+      console.error("FATAL: AI_PROVIDER is 'ollama', but OLLAMA_URL or OLLAMA_MODEL is missing in the .env file.");
+      process.exit(1);
+  }
+} else {
+  console.error(`FATAL: Invalid AI_PROVIDER specified in .env file: '${AI_PROVIDER}'. Must be 'openai' or 'ollama'.`);
+  process.exit(1);
+}
+// --- END VALIDATION ---
+
+// --- VALIDATE TRANSCRIPTION-RELATED ENV VARS ---
+const effectiveTranscriptionMode = TRANSCRIPTION_MODE || 'local'; // Keep this to ensure a default
+if (!['local', 'remote', 'openai'].includes(effectiveTranscriptionMode)) {
+  console.error(`FATAL: Invalid TRANSCRIPTION_MODE specified in .env file: '${TRANSCRIPTION_MODE}'. Must be 'local', 'remote', or 'openai'.`);
+  process.exit(1);
+}
+if (effectiveTranscriptionMode === 'local' && !TRANSCRIPTION_DEVICE) {
+  console.error("FATAL: TRANSCRIPTION_MODE is 'local', but TRANSCRIPTION_DEVICE is missing in the .env file. Please set it to 'cuda' for a GPU or 'cpu' for CPU.");
+  process.exit(1);
+}
+if (effectiveTranscriptionMode === 'remote' && !FASTER_WHISPER_SERVER_URL) {
+  console.error("FATAL: TRANSCRIPTION_MODE is 'remote', but FASTER_WHISPER_SERVER_URL is missing in the .env file.");
+  process.exit(1);
+}
+if (effectiveTranscriptionMode === 'openai' && !OPENAI_API_KEY) {
+  console.error("FATAL: TRANSCRIPTION_MODE is 'openai', but OPENAI_API_KEY is missing in the .env file. This is required for OpenAI transcriptions.");
+  process.exit(1);
+}
+// --- END VALIDATION ---
 
 // Now initialize derived variables
 const express = require('express');
@@ -40,7 +87,6 @@ const winston = require('winston');
 const moment = require('moment-timezone');
 const TALK_GROUPS = {};
 const readline = require('readline');
-const effectiveTranscriptionMode = TRANSCRIPTION_MODE || 'local'; // Default to local
 const FormData = require('form-data');
 let summaryChannel;
 const SUMMARY_INTERVAL = 10 * 60 * 1000; // Changed from 5 to 10 minutes in milliseconds
@@ -869,7 +915,7 @@ function startTranscriptionProcess() {
   transcriptionProcess.stderr.on('data', (data) => {
     const errorMsg = data.toString().trim();
     if (errorMsg) { // Avoid logging empty lines
-       // logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
+       logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
     }
   });
 
@@ -1056,6 +1102,77 @@ async function transcribeAudioRemotely(filePath, callback) {
   }
 }
 
+async function transcribeWithOpenAIAPI(filePath, callback) {
+  // Check for API Key
+  if (!OPENAI_API_KEY) {
+    logger.error('FATAL: TRANSCRIPTION_MODE is openai, but OPENAI_API_KEY is not configured.');
+    if (callback) callback(""); // Fail gracefully
+    return;
+  }
+
+  // Check file existence
+  if (!fs.existsSync(filePath)) {
+    logger.warn(`OpenAI Transcription: Audio file does not exist: ${filePath}`);
+    if (callback) callback("");
+    return;
+  }
+
+  try {
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+    form.append('model', 'whisper-1'); // OpenAI's primary transcription model
+
+    const apiEndpoint = `https://api.openai.com/v1/audio/transcriptions`;
+    const filenameForLog = path.basename(filePath);
+    logger.info(`Sending OpenAI transcription request for ${filenameForLog} to ${apiEndpoint}`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        logger.error(`OpenAI transcription request timed out after 120s for ${filenameForLog}`);
+        controller.abort();
+    }, 120000); // 120 seconds
+
+    const response = await fetch(apiEndpoint, {
+         method: 'POST',
+         body: form,
+         headers: {
+             'Authorization': `Bearer ${OPENAI_API_KEY}`,
+             ...form.getHeaders()
+         },
+         signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorBody = `Status: ${response.status} ${response.statusText}`;
+      try {
+          errorBody = await response.text();
+      } catch (e) { /* ignore */ }
+      logger.error(`OpenAI transcription API error for ${filenameForLog}: ${errorBody}`);
+      if (callback) callback("");
+      return;
+    }
+
+    const result = await response.json();
+    const transcriptionText = result.text || "";
+
+    logger.info(`Received OpenAI transcription for ${filenameForLog} (${transcriptionText.length} chars)`);
+    if (callback) {
+      callback(transcriptionText);
+    }
+
+  } catch (error) {
+     if (error.name === 'AbortError') {
+         if (callback) callback("");
+     } else {
+        const filenameForLog = path.basename(filePath);
+        logger.error(`Error during OpenAI transcription API call for ${filenameForLog}: ${error.message}`, { stack: error.stack });
+        if (callback) callback("");
+     }
+  }
+}
+
 // Function to handle new audio (routes to local or remote transcription)
 function handleNewAudio(audioData) {
   const {
@@ -1161,18 +1278,20 @@ function handleNewAudio(audioData) {
         const transcriptionId = this.lastID; // Get the ID from the database insert
         logger.info(`Created transcription record ID ${transcriptionId} using storage path: ${storagePath}`);
 
-        // --- ADDED: Insert audio blob for Listen Live feature ---
-        db.run(
-          `INSERT INTO audio_files (transcription_id, audio_data) VALUES (?, ?)`,
-          [transcriptionId, fileBuffer],
-          (err) => {
-            if (err) {
-              logger.error(`Error inserting audio blob for transcription ID ${transcriptionId}:`, err);
-            } else {
-              logger.info(`Saved audio blob for transcription ID ${transcriptionId}`);
-            }
-          }
-        );
+        // Conditionally insert audio blob for Listen Live feature (local storage only)
+        if (STORAGE_MODE !== 's3') {
+            db.run(
+              `INSERT INTO audio_files (transcription_id, audio_data) VALUES (?, ?)`,
+              [transcriptionId, fileBuffer],
+              (err) => {
+                if (err) {
+                  logger.error(`Error inserting audio blob for transcription ID ${transcriptionId}:`, err);
+                } else {
+                  logger.info(`Saved audio blob for transcription ID ${transcriptionId}`);
+                }
+              }
+            );
+        }
 
         // --- NEW: Define function to handle transcription *after* storage is complete ---
         const afterStorageComplete = (finalPathIfLocal) => { // finalPathIfLocal is null for S3, path string for local
@@ -1221,9 +1340,12 @@ function handleNewAudio(audioData) {
             // --- Choose transcription method based on mode ---
             logger.info(`Initiating transcription for ID ${transcriptionId} using mode: ${effectiveTranscriptionMode}`);
 
-            if (effectiveTranscriptionMode === 'remote') {
-                // Use the remote function.
-                // If local storage, use the final path; if S3, use the original temp path.
+            if (effectiveTranscriptionMode === 'openai') {
+                // OpenAI API transcription mode
+                const pathToUse = (STORAGE_MODE === 'local') ? finalPathIfLocal : tempPath;
+                transcribeWithOpenAIAPI(pathToUse, processingCallback);
+            } else if (effectiveTranscriptionMode === 'remote') {
+                // Use the remote function for faster-whisper server
                 const pathToUseForRemote = (STORAGE_MODE === 'local') ? finalPathIfLocal : tempPath;
                 transcribeAudioRemotely(pathToUseForRemote, processingCallback);
 
@@ -2258,11 +2380,11 @@ async function generateSummary(transcriptions) {
     }));
     
     // Create the prompt for the AI - focus only on summarizing, not selecting
-    const prompt = `You are an experienced emergency dispatch analyst for a police and fire department. 
+    const commonPrompt = `You are an experienced emergency dispatch analyst for a police and fire department. 
 
 First, write a concise summary (2-3 sentences long max) of notable activity in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'} (from ${earliestTime} to ${latestTime}).
 
-Then, I've selected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
+Then, I'veselected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
 1) A clear, detailed description of what's happening (1 sentence long max)
 2) An importance rating (High/Medium/Low)
 
@@ -2286,32 +2408,68 @@ Return ONLY a JSON object with this format:
 Focus on providing insightful analysis of each transmission. The "description" field should help someone understand exactly what's happening without needing to listen to the audio.
 Include no other text besides this JSON.`;
 
-    // Call the Ollama API with a timeout
+    // Call the AI provider with a timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    let resultText = '';
     
     try {
-      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt,
-          stream: false
-        }),
-        signal: controller.signal
-      });
+      if (AI_PROVIDER.toLowerCase() === 'openai') {
+        if (!OPENAI_API_KEY) {
+            logger.error("[Bot] FATAL: AI_PROVIDER is set to openai, but OPENAI_API_KEY is not configured!");
+            throw new Error("OpenAI API key is not configured.");
+        }
+        logger.info(`[Bot] Generating summary with OpenAI model: ${OPENAI_MODEL}`);
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: OPENAI_MODEL,
+                messages: [{ role: 'user', content: commonPrompt }],
+                temperature: 0.3,
+                response_format: { type: "json_object" } // Request JSON output
+            }),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`OpenAI API error! status: ${response.status}. Body: ${errorBody}`);
+        }
+        const result = await response.json();
+        if (result.choices && result.choices.length > 0 && result.choices[0].message) {
+            resultText = result.choices[0].message.content;
+        }
+
+      } else { // Default to Ollama
+        logger.info(`[Bot] Generating summary with Ollama model: ${OLLAMA_MODEL}`);
+
+        const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            model: OLLAMA_MODEL,
+            prompt: commonPrompt,
+            stream: false
+          }),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama API error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        resultText = data.response;
+      }
       
       clearTimeout(timeout);
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      const resultText = data.response;
-      
-      // Extract the JSON part from the response
+      // Extract the JSON part from the response (works for both providers)
       const jsonMatch = resultText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
@@ -2360,14 +2518,14 @@ Include no other text besides this JSON.`;
           
           return parsedJson;
         } catch (e) {
-          logger.error('Error parsing Ollama JSON response:', e);
+          logger.error('Error parsing AI provider JSON response:', e);
           return { 
             summary: `Error processing summary for the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}.`, 
             highlights: [] 
           };
         }
       } else {
-        logger.error('No JSON found in Ollama response');
+        logger.error('No JSON found in AI provider response');
         return { 
           summary: `Unable to generate a structured summary for the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}.`, 
           highlights: [] 
@@ -2375,12 +2533,12 @@ Include no other text besides this JSON.`;
       }
     } catch (error) {
       if (error.name === 'AbortError') {
-        throw new Error('Request to Ollama timed out after 30 seconds');
+        throw new Error('Request to AI provider timed out after 30 seconds');
       }
       throw error;
     }
   } catch (error) {
-    logger.error(`Error generating summary with Ollama: ${error.message}`);
+    logger.error(`Error generating summary with AI provider: ${error.message}`);
     
     // Create a basic fallback summary
     const timeframe = `${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'}`;
@@ -2605,7 +2763,7 @@ async function updateSummaryEmbed() {
       });
     }
     
-    // Add status field if there was an error with Ollama
+    // Add status field if there was an error with AI provider
     if (summary.summary.includes('Error') || summary.summary.includes('unavailable')) {
       embed.addFields({
         name: '⚠️ AI Service Status',
@@ -2798,68 +2956,65 @@ function processAudioQueue(talkGroupID) {
   const transcriptionId = talkGroupData.queue.shift();
   logger.info(`Now playing audio for talk group ${talkGroupID}: ${transcriptionId}`);
 
-  // Fetch audio data from the database
-  db.get(
-    'SELECT audio_data FROM audio_files WHERE transcription_id = ?',
-    [transcriptionId],
-    (err, row) => {
-      if (err) {
-        logger.error('Error fetching audio data:', err);
-        processAudioQueue(talkGroupID);
-        return;
+  // --- NEW: Unified audio playing logic ---
+  const playStream = (inputStream) => {
+    // Common logic to transcode and play a stream
+    const transcoder = new prism.FFmpeg({
+      args: [
+        '-i', 'pipe:0', '-analyzeduration', '0', '-loglevel', '0',
+        '-f', 's16le', '-ar', '48000', '-ac', '2',
+      ],
+    });
+
+    inputStream.pipe(transcoder);
+
+    const resource = createAudioResource(transcoder, {
+      inputType: StreamType.Raw,
+      inlineVolume: true,
+    });
+    
+    resource.volume.setVolume(1.0);
+
+    talkGroupData.player.play(resource);
+    talkGroupData.lastActivity = Date.now();
+    
+    talkGroupData.player.once(AudioPlayerStatus.Idle, () => processAudioQueue(talkGroupID));
+    
+    talkGroupData.player.once('error', (error) => {
+      logger.error(`Player error for talk group ${talkGroupID}:`, error);
+      processAudioQueue(talkGroupID);
+    });
+  };
+
+  if (STORAGE_MODE === 's3') {
+    db.get('SELECT audio_file_path FROM transcriptions WHERE id = ?', [transcriptionId], (err, row) => {
+        if (err || !row || !row.audio_file_path) {
+            logger.error(`S3 Mode: Could not find audio_file_path for transcription ID ${transcriptionId}`, err);
+            processAudioQueue(talkGroupID);
+            return;
+        }
+        const s3Stream = s3.getObject({ Bucket: S3_BUCKET_NAME, Key: row.audio_file_path }).createReadStream();
+        s3Stream.on('error', s3Err => {
+            logger.error(`Error streaming from S3 for Discord playback (ID ${transcriptionId}):`, s3Err);
+            processAudioQueue(talkGroupID);
+        });
+        playStream(s3Stream);
+    });
+  } else { // Local mode fallback to DB blob
+    db.get('SELECT audio_data FROM audio_files WHERE transcription_id = ?', [transcriptionId], (err, row) => {
+        if (err || !row) {
+          logger.error('Audio data not found in DB for transcription ID:', transcriptionId);
+          processAudioQueue(talkGroupID);
+          return;
+        }
+        const audioBuffer = Buffer.from(row.audio_data);
+        const stream = new Readable();
+        stream.push(audioBuffer);
+        stream.push(null);
+        playStream(stream);
       }
-
-      if (!row) {
-        logger.error('Audio data not found for transcription ID:', transcriptionId);
-        processAudioQueue(talkGroupID);
-        return;
-      }
-
-      const audioBuffer = Buffer.from(row.audio_data);
-
-      // Updated FFmpeg args that handle both MP3 and M4A
-      const transcoder = new prism.FFmpeg({
-        args: [
-          '-i',
-          'pipe:0',
-          '-analyzeduration',
-          '0',
-          '-loglevel',
-          '0',
-          '-f',
-          's16le',
-          '-ar',
-          '48000',
-          '-ac',
-          '2',
-        ],
-      });
-
-      const stream = new Readable();
-      stream.push(audioBuffer);
-      stream.push(null);
-      stream.pipe(transcoder);
-
-      const resource = createAudioResource(transcoder, {
-        inputType: StreamType.Raw,
-        inlineVolume: true,
-      });
-
-      resource.volume.setVolume(1.0);
-
-      talkGroupData.player.play(resource);
-      talkGroupData.lastActivity = Date.now();
-
-      talkGroupData.player.once(AudioPlayerStatus.Idle, () => {
-        processAudioQueue(talkGroupID);
-      });
-
-      talkGroupData.player.on('error', (error) => {
-        logger.error(`Error playing audio for talk group ${talkGroupID}:`, error);
-        processAudioQueue(talkGroupID);
-      });
-    }
-  );
+    );
+  }
 }
 
 
@@ -3463,9 +3618,8 @@ client.on('interactionCreate', async (interaction) => {
         });
 
         // Format the actual start/end time of the *fetched data* for user message
-        const actualStartTime = transcriptions.length > 0 ? new Date(transcriptions[0].timestamp) : queryStartDate;
-        const actualEndTime = transcriptions.length > 0 ? new Date(transcriptions[transcriptions.length - 1].timestamp) : now; // End time is now
-        const userMessageTimeRange = `${actualStartTime.toLocaleString('en-US', {timeZone: TIMEZONE})} and ${actualEndTime.toLocaleString('en-US', {timeZone: TIMEZONE})}`;
+        const actualStartTime = transcriptions.length > 0 ? new Date(transcriptions[0].timestamp * 1000) : queryStartDate;
+        const actualEndTime = transcriptions.length > 0 ? new Date(transcriptions[transcriptions.length - 1].timestamp * 1000) : now; // End time is now
         
         if (transcriptions.length === 0) {
             // Updated message to use variable
@@ -3492,7 +3646,7 @@ client.on('interactionCreate', async (interaction) => {
           return `[${formattedDateTime}] ${t.transcription}`; 
         }).join('\n'); // Join with newline
         
-        // 4. Create the simplified prompt for Ollama
+        // 4. Create the simplified prompt for AI
         // Get timezone abbreviation 
         let tzAbbreviation = '';
         try {
@@ -3506,7 +3660,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Prompt updated to use variable lookback period
-        const prompt = `You are an AI assistant analyzing radio transcriptions for the talk group "${talkGroupName}".
+        const commonPrompt = `You are an AI assistant analyzing radio transcriptions for the talk group "${talkGroupName}".
 
 The following is a log of radio transmissions from the last ${askAiLookbackHours} hours (approximately ${promptStartTimeFormatted} to ${promptEndTimeFormatted} ${tzAbbreviation}):
 ---
@@ -3520,53 +3674,81 @@ User Question: ${userQuestion}
 - Answer concisely based *only* on the provided transcriptions.
 - Focus on events and details directly relevant to the user's question.
 - Avoid including minor details or unrelated events unless specifically asked.
-- If you cannot find relevant information for the question within the provided log, state that clearly.`;
+- If you cannot find a relevant information for the question within the provided log, state that clearly.`;
 
-        logger.info(`Ask AI Prompt for TG ${talkGroupID} (Length: ${prompt.length}, First 100 chars): ${prompt.substring(0, 100)}...`);
+        logger.info(`Ask AI Prompt for TG ${talkGroupID} (Length: ${commonPrompt.length}, First 100 chars): ${commonPrompt.substring(0, 100)}...`);
 
-        // 5. Call Ollama API (Keep 60s timeout for potentially long context)
+        // 5. Call AI Provider
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 60000); 
 
-        let ollamaResponseText = 'Error: Could not get response from AI.';
+        let aiResponseText = 'Error: Could not get response from AI.';
         try {
-            const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                model: OLLAMA_MODEL,
-                prompt: prompt,
-                stream: false,
-                // --- ADDED: Context Window Size ---
-                options: {
-                  num_ctx: 35000
+            if (AI_PROVIDER.toLowerCase() === 'openai') {
+                if (!OPENAI_API_KEY) {
+                    throw new Error("OpenAI API key is not configured.");
                 }
-                // --- END ADDED ---
-                }),
-                signal: controller.signal
-            });
-            clearTimeout(timeout);
+                logger.info(`[Bot] Answering question with OpenAI model: ${OPENAI_MODEL}`);
 
-            if (!response.ok) {
-                logger.error(`Ask AI Ollama Error: ${response.status} ${response.statusText}`);
-                ollamaResponseText = `Error: AI service returned status ${response.status}.`;
-            } else {
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${OPENAI_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: OPENAI_MODEL,
+                        messages: [{ role: 'user', content: commonPrompt }],
+                        temperature: 0.5,
+                        max_tokens: 500
+                    }),
+                    signal: controller.signal
+                });
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    throw new Error(`OpenAI API error! status: ${response.status}. Body: ${errorBody}`);
+                }
+                const result = await response.json();
+                if (result.choices && result.choices.length > 0 && result.choices[0].message) {
+                    aiResponseText = result.choices[0].message.content;
+                }
+
+            } else { // Default to Ollama
+                logger.info(`[Bot] Answering question with Ollama model: ${OLLAMA_MODEL}`);
+
+                const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      model: OLLAMA_MODEL,
+                      prompt: commonPrompt,
+                      stream: false,
+                      options: { num_ctx: 35000 }
+                    }),
+                    signal: controller.signal
+                });
+                if (!response.ok) {
+                    throw new Error(`Ollama API error! status: ${response.status}`);
+                }
                 const data = await response.json();
-                ollamaResponseText = data.response || 'Error: AI returned an empty response.';
-                
-                // --- ADDED: Remove <think> block ---
-                const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/;
-                ollamaResponseText = ollamaResponseText.replace(thinkBlockRegex, '').trim();
-                // --- END ADDED ---
+                aiResponseText = data.response || 'Error: AI returned an empty response.';
             }
+
+            clearTimeout(timeout); 
+
+            // --- ADDED: Remove <think> block from both providers ---
+            const thinkBlockRegex = /<think>[\s\S]*?<\/think>\s*/;
+            aiResponseText = aiResponseText.replace(thinkBlockRegex, '').trim();
+            // --- END ADDED ---
+
         } catch (fetchError) {
             clearTimeout(timeout); 
             if (fetchError.name === 'AbortError') {
-                logger.error(`Ask AI Ollama Error: Request timed out (60s) for TG ${talkGroupID}`);
-                ollamaResponseText = 'Error: The request to the AI timed out.';
+                logger.error(`Ask AI Error: Request timed out (60s) for TG ${talkGroupID}`);
+                aiResponseText = 'Error: The request to the AI timed out.';
             } else {
-                logger.error(`Ask AI Ollama Fetch Error for TG ${talkGroupID}:`, fetchError);
-                ollamaResponseText = 'Error: Could not connect to the AI service.';
+                logger.error(`Ask AI Fetch Error for TG ${talkGroupID}:`, fetchError);
+                aiResponseText = 'Error: Could not connect to the AI service.';
             }
         }
 
@@ -3575,7 +3757,7 @@ User Question: ${userQuestion}
           .setTitle(`AI Analysis for ${talkGroupName}`)
           .setColor(0x5865F2) // Discord blurple color
           // Updated description to use variable
-          .setDescription(`**Your Question:**\n${userQuestion}\n\n**AI Answer (based on last ${askAiLookbackHours} hours):**\n>>> ${ollamaResponseText}`)
+          .setDescription(`**Your Question:**\n${userQuestion}\n\n**AI Answer (based on last ${askAiLookbackHours} hours):**\n>>> ${aiResponseText}`)
           .setTimestamp();
 
         // Truncate description if too long for Discord embed
