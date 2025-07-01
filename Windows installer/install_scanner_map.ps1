@@ -233,173 +233,11 @@ function Create-EnvFile {
     } else {
         $envContent += "DISCORD_TOKEN=$discordToken"
     }
-    # $clientId = Read-Host -Prompt "Enter CLIENT_ID" # Removed as it's not used in bot.js provided
+    $envContent += "# CLIENT_ID is no longer required by the bot."
+    $envContent += "CLIENT_ID="
     $envContent += ""
 
-    # --- Server Ports ---
-    $envContent += "#################################################################"
-    $envContent += "##                  SERVER & NETWORK SETTINGS                  ##"
-    $envContent += "#################################################################"
-    $envContent += ""
-    $envContent += "# Port for incoming SDRTrunk/TrunkRecorder uploads"
-    $botPort = Prompt-Input "Enter BOT_PORT (for SDRTrunk/TR)" $DefaultBotPort
-    $envContent += "BOT_PORT=$botPort"
-    $envContent += ""
-    $envContent += "# Port for the web interface/API server"
-    $webserverPort = Prompt-Input "Enter WEBSERVER_PORT (e.g., 80, 8080)" $DefaultWebserverPort
-    $envContent += "WEBSERVER_PORT=$webserverPort"
-    $envContent += ""
-    $envContent += "# Public domain name or IP address used for creating audio playback links"
-    $publicDomain = Prompt-Input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" $DefaultPublicDomain
-    $envContent += "PUBLIC_DOMAIN=$publicDomain"
-    $envContent += ""
-    $envContent += "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
-    $timezone = Prompt-Input "Enter TIMEZONE" $DefaultTimezone
-    $envContent += "TIMEZONE=$timezone"
-    $envContent += ""
-
-    # --- Authentication ---
-    $envContent += "#################################################################"
-    $envContent += "##                   AUTHENTICATION & API KEYS                 ##"
-    $envContent += "#################################################################"
-    $envContent += ""
-    $envContent += "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
-    $apiKeyFile = Prompt-Input "Enter API_KEY_FILE path" $DefaultApiKeyFile
-    $envContent += "API_KEY_FILE=$apiKeyFile             # Edit and run GenApiKey.js to create/update keys"
-    $envContent += ""
-    $envContent += "# Enable/disable password authentication for the web interface"
-    $enableAuth = Prompt-Input "Enable Webserver Authentication? (true/false)" $DefaultEnableAuth
-    $envContent += "ENABLE_AUTH=$enableAuth                 # Set to 'true' to enable password login"
-    $envContent += "# Password for web interface login (only used if ENABLE_AUTH=true)"
-    if ($enableAuth -eq 'true') {
-        $webserverPassword = Read-Host -Prompt "Enter WEBSERVER_PASSWORD (for web login)"
-        if ([string]::IsNullOrWhiteSpace($webserverPassword)) {
-             $envContent += "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED"
-             [void]$script:ManualEditList.Add("WEBSERVER_PASSWORD (since auth enabled)")
-        } else {
-             $envContent += "WEBSERVER_PASSWORD=$webserverPassword"
-        }
-    } else {
-         $envContent += "WEBSERVER_PASSWORD=                     # Run init-admin.js after changing this if auth is enabled"
-    }
-    $envContent += ""
-
-
-    # --- Transcription ---
-    $envContent += "#################################################################"
-    $envContent += "##                   TRANSCRIPTION SETTINGS                    ##"
-    $envContent += "#################################################################"
-    $envContent += ""
-    $envContent += "# --- Transcription Mode ---"
-    $envContent += "# Select 'local' (requires Python/CUDA setup) or 'remote' (uses API server)"
-    $transcriptionMode = Prompt-Input "Enter TRANSCRIPTION_MODE ('local' or 'remote')" $DefaultTranscriptionMode
-    $envContent += "TRANSCRIPTION_MODE=$transcriptionMode"
-    $envContent += ""
-    $envContent += "# --- Local Settings (Only used if TRANSCRIPTION_MODE=local) ---"
-    $envContent += "# faster-whisper model (e.g., tiny, base, small, medium, large-v3)"
-    $whisperModel = Prompt-Input "Enter WHISPER_MODEL" $DefaultWhisperModel
-    $envContent += "WHISPER_MODEL=$whisperModel"
-    $envContent += "# Device for local transcription ('cuda' or 'cpu')"
-    if ($transcriptionMode -eq 'local') {
-        $transcriptionDevice = Prompt-Input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" $script:PyTorchDevice
-        $envContent += "TRANSCRIPTION_DEVICE=$transcriptionDevice             # Ignored if mode is 'remote'"
-    } else {
-        $envContent += "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
-    }
-    $envContent += "# Maximum concurrent local transcriptions"
-    $maxConcurrent = Prompt-Input "Enter MAX_CONCURRENT_TRANSCRIPTIONS (e.g., 3)" "3"
-    $envContent += "MAX_CONCURRENT_TRANSCRIPTIONS=$maxConcurrent      # Used only if TRANSCRIPTION_MODE=local"
-    $envContent += ""
-    $envContent += "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
-    $envContent += "# URL of your running faster-whisper-server/speaches API"
-    if ($transcriptionMode -eq 'remote') {
-        $whisperServerUrl = Prompt-Input "Enter FASTER_WHISPER_SERVER_URL" $DefaultWhisperServerUrl
-        $envContent += "FASTER_WHISPER_SERVER_URL=$whisperServerUrl # Ignored if mode is 'local'"
-    } else {
-        $envContent += "FASTER_WHISPER_SERVER_URL=$DefaultWhisperServerUrl # Ignored if mode is 'local'"
-    }
-    $envContent += ""
-
-    # --- Geocoding ---
-    $envContent += "#################################################################"
-    $envContent += "##                  GEOCODING & LOCATION SETTINGS              ##"
-    $envContent += "#################################################################"
-    $envContent += ""
-    $envContent += "# --- Geocoding API Keys ---"
-    $envContent += "# INSTRUCTIONS:"
-    $envContent += "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
-    $envContent += "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
-    $envContent += "# 3. You can comment out the unused key with a '#' to avoid confusion."
-    $envContent += ""
-    $envContent += "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
-    $googleMapsKey = Read-Host -Prompt "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ)"
-    if ([string]::IsNullOrWhiteSpace($googleMapsKey)) {
-        $envContent += "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
-        [void]$script:ManualEditList.Add("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
-    } else {
-        $envContent += "GOOGLE_MAPS_API_KEY=$googleMapsKey"
-    }
-    $envContent += ""
-    $envContent += "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
-    $locationIqKey = Read-Host -Prompt "Enter LOCATIONIQ_API_KEY (leave blank if using Google)"
-    if ([string]::IsNullOrWhiteSpace($locationIqKey)) {
-        $envContent += "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
-        [void]$script:ManualEditList.Add("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
-    } else {
-        $envContent += "LOCATIONIQ_API_KEY=$locationIqKey"
-    }
-    $envContent += ""
-    $envContent += "# --- Location Hints (Used by both providers) ---"
-    $envContent += "# Default location hints for the geocoder"
-    $geoCity = Prompt-Input "Enter GEOCODING_CITY (Default City)" $DefaultGeoCity
-    $envContent += "GEOCODING_CITY=$geoCity        # Default city"
-    $geoState = Prompt-Input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" $DefaultGeoState
-    $envContent += "GEOCODING_STATE=$geoState                    # Default state abbreviation (e.g., MD, VA)"
-    $geoCountry = Prompt-Input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" $DefaultGeoCountry
-    $envContent += "GEOCODING_COUNTRY=$geoCountry                  # Default country abbreviation"
-    $envContent += ""
-    $envContent += "# Target counties for address validation (comma-separated)"
-    $geoCounties = Prompt-Input "Enter GEOCODING_TARGET_COUNTIES" $DefaultGeoCounties
-    $envContent += "GEOCODING_TARGET_COUNTIES=$geoCounties"
-    $envContent += ""
-    $envContent += "# Target cities for address extraction hints (comma-separated)"
-    $targetCitiesList = Prompt-Input "Enter TARGET_CITIES_LIST" $DefaultTargetCities
-    $envContent += "TARGET_CITIES_LIST=$targetCitiesList"
-    $envContent += ""
-
-    # --- LLM & AI Summary ---
-    $envContent += "#################################################################"
-    $envContent += "##                LLM & AI SUMMARY SETTINGS                    ##"
-    $envContent += "#################################################################"
-    $envContent += ""
-    $envContent += "# --- Ollama Settings ---"
-    $envContent += "# URL for your running Ollama instance"
-    $ollamaUrl = Prompt-Input "Enter OLLAMA_URL" $DefaultOllamaUrl
-    $envContent += "OLLAMA_URL=$ollamaUrl"
-    $envContent += "# Ollama model used for address extraction and summarization"
-    $ollamaModelEnv = Prompt-Input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" $DefaultOllamaModelEnv
-    $envContent += "OLLAMA_MODEL=$ollamaModelEnv"
-    $envContent += ""
-    $envContent += "# --- OpenAI Settings (Optional Alternative) ---"
-    $envContent += "# API Key if using OpenAI instead of Ollama"
-    $openaiKey = Read-Host -Prompt "Enter OPENAI_API_KEY (leave blank if using Ollama)"
-    if ([string]::IsNullOrWhiteSpace($openaiKey)) {
-        $envContent += "OPENAI_API_KEY= # Leave blank if using Ollama"
-    } else {
-        $envContent += "OPENAI_API_KEY=$openaiKey"
-        [void]$script:ManualEditList.Add("OPENAI_API_KEY (if intended)")
-    }
-    $envContent += ""
-    $envContent += "# --- Summary Settings ---"
-    $envContent += "# How many hours back the AI summary should cover"
-    $summaryHours = Prompt-Input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" $DefaultSummaryLookbackHours
-    $envContent += "SUMMARY_LOOKBACK_HOURS=$summaryHours"
-    $envContent += "# How many hours back the \'Ask AI\' feature should cover"
-    $askAiHours = Prompt-Input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" $DefaultAskAiLookbackHours
-    $envContent += "ASK_AI_LOOKBACK_HOURS=$askAiHours"
-    $envContent += ""
-
-    # --- NEW: Storage Mode ---
+    # --- Storage ---
     $envContent += "#################################################################"
     $envContent += "##                     STORAGE SETTINGS                        ##"
     $envContent += "#################################################################"
@@ -445,6 +283,193 @@ function Create-EnvFile {
         $envContent += "S3_ACCESS_KEY_ID=              # Ignored if STORAGE_MODE=local"
         $envContent += "S3_SECRET_ACCESS_KEY=           # Ignored if STORAGE_MODE=local"
     }
+    $envContent += ""
+
+    # --- Server Ports & Network ---
+    $envContent += "#################################################################"
+    $envContent += "##                  SERVER & NETWORK SETTINGS                  ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Port for incoming SDRTrunk/TrunkRecorder uploads"
+    $botPort = Prompt-Input "Enter BOT_PORT (for SDRTrunk/TR)" $DefaultBotPort
+    $envContent += "BOT_PORT=$botPort"
+    $envContent += ""
+    $envContent += "# Port for the web interface/API server"
+    $webserverPort = Prompt-Input "Enter WEBSERVER_PORT (e.g., 80, 8080)" $DefaultWebserverPort
+    $envContent += "WEBSERVER_PORT=$webserverPort"
+    $envContent += ""
+    $envContent += "# Public domain name or IP address used for creating audio playback links"
+    $publicDomain = Prompt-Input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" $DefaultPublicDomain
+    $envContent += "PUBLIC_DOMAIN=$publicDomain"
+    $envContent += ""
+    $envContent += "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
+    $timezone = Prompt-Input "Enter TIMEZONE" $DefaultTimezone
+    $envContent += "TIMEZONE=$timezone"
+    $envContent += ""
+
+    # --- Authentication & API Keys ---
+    $envContent += "#################################################################"
+    $envContent += "##                   AUTHENTICATION & API KEYS                 ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
+    $apiKeyFile = Prompt-Input "Enter API_KEY_FILE path" $DefaultApiKeyFile
+    $envContent += "API_KEY_FILE=$apiKeyFile      # Edit and run GenApiKey.js to create/update keys"
+    $envContent += ""
+    $envContent += "# Enable/disable password authentication for the web interface"
+    $enableAuth = Prompt-Input "Enable Webserver Authentication? (true/false)" $DefaultEnableAuth
+    $envContent += "ENABLE_AUTH=$enableAuth                 # Set to 'true' to enable password login"
+    $envContent += "# Password for web interface login (only used if ENABLE_AUTH=true)"
+    if ($enableAuth -eq 'true') {
+        $webserverPassword = Read-Host -Prompt "Enter WEBSERVER_PASSWORD (for web login)"
+        if ([string]::IsNullOrWhiteSpace($webserverPassword)) {
+             $envContent += "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED"
+             [void]$script:ManualEditList.Add("WEBSERVER_PASSWORD (since auth enabled)")
+        } else {
+             $envContent += "WEBSERVER_PASSWORD=$webserverPassword"
+        }
+    } else {
+         $envContent += "WEBSERVER_PASSWORD=whatappisthat  # Run init-admin.js after changing this if auth is enabled"
+    }
+    $envContent += ""
+
+    # --- Transcription ---
+    $envContent += "#################################################################"
+    $envContent += "##                    TRANSCRIPTION SETTINGS                   ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Transcription Provider Selection ---"
+    $envContent += "# Specifies the service to use for audio transcription."
+    $envContent += "# 'local': Uses a local Python script (requires appropriate hardware and setup)."
+    $envContent += "# 'remote': Uses a self-hosted faster-whisper compatible API endpoint."
+    $envContent += "# 'openai': Uses the official OpenAI Whisper API (requires OPENAI_API_KEY)."
+    $envContent += "# This setting is REQUIRED."
+    $transcriptionMode = Prompt-Input "Enter TRANSCRIPTION_MODE ('local', 'remote', or 'openai')" $DefaultTranscriptionMode
+    $envContent += "TRANSCRIPTION_MODE=$transcriptionMode"
+    $envContent += ""
+    $envContent += "# --- Local Transcription Settings (Required if TRANSCRIPTION_MODE is 'local') ---"
+    $envContent += "# Specifies the hardware to use for transcription."
+    $envContent += "# Use 'cuda' for an NVIDIA GPU (recommended for performance) or 'cpu' for the CPU."
+    if ($transcriptionMode -eq 'local') {
+        $transcriptionDevice = Prompt-Input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" $script:PyTorchDevice
+        $envContent += "TRANSCRIPTION_DEVICE=$transcriptionDevice"
+    } else {
+        $envContent += "TRANSCRIPTION_DEVICE=cpu # Ignored unless TRANSCRIPTION_MODE=local"
+    }
+    $envContent += ""
+    $envContent += "# --- Faster-Whisper Settings (Required if TRANSCRIPTION_MODE is 'remote') ---"
+    $envContent += "# The URL of your self-hosted transcription server."
+    if ($transcriptionMode -eq 'remote') {
+        $whisperServerUrl = Prompt-Input "Enter FASTER_WHISPER_SERVER_URL" $DefaultWhisperServerUrl
+        $envContent += "FASTER_WHISPER_SERVER_URL=$whisperServerUrl"
+        $envContent += "# Optional: Specify a model for the remote server to use."
+        $whisperModel = Prompt-Input "Enter WHISPER_MODEL" $DefaultWhisperModel
+        $envContent += "WHISPER_MODEL=$whisperModel"
+    } else {
+        $envContent += "FASTER_WHISPER_SERVER_URL=$DefaultWhisperServerUrl # Ignored unless TRANSCRIPTION_MODE=remote"
+        $envContent += "WHISPER_MODEL=$DefaultWhisperModel # Ignored unless TRANSCRIPTION_MODE=remote"
+    }
+    $envContent += ""
+    $envContent += "# Note: The OPENAI_API_KEY from the section below is used if TRANSCRIPTION_MODE is 'openai'."
+    $envContent += ""
+
+    # --- Geocoding ---
+    $envContent += "#################################################################"
+    $envContent += "##                  GEOCODING & LOCATION SETTINGS              ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- Geocoding API Keys ---"
+    $envContent += "# INSTRUCTIONS:"
+    $envContent += "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
+    $envContent += "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
+    $envContent += "# 3. You can comment out the unused key with a '#' to avoid confusion."
+    $envContent += ""
+    $envContent += "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
+    $googleMapsKey = Read-Host -Prompt "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ)"
+    if ([string]::IsNullOrWhiteSpace($googleMapsKey)) {
+        $envContent += "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
+        [void]$script:ManualEditList.Add("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
+    } else {
+        $envContent += "GOOGLE_MAPS_API_KEY=$googleMapsKey"
+    }
+    $envContent += ""
+    $envContent += "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
+    $locationIqKey = Read-Host -Prompt "Enter LOCATIONIQ_API_KEY (leave blank if using Google)"
+    if ([string]::IsNullOrWhiteSpace($locationIqKey)) {
+        $envContent += "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
+        [void]$script:ManualEditList.Add("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
+    } else {
+        $envContent += "LOCATIONIQ_API_KEY=$locationIqKey"
+    }
+    $envContent += ""
+    $envContent += "# --- Location Hints (Used by both providers) ---"
+    $envContent += "# Default location hints for the geocoder"
+    $geoCity = Prompt-Input "Enter GEOCODING_CITY (Default City)" $DefaultGeoCity
+    $envContent += "GEOCODING_CITY=""$geoCity""        # Default city"
+    $geoState = Prompt-Input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" $DefaultGeoState
+    $envContent += "GEOCODING_STATE=$geoState                    # Default state abbreviation (e.g., MD, VA)"
+    $geoCountry = Prompt-Input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" $DefaultGeoCountry
+    $envContent += "GEOCODING_COUNTRY=$geoCountry                  # Default country abbreviation"
+    $envContent += ""
+    $envContent += "# Target counties for address validation (comma-separated)"
+    $geoCounties = Prompt-Input "Enter GEOCODING_TARGET_COUNTIES" $DefaultGeoCounties
+    $envContent += "GEOCODING_TARGET_COUNTIES=""$geoCounties"""
+    $envContent += ""
+    $envContent += "# Target cities for address extraction hints (comma-separated)"
+    $targetCitiesList = Prompt-Input "Enter TARGET_CITIES_LIST" $DefaultTargetCities
+    $envContent += "TARGET_CITIES_LIST=$targetCitiesList"
+    $envContent += ""
+
+    # --- LLM & AI Summary ---
+    $envContent += "#################################################################"
+    $envContent += "##                LLM & AI SUMMARY SETTINGS                    ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# --- AI Provider Selection ---"
+    $envContent += "# Specifies the AI service to use for all AI-powered features (summary, ask AI, etc.)."
+    $envContent += "# Use 'ollama' for a local instance, or 'openai' for the OpenAI API."
+    $envContent += "# This setting is REQUIRED."
+    $aiProvider = Prompt-Input "Enter AI_PROVIDER ('ollama' or 'openai')" 'ollama'
+    $envContent += "AI_PROVIDER=$aiProvider"
+    $envContent += ""
+    $envContent += "# --- Ollama Settings (Required if AI_PROVIDER is 'ollama') ---"
+    $envContent += "# URL for your running Ollama instance."
+    if ($aiProvider -eq 'ollama') {
+        $ollamaUrl = Prompt-Input "Enter OLLAMA_URL" $DefaultOllamaUrl
+        $envContent += "OLLAMA_URL=$ollamaUrl"
+        $envContent += "# The Ollama model to use for address extraction, summarization, etc."
+        $ollamaModelEnv = Prompt-Input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" $DefaultOllamaModelEnv
+        $envContent += "OLLAMA_MODEL=$ollamaModelEnv"
+    } else {
+        $envContent += "OLLAMA_URL=$DefaultOllamaUrl # Ignored unless AI_PROVIDER=ollama"
+        $envContent += "OLLAMA_MODEL=$DefaultOllamaModelEnv # Ignored unless AI_PROVIDER=ollama"
+    }
+    $envContent += ""
+    $envContent += "# --- OpenAI Settings (Required if AI_PROVIDER is 'openai') ---"
+    $envContent += "# Your API key from OpenAI. Also used for 'openai' transcription mode."
+    if ($aiProvider -eq 'openai' -or $transcriptionMode -eq 'openai') {
+        $openaiKey = Read-Host -Prompt "Enter OPENAI_API_KEY"
+        if ([string]::IsNullOrWhiteSpace($openaiKey)) {
+             $envContent += "OPENAI_API_KEY=your_openai_api_key_here # <<< MANUALLY EDIT REQUIRED"
+             [void]$script:ManualEditList.Add("OPENAI_API_KEY")
+        } else {
+             $envContent += "OPENAI_API_KEY=$openaiKey"
+        }
+        $envContent += "# The OpenAI model to use for chat-based tasks."
+        $openaiModel = Prompt-Input "Enter OPENAI_MODEL (for chat tasks)" 'gpt-4o-mini'
+        $envContent += "OPENAI_MODEL=$openaiModel"
+    } else {
+        $envContent += "OPENAI_API_KEY=your_openai_api_key_here # Ignored unless AI_PROVIDER=openai or TRANSCRIPTION_MODE=openai"
+        $envContent += "OPENAI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
+    }
+    $envContent += ""
+    $envContent += "# --- Summary Settings ---"
+    $envContent += "# How many hours back the AI summary should cover."
+    $summaryHours = Prompt-Input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" $DefaultSummaryLookbackHours
+    $envContent += "SUMMARY_LOOKBACK_HOURS=$summaryHours"
+    $envContent += "# How many hours of history the ""Ask AI"" feature should consider."
+    $askAiHours = Prompt-Input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" $DefaultAskAiLookbackHours
+    $envContent += "ASK_AI_LOOKBACK_HOURS=$askAiHours"
     $envContent += ""
 
     # --- Talk Groups ---
@@ -584,17 +609,17 @@ function Manual-StepsReminder {
     } else {
          Write-Host "      -> (Review all placeholders like 'your_..._here')" -ForegroundColor Red
     }
-    # *** UPDATED REMINDERS ***
     Write-Host "    - Verify STORAGE_MODE is set correctly ('local' or 's3')." -ForegroundColor Yellow
-    Write-Host "    - If STORAGE_MODE=s3, ensure S3_ENDPOINT, S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY are correct." -ForegroundColor Yellow
-    Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')." -ForegroundColor Yellow
-    Write-Host "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
-    Write-Host "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow
+    Write-Host "    - If STORAGE_MODE=s3, ensure S3 settings are correct." -ForegroundColor Yellow
+    Write-Host "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')." -ForegroundColor Yellow
+    Write-Host "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set." -ForegroundColor Yellow
+    Write-Host "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set." -ForegroundColor Yellow
+    Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', or 'openai')." -ForegroundColor Yellow
+    Write-Host "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
+    Write-Host "    - If TRANSCRIPTION_MODE=local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow
+    Write-Host "    - If TRANSCRIPTION_MODE=openai, ensure OPENAI_API_KEY is also set." -ForegroundColor Yellow
     Write-Host "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup." -ForegroundColor Yellow
     Write-Host "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct." -ForegroundColor Yellow
-    Write-Host "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired." -ForegroundColor Yellow
-    Write-Host "    - If local, ensure MAX_CONCURRENT_TRANSCRIPTIONS is set appropriately." -ForegroundColor Yellow
-    # *** END UPDATED REMINDERS ***
     Write-Host "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines." -ForegroundColor Red
     Write-Host ""
     Write-Host "2.  'public\config.js' ('notepad .\public\config.js'):" -ForegroundColor Green
