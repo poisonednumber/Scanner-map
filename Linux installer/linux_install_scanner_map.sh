@@ -186,7 +186,7 @@ create_env_file() {
     append_env "##                       DISCORD BOT SETTINGS                  ##"
     append_env "#################################################################"
     append_env ""
-    append_env "# Discord Bot Token and Client ID (Required)"
+    append_env "# Discord Bot Token (Required)"
     read -r -p "Enter DISCORD_TOKEN: " discord_token
     if [[ -z "$discord_token" ]]; then
         append_env "DISCORD_TOKEN=your_discord_token_here # <<< MANUALLY EDIT REQUIRED"
@@ -194,174 +194,11 @@ create_env_file() {
     else
         append_env "DISCORD_TOKEN=$discord_token"
     fi
-    # Removed CLIENT_ID prompt
+    append_env "# CLIENT_ID is no longer required by the bot."
+    append_env "CLIENT_ID="
     append_env ""
-
-    # --- Server Ports & Network ---
-    append_env "#################################################################"
-    append_env "##                  SERVER & NETWORK SETTINGS                  ##"
-    append_env "#################################################################"
-    append_env ""
-    append_env "# Port for incoming SDRTrunk/TrunkRecorder uploads"
-    prompt_input "Enter BOT_PORT (for SDRTrunk/TR)" "$DEFAULT_BOT_PORT" bot_port
-    append_env "BOT_PORT=$bot_port"
-    append_env ""
-    append_env "# Port for the web interface/API server"
-    prompt_input "Enter WEBSERVER_PORT (e.g., 80, 8080)" "$DEFAULT_WEBSERVER_PORT" webserver_port
-    append_env "WEBSERVER_PORT=$webserver_port"
-    append_env ""
-    append_env "# Public domain name or IP address used for creating audio playback links"
-    prompt_input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" "$DEFAULT_PUBLIC_DOMAIN" public_domain
-    append_env "PUBLIC_DOMAIN=$public_domain"
-    append_env ""
-    append_env "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
-    prompt_input "Enter TIMEZONE" "$DEFAULT_TIMEZONE" timezone
-    append_env "TIMEZONE=$timezone"
-    append_env ""
-
-    # --- Auth & API Keys ---
-    append_env "#################################################################"
-    append_env "##                   AUTHENTICATION & API KEYS                 ##"
-    append_env "#################################################################"
-    append_env ""
-    append_env "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
-    prompt_input "Enter API_KEY_FILE path" "$DEFAULT_API_KEY_FILE" api_key_file
-    append_env "API_KEY_FILE=$api_key_file             # Edit and run GenApiKey.js to create/update keys"
-    append_env ""
-    append_env "# Enable/disable password authentication for the web interface"
-    prompt_input "Enable Webserver Authentication? (true/false)" "$DEFAULT_ENABLE_AUTH" enable_auth
-    append_env "ENABLE_AUTH=$enable_auth                 # Set to 'true' to enable password login"
-    append_env "# Password for web interface login (only used if ENABLE_AUTH=true)"
-    if [[ "$enable_auth" == "true" ]]; then
-        read -r -p "Enter WEBSERVER_PASSWORD (for web login): " webserver_password
-        if [[ -z "$webserver_password" ]]; then
-             append_env "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED"
-             needs_manual_edit+=("WEBSERVER_PASSWORD (since auth enabled)")
-        else
-             append_env "WEBSERVER_PASSWORD=$webserver_password"
-        fi
-    else
-         append_env "WEBSERVER_PASSWORD=                     # Run init-admin.js after changing this if auth is enabled"
-    fi
-    append_env ""
-
-    # --- Transcription ---
-    append_env "#################################################################"
-    append_env "##                   TRANSCRIPTION SETTINGS                    ##"
-    append_env "#################################################################"
-    append_env ""
-    append_env "# --- Transcription Mode ---"
-    append_env "# Select 'local' (requires Python/CUDA setup) or 'remote' (uses API server)"
-    prompt_input "Enter TRANSCRIPTION_MODE ('local' or 'remote')" "$DEFAULT_TRANSCRIPTION_MODE" transcription_mode
-    append_env "TRANSCRIPTION_MODE=$transcription_mode"
-    append_env ""
-    append_env "# --- Local Settings (Only used if TRANSCRIPTION_MODE=local) ---"
-    append_env "# faster-whisper model (e.g., tiny, base, small, medium, large-v3)"
-    prompt_input "Enter WHISPER_MODEL" "$DEFAULT_WHISPER_MODEL" whisper_model
-    append_env "WHISPER_MODEL=$whisper_model"
-    append_env "# Device for local transcription ('cuda' or 'cpu')"
-    if [[ "$transcription_mode" == "local" ]]; then
-        prompt_input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" "${T_DEVICE:-cpu}" transcription_device
-        append_env "TRANSCRIPTION_DEVICE=$transcription_device             # Ignored if mode is 'remote'"
-    else
-        append_env "TRANSCRIPTION_DEVICE=cuda             # Ignored if mode is 'remote'"
-    fi
-    append_env "# Maximum concurrent local transcriptions"
-    prompt_input "Enter MAX_CONCURRENT_TRANSCRIPTIONS (e.g., 3)" "3" max_concurrent
-    append_env "MAX_CONCURRENT_TRANSCRIPTIONS=$max_concurrent      # Used only if TRANSCRIPTION_MODE=local"
-    append_env ""
-    append_env "# --- Remote Settings (Only used if TRANSCRIPTION_MODE=remote) ---"
-    append_env "# URL of your running faster-whisper-server/speaches API"
-    if [[ "$transcription_mode" == "remote" ]]; then
-        prompt_input "Enter FASTER_WHISPER_SERVER_URL" "$DEFAULT_WHISPER_SERVER_URL" whisper_server_url
-        append_env "FASTER_WHISPER_SERVER_URL=$whisper_server_url # Ignored if mode is 'local'"
-    else
-        append_env "FASTER_WHISPER_SERVER_URL=$DEFAULT_WHISPER_SERVER_URL # Ignored if mode is 'local'"
-    fi
-    append_env ""
-
-    # --- Geocoding ---
-    append_env "#################################################################"
-    append_env "##                  GEOCODING & LOCATION SETTINGS              ##"
-    append_env "#################################################################"
-    append_env ""
-    append_env "# --- Geocoding API Keys ---"
-    append_env "# INSTRUCTIONS:"
-    append_env "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
-    append_env "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
-    append_env "# 3. You can comment out the unused key with a '#' to avoid confusion."
-    append_env ""
-    append_env "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
-    read -r -p "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ): " google_maps_key
-    if [[ -z "$google_maps_key" ]]; then
-        append_env "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
-        needs_manual_edit+=("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
-    else
-        append_env "GOOGLE_MAPS_API_KEY=$google_maps_key"
-    fi
-    append_env ""
-    append_env "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
-    read -r -p "Enter LOCATIONIQ_API_KEY (leave blank if using Google): " location_iq_key
-    if [[ -z "$location_iq_key" ]]; then
-        append_env "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
-        needs_manual_edit+=("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
-    else
-        append_env "LOCATIONIQ_API_KEY=$location_iq_key"
-    fi
-    append_env ""
-    append_env "# --- Location Hints (Used by both providers) ---"
-    append_env "# Default location hints for the geocoder"
-    prompt_input "Enter GEOCODING_CITY (Default City)" "$DEFAULT_GEO_CITY" geo_city
-    append_env "GEOCODING_CITY=$geo_city        # Default city"
-    prompt_input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" "$DEFAULT_GEO_STATE" geo_state
-    append_env "GEOCODING_STATE=$geo_state                    # Default state abbreviation (e.g., MD, VA)"
-    prompt_input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" "$DEFAULT_GEO_COUNTRY" geo_country
-    append_env "GEOCODING_COUNTRY=$geo_country                  # Default country abbreviation"
-    append_env ""
-    append_env "# Target counties for address validation (comma-separated)"
-    prompt_input "Enter GEOCODING_TARGET_COUNTIES" "$DEFAULT_GEO_COUNTIES" geo_counties
-    append_env "GEOCODING_TARGET_COUNTIES=$geo_counties"
-    append_env ""
-    append_env "# Target cities for address extraction hints (comma-separated)"
-    prompt_input "Enter TARGET_CITIES_LIST" "$DEFAULT_TARGET_CITIES" target_cities_list
-    append_env "TARGET_CITIES_LIST=$target_cities_list"
-    append_env ""
-
-
-    # --- LLM & AI Summary ---
-    append_env "#################################################################"
-    append_env "##                LLM & AI SUMMARY SETTINGS                    ##"
-    append_env "#################################################################"
-    append_env ""
-    append_env "# --- Ollama Settings ---"
-    append_env "# URL for your running Ollama instance"
-    prompt_input "Enter OLLAMA_URL" "$DEFAULT_OLLAMA_URL" ollama_url
-    append_env "OLLAMA_URL=$ollama_url"
-    append_env "# Ollama model used for address extraction and summarization"
-    prompt_input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" "$DEFAULT_OLLAMA_MODEL_ENV" ollama_model_env
-    append_env "OLLAMA_MODEL=$ollama_model_env"
-    append_env ""
-    append_env "# --- OpenAI Settings (Optional Alternative) ---"
-    append_env "# API Key if using OpenAI instead of Ollama"
-    read -r -p "Enter OPENAI_API_KEY (leave blank if using Ollama): " openai_key
-    if [[ -z "$openai_key" ]]; then
-        append_env "OPENAI_API_KEY= # Leave blank if using Ollama"
-    else
-        append_env "OPENAI_API_KEY=$openai_key"
-        needs_manual_edit+=("OPENAI_API_KEY (if intended)")
-    fi
-    append_env ""
-    append_env "# --- Summary Settings ---"
-    append_env "# How many hours back the AI summary should cover"
-    prompt_input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" "$DEFAULT_SUMMARY_LOOKBACK_HOURS" summary_hours
-    append_env "SUMMARY_LOOKBACK_HOURS=$summary_hours"
-    append_env ""
-    append_env "# How many hours back the \'Ask AI\' feature should cover"
-    prompt_input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" "$DEFAULT_ASK_AI_LOOKBACK_HOURS" ask_ai_hours
-    append_env "ASK_AI_LOOKBACK_HOURS=$ask_ai_hours"
-    append_env ""
-
-    # --- NEW: Storage Mode ---
+    
+    # --- Storage ---
     append_env "#################################################################"
     append_env "##                     STORAGE SETTINGS                        ##"
     append_env "#################################################################"
@@ -407,6 +244,194 @@ create_env_file() {
         append_env "S3_ACCESS_KEY_ID=              # Ignored if STORAGE_MODE=local"
         append_env "S3_SECRET_ACCESS_KEY=           # Ignored if STORAGE_MODE=local"
     fi
+    append_env ""
+
+    # --- Server Ports & Network ---
+    append_env "#################################################################"
+    append_env "##                  SERVER & NETWORK SETTINGS                  ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# Port for incoming SDRTrunk/TrunkRecorder uploads"
+    prompt_input "Enter BOT_PORT (for SDRTrunk/TR)" "$DEFAULT_BOT_PORT" bot_port
+    append_env "BOT_PORT=$bot_port"
+    append_env ""
+    append_env "# Port for the web interface/API server"
+    prompt_input "Enter WEBSERVER_PORT (e.g., 80, 8080)" "$DEFAULT_WEBSERVER_PORT" webserver_port
+    append_env "WEBSERVER_PORT=$webserver_port"
+    append_env ""
+    append_env "# Public domain name or IP address used for creating audio playback links"
+    prompt_input "Enter PUBLIC_DOMAIN (IP or domain name for audio links)" "$DEFAULT_PUBLIC_DOMAIN" public_domain
+    append_env "PUBLIC_DOMAIN=$public_domain"
+    append_env ""
+    append_env "# Timezone for logging timestamps (e.g., US/Eastern, America/Chicago, UTC)"
+    prompt_input "Enter TIMEZONE" "$DEFAULT_TIMEZONE" timezone
+    append_env "TIMEZONE=$timezone"
+    append_env ""
+
+    # --- Auth & API Keys ---
+    append_env "#################################################################"
+    append_env "##                   AUTHENTICATION & API KEYS                 ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# Path to the JSON file containing hashed API keys for SDRTrunk/TR uploads"
+    prompt_input "Enter API_KEY_FILE path" "$DEFAULT_API_KEY_FILE" api_key_file
+    append_env "API_KEY_FILE=$api_key_file      # Edit and run GenApiKey.js to create/update keys"
+    append_env ""
+    append_env "# Enable/disable password authentication for the web interface"
+    prompt_input "Enable Webserver Authentication? (true/false)" "$DEFAULT_ENABLE_AUTH" enable_auth
+    append_env "ENABLE_AUTH=$enable_auth                 # Set to 'true' to enable password login"
+    append_env "# Password for web interface login (only used if ENABLE_AUTH=true)"
+    if [[ "$enable_auth" == "true" ]]; then
+        read -r -p "Enter WEBSERVER_PASSWORD (for web login): " webserver_password
+        if [[ -z "$webserver_password" ]]; then
+             append_env "WEBSERVER_PASSWORD=your_password # <<< MANUALLY EDIT REQUIRED"
+             needs_manual_edit+=("WEBSERVER_PASSWORD (since auth enabled)")
+        else
+             append_env "WEBSERVER_PASSWORD=$webserver_password"
+        fi
+    else
+         append_env "WEBSERVER_PASSWORD=whatappisthat  # Run init-admin.js after changing this if auth is enabled"
+    fi
+    append_env ""
+
+    # --- Transcription ---
+    append_env "#################################################################"
+    append_env "##                    TRANSCRIPTION SETTINGS                   ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Transcription Provider Selection ---"
+    append_env "# Specifies the service to use for audio transcription."
+    append_env "# 'local': Uses a local Python script (requires appropriate hardware and setup)."
+    append_env "# 'remote': Uses a self-hosted faster-whisper compatible API endpoint."
+    append_env "# 'openai': Uses the official OpenAI Whisper API (requires OPENAI_API_KEY)."
+    append_env "# This setting is REQUIRED."
+    prompt_input "Enter TRANSCRIPTION_MODE ('local', 'remote', or 'openai')" "$DEFAULT_TRANSCRIPTION_MODE" transcription_mode
+    append_env "TRANSCRIPTION_MODE=$transcription_mode"
+    append_env ""
+    append_env "# --- Local Transcription Settings (Required if TRANSCRIPTION_MODE is 'local') ---"
+    append_env "# Specifies the hardware to use for transcription."
+    append_env "# Use 'cuda' for an NVIDIA GPU (recommended for performance) or 'cpu' for the CPU."
+    if [[ "$transcription_mode" == "local" ]]; then
+        prompt_input "Enter TRANSCRIPTION_DEVICE ('cpu' or 'cuda')" "${T_DEVICE:-cpu}" transcription_device
+        append_env "TRANSCRIPTION_DEVICE=$transcription_device"
+    else
+        append_env "TRANSCRIPTION_DEVICE=cpu # Ignored unless TRANSCRIPTION_MODE=local"
+    fi
+    append_env ""
+    append_env "# --- Faster-Whisper Settings (Required if TRANSCRIPTION_MODE is 'remote') ---"
+    append_env "# The URL of your self-hosted transcription server."
+    if [[ "$transcription_mode" == "remote" ]]; then
+        prompt_input "Enter FASTER_WHISPER_SERVER_URL" "$DEFAULT_WHISPER_SERVER_URL" whisper_server_url
+        append_env "FASTER_WHISPER_SERVER_URL=$whisper_server_url"
+        append_env "# Optional: Specify a model for the remote server to use."
+        prompt_input "Enter WHISPER_MODEL" "$DEFAULT_WHISPER_MODEL" whisper_model
+        append_env "WHISPER_MODEL=$whisper_model"
+    else
+        append_env "FASTER_WHISPER_SERVER_URL=$DEFAULT_WHISPER_SERVER_URL # Ignored unless TRANSCRIPTION_MODE=remote"
+        append_env "WHISPER_MODEL=$DEFAULT_WHISPER_MODEL # Ignored unless TRANSCRIPTION_MODE=remote"
+    fi
+    append_env ""
+    append_env "# Note: The OPENAI_API_KEY from the section below is used if TRANSCRIPTION_MODE is 'openai'."
+    append_env ""
+
+    # --- Geocoding ---
+    append_env "#################################################################"
+    append_env "##                  GEOCODING & LOCATION SETTINGS              ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- Geocoding API Keys ---"
+    append_env "# INSTRUCTIONS:"
+    append_env "# 1. Ensure you are using the correct 'geocoding.js' file for your desired provider (Google or LocationIQ)."
+    append_env "# 2. Provide the API key ONLY for the provider whose 'geocoding.js' file you are using."
+    append_env "# 3. You can comment out the unused key with a '#' to avoid confusion."
+    append_env ""
+    append_env "# Google Maps API Key (Required ONLY if using the Google version of 'geocoding.js')"
+    read -r -p "Enter GOOGLE_MAPS_API_KEY (leave blank if using LocationIQ): " google_maps_key
+    if [[ -z "$google_maps_key" ]]; then
+        append_env "# GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here"
+        needs_manual_edit+=("GOOGLE_MAPS_API_KEY (if using Google geocoding.js)")
+    else
+        append_env "GOOGLE_MAPS_API_KEY=$google_maps_key"
+    fi
+    append_env ""
+    append_env "# LocationIQ API Key (Required ONLY if using the LocationIQ version of 'geocoding.js')"
+    read -r -p "Enter LOCATIONIQ_API_KEY (leave blank if using Google): " location_iq_key
+    if [[ -z "$location_iq_key" ]]; then
+        append_env "# LOCATIONIQ_API_KEY=your_locationiq_api_key_here"
+        needs_manual_edit+=("LOCATIONIQ_API_KEY (if using LocationIQ geocoding.js)")
+    else
+        append_env "LOCATIONIQ_API_KEY=$location_iq_key"
+    fi
+    append_env ""
+    append_env "# --- Location Hints (Used by both providers) ---"
+    append_env "# Default location hints for the geocoder"
+    prompt_input "Enter GEOCODING_CITY (Default City)" "$DEFAULT_GEO_CITY" geo_city
+    append_env "GEOCODING_CITY=\"$geo_city\"        # Default city"
+    prompt_input "Enter GEOCODING_STATE (Default State Abbreviation, e.g., ST)" "$DEFAULT_GEO_STATE" geo_state
+    append_env "GEOCODING_STATE=$geo_state                    # Default state abbreviation (e.g., MD, VA)"
+    prompt_input "Enter GEOCODING_COUNTRY (Default Country Abbreviation)" "$DEFAULT_GEO_COUNTRY" geo_country
+    append_env "GEOCODING_COUNTRY=$geo_country                  # Default country abbreviation"
+    append_env ""
+    append_env "# Target counties for address validation (comma-separated)"
+    prompt_input "Enter GEOCODING_TARGET_COUNTIES" "$DEFAULT_GEO_COUNTIES" geo_counties
+    append_env "GEOCODING_TARGET_COUNTIES=\"$geo_counties\""
+    append_env ""
+    append_env "# Target cities for address extraction hints (comma-separated)"
+    prompt_input "Enter TARGET_CITIES_LIST" "$DEFAULT_TARGET_CITIES" target_cities_list
+    append_env "TARGET_CITIES_LIST=$target_cities_list"
+    append_env ""
+
+
+    # --- LLM & AI Summary ---
+    append_env "#################################################################"
+    append_env "##                LLM & AI SUMMARY SETTINGS                    ##"
+    append_env "#################################################################"
+    append_env ""
+    append_env "# --- AI Provider Selection ---"
+    append_env "# Specifies the AI service to use for all AI-powered features (summary, ask AI, etc.)."
+    append_env "# Use 'ollama' for a local instance, or 'openai' for the OpenAI API."
+    append_env "# This setting is REQUIRED."
+    prompt_input "Enter AI_PROVIDER ('ollama' or 'openai')" "ollama" ai_provider
+    append_env "AI_PROVIDER=$ai_provider"
+    append_env ""
+    append_env "# --- Ollama Settings (Required if AI_PROVIDER is 'ollama') ---"
+    append_env "# URL for your running Ollama instance."
+    if [[ "$ai_provider" == "ollama" ]]; then
+        prompt_input "Enter OLLAMA_URL" "$DEFAULT_OLLAMA_URL" ollama_url
+        append_env "OLLAMA_URL=$ollama_url"
+        append_env "# The Ollama model to use for address extraction, summarization, etc."
+        prompt_input "Enter OLLAMA_MODEL (e.g., llama3.1:8b)" "$DEFAULT_OLLAMA_MODEL_ENV" ollama_model_env
+        append_env "OLLAMA_MODEL=$ollama_model_env"
+    else
+        append_env "OLLAMA_URL=$DEFAULT_OLLAMA_URL # Ignored unless AI_PROVIDER=ollama"
+        append_env "OLLAMA_MODEL=$DEFAULT_OLLAMA_MODEL_ENV # Ignored unless AI_PROVIDER=ollama"
+    fi
+    append_env ""
+    append_env "# --- OpenAI Settings (Required if AI_PROVIDER is 'openai') ---"
+    append_env "# Your API key from OpenAI. Also used for 'openai' transcription mode."
+    if [[ "$ai_provider" == "openai" || "$transcription_mode" == "openai" ]]; then
+        read -r -p "Enter OPENAI_API_KEY: " openai_key
+        if [[ -z "$openai_key" ]]; then
+            append_env "OPENAI_API_KEY=your_openai_api_key_here # <<< MANUALLY EDIT REQUIRED"
+            needs_manual_edit+=("OPENAI_API_KEY")
+        else
+            append_env "OPENAI_API_KEY=$openai_key"
+        fi
+        append_env "# The OpenAI model to use for chat-based tasks."
+        prompt_input "Enter OPENAI_MODEL (for chat tasks)" "gpt-4o-mini" openai_model
+        append_env "OPENAI_MODEL=$openai_model"
+    else
+        append_env "OPENAI_API_KEY=your_openai_api_key_here # Ignored unless AI_PROVIDER=openai or TRANSCRIPTION_MODE=openai"
+        append_env "OPENAI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
+    fi
+    append_env ""
+    append_env "# --- Summary Settings ---"
+    append_env "# How many hours back the AI summary should cover."
+    prompt_input "Enter SUMMARY_LOOKBACK_HOURS (e.g., 1, 0.5)" "$DEFAULT_SUMMARY_LOOKBACK_HOURS" summary_hours
+    append_env "SUMMARY_LOOKBACK_HOURS=$summary_hours"
+    append_env "# How many hours of history the 'Ask AI' feature should consider."
+    prompt_input "Enter ASK_AI_LOOKBACK_HOURS (e.g., 8, 12)" "$DEFAULT_ASK_AI_LOOKBACK_HOURS" ask_ai_hours
+    append_env "ASK_AI_LOOKBACK_HOURS=$ask_ai_hours"
     append_env ""
 
     # --- Talk Group Mappings ---
@@ -575,6 +600,7 @@ manual_steps_reminder() {
   echo "    - Verify all values are correct for your setup."
   echo "    - CRITICAL: Add your actual keys/tokens for:"
   local needs_edit_str=""
+  # Convert space-separated string back to array-like structure for looping
   for item in $MANUAL_EDIT_LIST; do
       needs_edit_str+="$item, "
   done
@@ -584,16 +610,17 @@ manual_steps_reminder() {
   else
       echo "      -> (Review all placeholders like 'your_..._here')"
   fi
-  # *** UPDATED REMINDERS ***
   echo "    - Verify STORAGE_MODE is set correctly ('local' or 's3')."
-  echo "    - If STORAGE_MODE=s3, ensure S3_ENDPOINT, S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY are correct."
-  echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local' or 'remote')."
-  echo "    - If remote, ensure FASTER_WHISPER_SERVER_URL is correct."
-  echo "    - If local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
+  echo "    - If STORAGE_MODE=s3, ensure S3 settings are correct."
+  echo "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')."
+  echo "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set."
+  echo "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set."
+  echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', or 'openai')."
+  echo "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct."
+  echo "    - If TRANSCRIPTION_MODE=local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
+  echo "    - If TRANSCRIPTION_MODE=openai, ensure OPENAI_API_KEY is also set."
   echo "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup."
   echo "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct."
-  echo "    - Verify SUMMARY_LOOKBACK_HOURS and ASK_AI_LOOKBACK_HOURS are set as desired."
-  echo "    - If local, ensure MAX_CONCURRENT_TRANSCRIPTIONS is set appropriately."
   echo "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines."
   echo ""
   echo "2.  'public/config.js' ('nano $INSTALL_DIR/public/config.js'):"
