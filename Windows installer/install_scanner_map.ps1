@@ -343,8 +343,9 @@ function Create-EnvFile {
     $envContent += "# 'local': Uses a local Python script (requires appropriate hardware and setup)."
     $envContent += "# 'remote': Uses a self-hosted faster-whisper compatible API endpoint."
     $envContent += "# 'openai': Uses the official OpenAI Whisper API (requires OPENAI_API_KEY)."
+    $envContent += "# 'icad': Uses a custom faster-whisper server with OpenAI-compatible interface and profiles."
     $envContent += "# This setting is REQUIRED."
-    $transcriptionMode = Prompt-Input "Enter TRANSCRIPTION_MODE ('local', 'remote', or 'openai')" $DefaultTranscriptionMode
+    $transcriptionMode = Prompt-Input "Enter TRANSCRIPTION_MODE ('local', 'remote', 'openai', or 'icad')" $DefaultTranscriptionMode
     $envContent += "TRANSCRIPTION_MODE=$transcriptionMode"
     $envContent += ""
     $envContent += "# --- Local Transcription Settings (Required if TRANSCRIPTION_MODE is 'local') ---"
@@ -368,6 +369,28 @@ function Create-EnvFile {
     } else {
         $envContent += "FASTER_WHISPER_SERVER_URL=$DefaultWhisperServerUrl # Ignored unless TRANSCRIPTION_MODE=remote"
         $envContent += "WHISPER_MODEL=$DefaultWhisperModel # Ignored unless TRANSCRIPTION_MODE=remote"
+    }
+    $envContent += ""
+    $envContent += "# --- ICAD Transcription Settings (Required if TRANSCRIPTION_MODE is 'icad') ---"
+    $envContent += "# The URL of your ICAD transcription API server (OpenAI-compatible interface)."
+    if ($transcriptionMode -eq 'icad') {
+        $icadUrl = Prompt-Input "Enter ICAD_URL" 'http://127.0.0.1:8080'
+        $envContent += "ICAD_URL=$icadUrl"
+        $envContent += "# Optional: API key for ICAD authentication (if your ICAD server requires it)."
+        $icadApiKey = Read-Host -Prompt "Enter ICAD_API_KEY (leave blank if not needed)"
+        if ([string]::IsNullOrWhiteSpace($icadApiKey)) {
+            $envContent += "# ICAD_API_KEY=your_icad_api_key_here"
+        } else {
+            $envContent += "ICAD_API_KEY=$icadApiKey"
+        }
+        $envContent += "# Optional: Specify a model or profile for ICAD to use (e.g., ""tiny|analog-radio"")."
+        $envContent += "# If not specified, defaults to 'whisper-1'. Profiles allow you to combine model and settings."
+        $icadProfile = Prompt-Input "Enter ICAD_PROFILE (model or model|profile)" 'tiny'
+        $envContent += "ICAD_PROFILE=$icadProfile"
+    } else {
+        $envContent += "ICAD_URL=http://127.0.0.1:8080 # Ignored unless TRANSCRIPTION_MODE=icad"
+        $envContent += "# ICAD_API_KEY=your_icad_api_key_here # Ignored unless TRANSCRIPTION_MODE=icad"
+        $envContent += "ICAD_PROFILE=tiny # Ignored unless TRANSCRIPTION_MODE=icad"
     }
     $envContent += ""
     $envContent += "# Note: The OPENAI_API_KEY from the section below is used if TRANSCRIPTION_MODE is 'openai'."
@@ -614,10 +637,11 @@ function Manual-StepsReminder {
     Write-Host "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')." -ForegroundColor Yellow
     Write-Host "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set." -ForegroundColor Yellow
     Write-Host "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set." -ForegroundColor Yellow
-    Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', or 'openai')." -ForegroundColor Yellow
+    Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', 'openai', or 'icad')." -ForegroundColor Yellow
     Write-Host "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
     Write-Host "    - If TRANSCRIPTION_MODE=local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')." -ForegroundColor Yellow
     Write-Host "    - If TRANSCRIPTION_MODE=openai, ensure OPENAI_API_KEY is also set." -ForegroundColor Yellow
+    Write-Host "    - If TRANSCRIPTION_MODE=icad, ensure ICAD_URL is correct and ICAD_API_KEY/ICAD_PROFILE are set if needed." -ForegroundColor Yellow
     Write-Host "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup." -ForegroundColor Yellow
     Write-Host "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct." -ForegroundColor Yellow
     Write-Host "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines." -ForegroundColor Red
