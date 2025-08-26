@@ -1,37 +1,74 @@
 # Scanner Map
 
-A real-time mapping system that ingests radio calls from SDRTrunk, TrunkRecorder, or **rdio-scanner downstreams** (via an RdioScanner compatible endpoint), automatically transcribes audio using local or remote AI, extracts locations using local AI, geocodes them, and displays calls on an interactive web map with integrated audio playback.
+A **fully integrated** real-time mapping system that ingests radio calls from SDRTrunk, TrunkRecorder, or **rdio-scanner downstreams**, automatically transcribes audio using local or remote AI, extracts locations using local AI, geocodes them, and displays calls on an interactive web map with integrated audio playback.
+
+## 🎉 **NEW: Complete Integration & Auto-Setup!**
+
+Scanner Map now features **complete integration** with automatic initialization:
+- **Single Command Startup**: Just run `node bot.js` - everything starts automatically!
+- **Auto-Generated API Keys**: No manual key generation needed
+- **Auto-Import Talkgroups**: Automatically imports from CSV on first boot
+- **Auto-Create Admin Users**: Admin accounts created automatically when auth is enabled
+- **Integrated Webserver**: No need to run separate webserver process
+- **Smart Initialization Order**: Database, keys, imports, then services - all in proper sequence
 
 ![Scanner Map Interface 1](https://github.com/user-attachments/assets/4f51548f-e33f-4807-a11d-d91f3a6b4db1) ![Scanner Map Interface 2](https://github.com/user-attachments/assets/873ede4c-b9d6-4abc-9a1d-5d0754ba26b1) ![Scanner Map Interface 3](https://github.com/user-attachments/assets/262f9918-fc20-46c7-9e88-598f75991ced) ![Scanner Map Interface 4](https://github.com/user-attachments/assets/417e1194-3884-4eef-b2b4-33903d4a7e51)
 
 ## ✨ Features
 
--   **Real-time Mapping:** Visualize radio communications on a map as they happen.
--   **Flexible Transcription:**
-    -   **Local:** Utilizes the `faster-whisper` model running locally for accurate audio-to-text conversion (CPU or NVIDIA GPU).
-    -   **Remote:** Option to offload transcription to a separate `faster-whisper-server` (like [speaches](https://github.com/speaches-ai/speaches)) via its API.
-    -   **OpenAI:** Uses the official OpenAI Whisper API service for cloud-based transcription.
-    -   **ICAD:** Uses a custom faster-whisper server with OpenAI-compatible interface and advanced profiles for radio-optimized transcription (see [ICAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe)).
--   **Flexible Audio Storage:** Store audio files locally (`./audio` folder) or in an S3-compatible object storage service (AWS S3, MinIO, etc.).
--   **AI-Powered Location Extraction & Geocoding:**
-    -   Uses a  Ollama LLM (e.g., Llama 3.1) to identify potential addresses mentioned in transmissions for specified talk groups.
-    -   Geocodes extracted addresses using either **Google Maps Geocoding API** or **LocationIQ API** (user chooses by selecting the appropriate `geocoding.js` file).
--   **AI-Powered Summarization:** Generates summaries and highlights of recent notable transmissions using Ollama.
+### 🚀 **Core Integration Features**
+-   **🎯 Single-Command Deployment:** Just run `node bot.js` - everything starts automatically!
+-   **🔐 Auto-Generated Security:** API keys and admin accounts created automatically on first boot
+-   **📊 Auto-Import Data:** Talkgroups automatically imported from CSV files
+-   **🌐 Integrated Services:** Discord bot and web server run together seamlessly
+-   **⚡ Smart Initialization:** Proper startup sequence ensures everything is ready before services start
+
+### 🗺️ **Real-Time Mapping & Display**
+-   **Real-time Mapping:** Visualize radio communications on a map as they happen
 -   **Interactive Web UI:**
-    -   Leaflet map with marker clustering.
-    -   Day/Night/Satellite map views.
-    -   Heatmap visualization of call density.
-    -   Clickable markers with call details, transcription, and integrated WaveSurfer audio player.
-    -   Call filtering by time range and category.
-    -   Live audio streaming button (links to external stream).
-    -   Marker correction/relocation tools.
--   **Discord Integration:**
-    -   Automatic posting of transcriptions to dedicated Discord channels (categorized by talk group).
-    -   Keyword-based alerts sent to a specific Discord channel.
-    -   AI-generated summaries posted to a dedicated channel.
-    -   Optional: Stream live audio for specific talk groups to Discord voice channels.
--   **Optional User Authentication:** Secure the web interface with a username/password system and manage user sessions.
--   **Data Persistence:** Stores transcriptions, locations, and audio metadata in an SQLite database.
+    -   Leaflet map with marker clustering
+    -   Day/Night/Satellite map views
+    -   Heatmap visualization of call density
+    -   Clickable markers with call details, transcription, and integrated WaveSurfer audio player
+    -   Call filtering by time range and category
+    -   Live audio streaming button (links to external stream)
+    -   Marker correction/relocation tools
+
+### 🎤 **Flexible Transcription Options**
+-   **Local:** Utilizes the `faster-whisper` model running locally for accurate audio-to-text conversion (CPU or NVIDIA GPU)
+-   **Remote:** Option to offload transcription to a separate `faster-whisper-server` (like [speaches](https://github.com/speaches-ai/speaches)) via its API
+-   **OpenAI:** Uses the official OpenAI Whisper API service for cloud-based transcription
+-   **ICAD:** Uses a custom faster-whisper server with OpenAI-compatible interface and advanced profiles for radio-optimized transcription (see [ICAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe))
+
+### 💾 **Flexible Audio Storage**
+-   **Local Storage:** Store audio files in `./audio` folder on the server (default)
+-   **S3-Compatible Storage:** Store audio files in AWS S3, MinIO, Wasabi, or any S3-compatible service
+-   **Automatic Management:** Audio files are automatically stored and served based on your configuration
+
+### 🤖 **AI-Powered Features**
+-   **Location Extraction & Geocoding:**
+    -   Uses Ollama LLM (e.g., Llama 3.1) or OpenAI to identify potential addresses mentioned in transmissions
+    -   Geocodes extracted addresses using either **Google Maps Geocoding API** or **LocationIQ API**
+-   **AI-Powered Summarization:** Generates summaries and highlights of recent notable transmissions
+-   **Interactive AI Chat:** "Ask AI" feature lets users query transmission history
+
+### 🎮 **Discord Integration**
+-   **Automatic posting** of transcriptions to dedicated Discord channels (categorized by talk group)
+-   **Keyword-based alerts** sent to a specific Discord channel
+-   **AI-generated summaries** posted to a dedicated channel with refresh buttons
+-   **Interactive buttons** for live listening and AI queries
+-   **Optional:** Stream live audio for specific talk groups to Discord voice channels
+
+### 🔒 **Security & Authentication**
+-   **Optional User Authentication:** Secure the web interface with username/password system
+-   **Session Management:** User sessions with configurable duration and limits
+-   **Auto-Generated API Keys:** Secure API keys for radio software integration
+-   **Auto-Created Admin Accounts:** Admin users created automatically when authentication is enabled
+
+### 💿 **Data Persistence**
+-   **SQLite Database:** Stores transcriptions, locations, and audio metadata
+-   **Automatic Database Setup:** Tables and structure created automatically on first boot
+-   **Data Import:** Automatic import of talk group and frequency data from CSV files
 
 ## 🚀 Installation
 
@@ -97,17 +134,21 @@ This project can be installed on Windows or Linux. Automated installation script
         -   Edit `data/apikeys.json` (`nano data/apikeys.json`) and replace the placeholder with your hashed key in the correct JSON format: `[{"key":"YOUR_HASHED_KEY_HERE","disabled":false}]`
     -   (If Skipped) Run `node import_csv.js` after placing `talkgroups.csv`.
     -   (If Auth Enabled) Run `node init-admin.js`.
-8.  **Run:** Follow the "How to Run" instructions provided by the script.
+8.  **Run:** The new integrated mode makes running much simpler!
     
     ```bash
-    # Terminal 1 (Activate venv first!)
+    # Single Terminal (Activate venv first!)
     cd ~/scanner-map
     source .venv/bin/activate
     node bot.js
     
-    # Terminal 2
-    cd ~/scanner-map
-    sudo node webserver.js # Sudo might be needed for port 80
+    # That's it! The bot now automatically:
+    # ✅ Creates database and tables
+    # ✅ Generates API key (watch for console output!)
+    # ✅ Imports talkgroups from CSV
+    # ✅ Creates admin user (if auth enabled)
+    # ✅ Starts Discord bot
+    # ✅ Starts webserver
     
     ```
     
@@ -171,17 +212,21 @@ This project can be installed on Windows or Linux. Automated installation script
         -   Edit `data\apikeys.json` (`notepad .\data\apikeys.json`) and replace the placeholder with your hashed key in the correct JSON format: `[{"key":"YOUR_HASHED_KEY_HERE","disabled":false}]`
     -   (If Skipped) Run `node import_csv.js` after placing `talkgroups.csv`.
     -   (If Auth Enabled) Run `node init-admin.js`.
-10.  **Run:** Follow the "How to Run" instructions provided by the script.
+10.  **Run:** The new integrated mode makes running much simpler!
     
     ```powershell
-    # Terminal 1 (PowerShell or CMD)
+    # Single Terminal (PowerShell or CMD)
     cd $HOME\scanner-map
-    # If using Python venv on Windows, activate: .\.venv\Scripts\activate.ps1 or .\venv\Scripts\activate.bat
+    # If using Python venv on Windows, activate: .\.venv\Scripts\activate.ps1
     node bot.js
     
-    # Terminal 2 (PowerShell or CMD)
-    cd $HOME\scanner-map
-    node webserver.js
+    # That's it! The bot now automatically:
+    # ✅ Creates database and tables
+    # ✅ Generates API key (watch for console output!)
+    # ✅ Imports talkgroups from CSV
+    # ✅ Creates admin user (if auth enabled)
+    # ✅ Starts Discord bot
+    # ✅ Starts webserver
     
     ```
     
@@ -232,7 +277,7 @@ Configure the web map's appearance and behavior:
 
 ### data/apikeys.json
 
-Stores hashed API keys used by SDRTrunk/TrunkRecorder to authenticate with the `/api/call-upload` endpoint. Generate the hash using `GenApiKey.js`.
+**🎉 NOW AUTO-GENERATED!** This file is automatically created on first boot with a secure, randomly generated API key. The key is displayed in the console when you first run `node bot.js` - save this key for your SDRTrunk/TrunkRecorder configuration. The hashed version is automatically stored in this file.
 
 ## 📡 Configuring SDRTrunk / TrunkRecorder / rdio-scanner
 
@@ -250,7 +295,7 @@ The endpoint URL is: `http://<YOUR_SERVER_IP_OR_DOMAIN>:<BOT_PORT>/api/call-uplo
 1.  Go to Settings > Streaming.
 2.  Add or Edit an Rdio Scanner stream.
 3.  Set the URL to the endpoint address above.
-4.  Enter the API Key (the **secret key** you put in `GenApiKey.js`, not the hashed one from `apikeys.json`).
+4.  Enter the API Key (the **secret key** displayed in the console when you first ran `node bot.js`).
 5.  Enable streaming for the desired talk groups.
 
 ### TrunkRecorder Setup
@@ -262,9 +307,9 @@ Edit your `config.json`:
   "sources": [ ... ],
   "systems": [ ... ],
   "uploadServer": {
-    "type": "rdioscanner",
+    "type": "rdioscanner", 
     "server": "http://<YOUR_SERVER_IP_OR_DOMAIN>:<BOT_PORT>/api/call-upload",
-    "key": "your-secret-api-key" // The secret key you put in GenApiKey.js
+    "key": "your-secret-api-key" // The secret key displayed when you first ran 'node bot.js'
   }
 }
 
@@ -275,7 +320,7 @@ Edit your `config.json`:
 1.  Go to your rdio-scanner web interface > Config > Downstreams.
 2.  Click "New downstream".
 3.  Enter the **Endpoint URL without `/api/call-upload`**: `http://<YOUR_SERVER_IP_OR_DOMAIN>:<BOT_PORT>`.
-4.  Enter the **NON-HASHED / SECRET API Key** (the **original secret key** you defined inside `GenApiKey.js` before running it). **Note:** This differs from SDRTrunk/TrunkRecorder setup. `bot.js` still requires the *hashed* key in `data/apikeys.json` for validation.
+4.  Enter the **SECRET API Key** (the **original secret key** displayed when you first ran `node bot.js`). **Note:** This differs from SDRTrunk/TrunkRecorder setup. `bot.js` still requires the *hashed* key in `data/apikeys.json` for validation, which is automatically handled.
 5.  Ensure the "Disabled" switch is OFF.
 6.  Configure Access (Choose systems/talkgroups) as needed.
 7.  Save the downstream configuration.
@@ -396,7 +441,31 @@ For detailed ICAD setup instructions, see the [ICAD Transcribe documentation](ht
     -   Check the bot.js logs for specific geocoding errors.
 -   **Database Errors:** Ensure bot.js and webserver.js have write permissions in the project directory. Check for errors opening botdata.db.
 -   **Web UI Issues:** Check the webserver.js console for errors. Ensure the WEBSERVER_PORT is not blocked by a firewall or used by another application. Check browser developer console (F12) for errors.
--   **Talk Group Import:** Ensure talkgroups.csv is correctly formatted and placed in the root directory before running node import_csv.js.
+-   **Talk Group Import:** Talkgroups are now automatically imported on first boot! Just place `talkgroups.csv` in the root directory before running `node bot.js` for the first time. Manual import with `node import_csv.js` is no longer required.
+
+## 🔥 What's New in This Version?
+
+### 🚀 **Complete Integration & Auto-Setup**
+- **Single Command Startup**: Everything runs from `node bot.js` - no more multiple terminals!
+- **Auto-Generated API Keys**: Secure API keys created automatically on first boot
+- **Auto-Import Data**: Talkgroups imported automatically from CSV files
+- **Auto-Created Admin Users**: Admin accounts set up automatically when auth is enabled
+- **Smart Initialization**: Proper startup sequence ensures everything is ready
+
+### 💾 **Enhanced Storage Options**
+- **S3-Compatible Storage**: Store audio files in AWS S3, MinIO, Wasabi, or any S3-compatible service
+- **Local Storage**: Continue using local file storage (default)
+- **Automatic Management**: Audio files handled transparently regardless of storage mode
+
+### 🔧 **Simplified Management**
+- **No More Manual Scripts**: No need to run `GenApiKey.js`, `init-admin.js`, or `import_csv.js` manually
+- **Integrated Services**: Discord bot and webserver run together seamlessly
+- **Better Error Handling**: Comprehensive error handling and logging throughout
+
+### 🆕 **Enhanced UI Features**
+- **Ask AI Button**: Interactive AI queries directly from Discord
+- **Better Discord Integration**: Enhanced buttons and interactions
+- **Improved Summarization**: Better AI-powered summaries with more context
 
 ## 🆘 Need Help?
 
