@@ -27,7 +27,11 @@ const {
   OPENAI_MODEL,
   OLLAMA_URL,
   OLLAMA_MODEL,
-  TRANSCRIPTION_DEVICE
+  TRANSCRIPTION_DEVICE,
+  // --- NEW: ICAD Transcription Env Vars ---
+  ICAD_URL,
+  ICAD_PROFILE,
+  ICAD_API_KEY
 } = process.env;
 
 // --- VALIDATE AI-RELATED ENV VARS ---
@@ -54,8 +58,8 @@ if (AI_PROVIDER.toLowerCase() === 'openai') {
 
 // --- VALIDATE TRANSCRIPTION-RELATED ENV VARS ---
 const effectiveTranscriptionMode = TRANSCRIPTION_MODE || 'local'; // Keep this to ensure a default
-if (!['local', 'remote', 'openai'].includes(effectiveTranscriptionMode)) {
-  console.error(`FATAL: Invalid TRANSCRIPTION_MODE specified in .env file: '${TRANSCRIPTION_MODE}'. Must be 'local', 'remote', or 'openai'.`);
+if (!['local', 'remote', 'openai', 'icad'].includes(effectiveTranscriptionMode)) {
+  console.error(`FATAL: Invalid TRANSCRIPTION_MODE specified in .env file: '${TRANSCRIPTION_MODE}'. Must be 'local', 'remote', 'openai', or 'icad'.`);
   process.exit(1);
 }
 if (effectiveTranscriptionMode === 'local' && !TRANSCRIPTION_DEVICE) {
@@ -68,6 +72,10 @@ if (effectiveTranscriptionMode === 'remote' && !FASTER_WHISPER_SERVER_URL) {
 }
 if (effectiveTranscriptionMode === 'openai' && !OPENAI_API_KEY) {
   console.error("FATAL: TRANSCRIPTION_MODE is 'openai', but OPENAI_API_KEY is missing in the .env file. This is required for OpenAI transcriptions.");
+  process.exit(1);
+}
+if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
+  console.error("FATAL: TRANSCRIPTION_MODE is 'icad', but ICAD_URL is missing in the .env file. Please set it to your ICAD API endpoint URL.");
   process.exit(1);
 }
 // --- END VALIDATION ---
@@ -1173,6 +1181,94 @@ async function transcribeWithOpenAIAPI(filePath, callback) {
   }
 }
 
+async function transcribeWithICADAPI(filePath, callback) {
+  // Check for ICAD URL
+  if (!ICAD_URL) {
+    logger.error('FATAL: TRANSCRIPTION_MODE is icad, but ICAD_URL is not configured.');
+    if (callback) callback(""); // Fail gracefully
+    return;
+  }
+
+  // Check file existence
+  if (!fs.existsSync(filePath)) {
+    logger.warn(`ICAD Transcription: Audio file does not exist: ${filePath}`);
+    if (callback) callback("");
+    return;
+  }
+
+  try {
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+    
+    // Set model based on ICAD_PROFILE if provided, otherwise use default
+    const modelToUse = ICAD_PROFILE || 'whisper-1';
+    form.append('model', modelToUse);
+    
+    // Add standard OpenAI Whisper API parameters that ICAD should understand
+    form.append('response_format', 'json');
+    form.append('language', 'en');
+    
+    // Explicitly disable clip_timestamps to override any profile settings
+    form.append('clip_timestamps', '');
+
+    const apiEndpoint = `${ICAD_URL}/v1/audio/transcriptions`;
+    const filenameForLog = path.basename(filePath);
+    const authStatus = ICAD_API_KEY ? 'with authentication' : 'without authentication';
+    logger.info(`Sending ICAD transcription request for ${filenameForLog} to ${apiEndpoint} using model/profile: ${modelToUse} (${authStatus})`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        logger.error(`ICAD transcription request timed out after 120s for ${filenameForLog}`);
+        controller.abort();
+    }, 120000); // 120 seconds
+
+    const headers = {
+      ...form.getHeaders()
+    };
+    
+    // Add authorization header if ICAD_API_KEY is provided
+    if (ICAD_API_KEY) {
+      headers['Authorization'] = `Bearer ${ICAD_API_KEY}`;
+    }
+
+    const response = await fetch(apiEndpoint, {
+         method: 'POST',
+         body: form,
+         headers: headers,
+         signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorBody = `Status: ${response.status} ${response.statusText}`;
+      try {
+          errorBody = await response.text();
+      } catch (e) { /* ignore */ }
+      logger.error(`ICAD transcription API error for ${filenameForLog}: ${errorBody}`);
+      if (callback) callback("");
+      return;
+    }
+
+    const result = await response.json();
+    const transcriptionText = result.text || "";
+
+    logger.info(`Received ICAD transcription for ${filenameForLog} (${transcriptionText.length} chars)`);
+    if (callback) {
+      callback(transcriptionText);
+    }
+
+  } catch (error) {
+     if (error.name === 'AbortError') {
+         if (callback) callback("");
+     } else {
+        const filenameForLog = path.basename(filePath);
+        logger.error(`Error during ICAD transcription API call for ${filenameForLog}: ${error.message}`, { stack: error.stack });
+        if (callback) callback("");
+     }
+  }
+}
+
 // Function to handle new audio (routes to local or remote transcription)
 function handleNewAudio(audioData) {
   const {
@@ -1348,7 +1444,10 @@ function handleNewAudio(audioData) {
                 // Use the remote function for faster-whisper server
                 const pathToUseForRemote = (STORAGE_MODE === 'local') ? finalPathIfLocal : tempPath;
                 transcribeAudioRemotely(pathToUseForRemote, processingCallback);
-
+            } else if (effectiveTranscriptionMode === 'icad') {
+                // ICAD API transcription mode (OpenAI-compatible interface)
+                const pathToUse = (STORAGE_MODE === 'local') ? finalPathIfLocal : tempPath;
+                transcribeWithICADAPI(pathToUse, processingCallback);
             } else { // 'local' transcription mode
                 const localRequestId = uuidv4();
                 let payload;
@@ -3814,6 +3913,12 @@ if (effectiveTranscriptionMode === 'local') {
   // Optional: Add check for URL if mode is remote
   if (effectiveTranscriptionMode === 'remote' && !FASTER_WHISPER_SERVER_URL) {
        logger.error('FATAL: TRANSCRIPTION_MODE is remote, but FASTER_WHISPER_SERVER_URL is not set in .env!');
+       // Optionally exit if configuration is critically wrong
+       // process.exit(1);
+  }
+  // Check for ICAD URL if mode is icad
+  if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
+       logger.error('FATAL: TRANSCRIPTION_MODE is icad, but ICAD_URL is not set in .env!');
        // Optionally exit if configuration is critically wrong
        // process.exit(1);
   }
