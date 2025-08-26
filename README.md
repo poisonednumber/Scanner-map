@@ -10,6 +10,8 @@ A real-time mapping system that ingests radio calls from SDRTrunk, TrunkRecorder
 -   **Flexible Transcription:**
     -   **Local:** Utilizes the `faster-whisper` model running locally for accurate audio-to-text conversion (CPU or NVIDIA GPU).
     -   **Remote:** Option to offload transcription to a separate `faster-whisper-server` (like [speaches](https://github.com/speaches-ai/speaches)) via its API.
+    -   **OpenAI:** Uses the official OpenAI Whisper API service for cloud-based transcription.
+    -   **ICAD:** Uses a custom faster-whisper server with OpenAI-compatible interface and advanced profiles for radio-optimized transcription (see [ICAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe)).
 -   **Flexible Audio Storage:** Store audio files locally (`./audio` folder) or in an S3-compatible object storage service (AWS S3, MinIO, etc.).
 -   **AI-Powered Location Extraction & Geocoding:**
     -   Uses a  Ollama LLM (e.g., Llama 3.1) to identify potential addresses mentioned in transmissions for specified talk groups.
@@ -43,6 +45,8 @@ This project can be installed on Windows or Linux. Automated installation script
 -   (Optional but Recommended for Local Transcription Speed) An NVIDIA GPU with CUDA support (8GB+ VRAM recommended). Ensure appropriate drivers and CUDA/cuDNN libraries are installed before running the installation script.
 -   (Optional for Discord Features) A Discord account and the ability to create a Discord Bot Application.
 -   (Optional for Remote Transcription) A running instance of a `faster-whisper-server` compatible API (e.g., [speaches](https://github.com/speaches-ai/speaches)).
+-   (Optional for OpenAI Transcription) An OpenAI API account with access to the Whisper API.
+-   (Optional for ICAD Transcription) A running instance of [ICAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe) server (see ICAD Setup section below).
 
 ### 🐧 Linux Installation (Debian/Ubuntu-based)
 
@@ -83,7 +87,7 @@ This project can be installed on Windows or Linux. Automated installation script
         -   CRITICAL: Add your actual `DISCORD_TOKEN`.
         -   CRITICAL: Provide the API key for your _chosen_ geocoding provider (`Maps_API_KEY` or `LOCATIONIQ_API_KEY`). Comment out the unused one.
         -   CRITICAL: Add your specific `TALK_GROUP_XXXX=Location Description` lines for each talk group listed in `MAPPED_TALK_GROUPS`.
-        -   Verify `TRANSCRIPTION_MODE` ('local' or 'remote'). If 'remote', set `FASTER_WHISPER_SERVER_URL`. If 'local', set `TRANSCRIPTION_DEVICE` ('cpu' or 'cuda').
+        -   Verify `TRANSCRIPTION_MODE` ('local', 'remote', 'openai', or 'icad'). Configure the corresponding settings based on your choice (see Configuration Details below).
         -   Adjust `WEBSERVER_PASSWORD` if `ENABLE_AUTH=true`.
         -   Verify `STORAGE_MODE` ('local' or 's3'). If 's3', set `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
     -   **`public/config.js`:** Open this file (`nano public/config.js`) and configure map defaults (center, zoom, icons, etc.). If using Google Maps for the _frontend map display_, you might need to add your `Maps_API_KEY` here too.
@@ -157,7 +161,7 @@ This project can be installed on Windows or Linux. Automated installation script
         -   CRITICAL: Add your actual `DISCORD_TOKEN`.
         -   CRITICAL: Provide the API key for your _chosen_ geocoding provider (`Maps_API_KEY` or `LOCATIONIQ_API_KEY`). Comment out the unused one.
         -   CRITICAL: Add your specific `TALK_GROUP_XXXX=Location Description` lines for each talk group listed in `MAPPED_TALK_GROUPS`.
-        -   Verify `TRANSCRIPTION_MODE` ('local' or 'remote'). If 'remote', set `FASTER_WHISPER_SERVER_URL`. If 'local', set `TRANSCRIPTION_DEVICE` ('cpu' or 'cuda').
+        -   Verify `TRANSCRIPTION_MODE` ('local', 'remote', 'openai', or 'icad'). Configure the corresponding settings based on your choice (see Configuration Details below).
         -   Adjust `WEBSERVER_PASSWORD` if `ENABLE_AUTH=true`.
         -   Verify `STORAGE_MODE` ('local' or 's3'). If 's3', set `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
     -   **`public\config.js`:** Open this file (`notepad .\public\config.js`) and configure map defaults (center, zoom, icons, etc.). If using Google Maps for the _frontend map display_, you might need to add your `Maps_API_KEY` here too.
@@ -199,6 +203,8 @@ This file contains the core configuration. The installation scripts help create 
 -   **`TRANSCRIPTION_MODE`:**
     -   `local`: Uses `faster-whisper` locally via Python. Requires `WHISPER_MODEL` and `TRANSCRIPTION_DEVICE`.
     -   `remote`: Uses a separate `faster-whisper-server` API. Requires `FASTER_WHISPER_SERVER_URL`. `WHISPER_MODEL` might be used if server supports model selection via API.
+    -   `openai`: Uses the official OpenAI Whisper API. Requires `OPENAI_API_KEY`.
+    -   `icad`: Uses a custom ICAD Transcribe server with profiles and radio-optimized settings. Requires `ICAD_URL`. Optional: `ICAD_API_KEY` and `ICAD_PROFILE`.
 -   **`TRANSCRIPTION_DEVICE`:** (Only if `TRANSCRIPTION_MODE=local`) Set to `cuda` if you installed NVIDIA components and CUDA-enabled PyTorch, otherwise set to `cpu`.
 -   **`FASTER_WHISPER_SERVER_URL`:** (Only if `TRANSCRIPTION_MODE=remote`) The full URL of your running transcription server API (e.g., `http://localhost:8000`).
 -   **`WHISPER_MODEL` / `OLLAMA_MODEL`:** Choose appropriate models. Larger models are more accurate but require more resources (especially VRAM for large-v3 Whisper).
@@ -210,6 +216,9 @@ This file contains the core configuration. The installation scripts help create 
 -   **`S3_BUCKET_NAME`:** (New - Required if `STORAGE_MODE=s3`) The name of the S3 bucket where audio files will be stored. The bucket must already exist.
 -   **`S3_ACCESS_KEY_ID`:** (New - Required if `STORAGE_MODE=s3`) Your S3 access key ID.
 -   **`S3_SECRET_ACCESS_KEY`:** (New - Required if `STORAGE_MODE=s3`) Your S3 secret access key.
+-   **`ICAD_URL`:** (Required if `TRANSCRIPTION_MODE=icad`) The URL of your ICAD Transcribe server (e.g., `http://127.0.0.1:9912`).
+-   **`ICAD_API_KEY`:** (Optional if `TRANSCRIPTION_MODE=icad`) API key for ICAD authentication if your server requires it.
+-   **`ICAD_PROFILE`:** (Optional if `TRANSCRIPTION_MODE=icad`) Model or profile to use (e.g., `tiny`, `tiny|analog-radio`). Defaults to `whisper-1` if not specified.
 
 ### public/config.js
 
@@ -302,6 +311,47 @@ Edit your `config.json`:
 -   `/alert list` - List all configured alert keywords.
 -   `/summary refresh` - Manually trigger an update of the AI summary message.
 
+## 📡 ICAD Transcribe Setup
+
+[ICAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe) is a specialized transcription service optimized for police scanner audio. It provides advanced features like model profiles, multiple GPU support, and radio-specific audio preprocessing.
+
+### Quick Start with Docker
+
+The easiest way to run ICAD Transcribe is using Docker. For Windows with Docker Desktop and GPU support:
+
+```bash
+docker run --gpus all -e INPUT_FILE=/path/to/input.wav -e OUTPUT_FILE=/path/to/output.txt -e ROOT_PASSWORD=1234 -p 9912:9912 thegreatcodeholio/icad_transcribe:latest
+```
+
+### ICAD Configuration in Scanner Map
+
+To use ICAD with Scanner Map, configure your `.env` file:
+
+```bash
+# Set transcription mode to ICAD
+TRANSCRIPTION_MODE=icad
+
+# ICAD server URL (adjust port if different)
+ICAD_URL=http://127.0.0.1:9912
+
+# Optional: API key if your ICAD server requires authentication
+ICAD_API_KEY=your_icad_api_key_here
+
+# Optional: Model or profile (e.g., "tiny", "small", "base", "large-v3", or "tiny|analog-radio")
+# Profiles combine models with radio-optimized settings
+ICAD_PROFILE=tiny|analog-radio
+```
+
+### ICAD Features
+
+-   **Multiple Models**: Load and use different Whisper models simultaneously
+-   **GPU & CPU Support**: Automatic load balancing across available hardware
+-   **Radio Profiles**: Specialized audio preprocessing for radio communications
+-   **Model Management**: On-demand loading/unloading of models
+-   **OpenAI Compatible**: Uses standard OpenAI Whisper API format
+
+For detailed ICAD setup instructions, see the [ICAD Transcribe documentation](https://github.com/TheGreatCodeholio/icad_transcribe).
+
 ## 💻 System Requirements
 
 -   **OS:** Windows 10/11 or Debian/Ubuntu-based Linux.
@@ -315,9 +365,11 @@ Edit your `config.json`:
 -   **Check Logs:** The primary logs are combined.log and error.log in the project directory. Check the output in the terminals running bot.js and webserver.js.
 -   **Dependencies:** Ensure all prerequisites (Node, Python, FFmpeg, VS Build Tools/build-essential) are installed correctly and accessible in the system's PATH. Re-run npm install if Node modules seem missing. Ensure Python packages installed correctly (use pip list inside the venv if using Linux).
 -   **.env Configuration:** Double-check all paths, URLs, API keys, and IDs. Ensure PUBLIC_DOMAIN and ports are correct.
-    -   Verify TRANSCRIPTION_MODE is 'local' or 'remote'.
+    -   Verify TRANSCRIPTION_MODE is 'local', 'remote', 'openai', or 'icad'.
     -   If 'local', check TRANSCRIPTION_DEVICE ('cpu' or 'cuda') and WHISPER_MODEL.
     -   If 'remote', check FASTER_WHISPER_SERVER_URL.
+    -   If 'openai', check OPENAI_API_KEY.
+    -   If 'icad', check ICAD_URL and ensure ICAD server is running.
     -   Ensure you are using the correct geocoding.js file and have uncommented/provided the matching API key (Maps_API_KEY or LOCATIONIQ_API_KEY).
 -   **API Keys:** Ensure the API key used in SDRTrunk/TrunkRecorder is the secret key from GenApiKey.js, and the hashed key is correctly placed in data/apikeys.json.
 -   **Ollama:** Verify Ollama is running (ollama ps) and the specified model is pulled (ollama list). Check the OLLAMA_URL.
@@ -329,6 +381,14 @@ Edit your `config.json`:
 -   **Remote Transcription Issues:**
     -   Ensure the faster-whisper-server is running and accessible at the FASTER_WHISPER_SERVER_URL.
     -   Check the server's logs for errors (e.g., CUDA/cuDNN errors on the server).
+-   **OpenAI Transcription Issues:**
+    -   Verify OPENAI_API_KEY is correct and has Whisper API access.
+    -   Check OpenAI account usage limits and billing status.
+-   **ICAD Transcription Issues:**
+    -   Ensure ICAD Transcribe server is running and accessible at the ICAD_URL.
+    -   Check ICAD server logs for errors (docker logs if using Docker).
+    -   Verify the model/profile specified in ICAD_PROFILE exists on the server.
+    -   Check if ICAD_API_KEY is required for your server configuration.
 -   **Geocoding Issues:**
     -   Ensure the correct geocoding.js file is in place.
     -   Check the relevant API key (Maps_API_KEY or LOCATIONIQ_API_KEY) is correct in .env.
