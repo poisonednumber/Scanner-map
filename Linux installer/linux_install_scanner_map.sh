@@ -304,8 +304,9 @@ create_env_file() {
     append_env "# 'local': Uses a local Python script (requires appropriate hardware and setup)."
     append_env "# 'remote': Uses a self-hosted faster-whisper compatible API endpoint."
     append_env "# 'openai': Uses the official OpenAI Whisper API (requires OPENAI_API_KEY)."
+    append_env "# 'icad': Uses a custom faster-whisper server with OpenAI-compatible interface and profiles."
     append_env "# This setting is REQUIRED."
-    prompt_input "Enter TRANSCRIPTION_MODE ('local', 'remote', or 'openai')" "$DEFAULT_TRANSCRIPTION_MODE" transcription_mode
+    prompt_input "Enter TRANSCRIPTION_MODE ('local', 'remote', 'openai', or 'icad')" "$DEFAULT_TRANSCRIPTION_MODE" transcription_mode
     append_env "TRANSCRIPTION_MODE=$transcription_mode"
     append_env ""
     append_env "# --- Local Transcription Settings (Required if TRANSCRIPTION_MODE is 'local') ---"
@@ -329,6 +330,28 @@ create_env_file() {
     else
         append_env "FASTER_WHISPER_SERVER_URL=$DEFAULT_WHISPER_SERVER_URL # Ignored unless TRANSCRIPTION_MODE=remote"
         append_env "WHISPER_MODEL=$DEFAULT_WHISPER_MODEL # Ignored unless TRANSCRIPTION_MODE=remote"
+    fi
+    append_env ""
+    append_env "# --- ICAD Transcription Settings (Required if TRANSCRIPTION_MODE is 'icad') ---"
+    append_env "# The URL of your ICAD transcription API server (OpenAI-compatible interface)."
+    if [[ "$transcription_mode" == "icad" ]]; then
+        prompt_input "Enter ICAD_URL" "http://127.0.0.1:8080" icad_url
+        append_env "ICAD_URL=$icad_url"
+        append_env "# Optional: API key for ICAD authentication (if your ICAD server requires it)."
+        read -r -p "Enter ICAD_API_KEY (leave blank if not needed): " icad_api_key
+        if [[ -z "$icad_api_key" ]]; then
+            append_env "# ICAD_API_KEY=your_icad_api_key_here"
+        else
+            append_env "ICAD_API_KEY=$icad_api_key"
+        fi
+        append_env "# Optional: Specify a model or profile for ICAD to use (e.g., \"tiny|analog-radio\")."
+        append_env "# If not specified, defaults to 'whisper-1'. Profiles allow you to combine model and settings."
+        prompt_input "Enter ICAD_PROFILE (model or model|profile)" "tiny" icad_profile
+        append_env "ICAD_PROFILE=$icad_profile"
+    else
+        append_env "ICAD_URL=http://127.0.0.1:8080 # Ignored unless TRANSCRIPTION_MODE=icad"
+        append_env "# ICAD_API_KEY=your_icad_api_key_here # Ignored unless TRANSCRIPTION_MODE=icad"
+        append_env "ICAD_PROFILE=tiny # Ignored unless TRANSCRIPTION_MODE=icad"
     fi
     append_env ""
     append_env "# Note: The OPENAI_API_KEY from the section below is used if TRANSCRIPTION_MODE is 'openai'."
@@ -615,10 +638,11 @@ manual_steps_reminder() {
   echo "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')."
   echo "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set."
   echo "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set."
-  echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', or 'openai')."
-  echo "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct."
-  echo "    - If TRANSCRIPTION_MODE=local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
-  echo "    - If TRANSCRIPTION_MODE=openai, ensure OPENAI_API_KEY is also set."
+      echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', 'openai', or 'icad')."
+    echo "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct."
+    echo "    - If TRANSCRIPTION_MODE=local, ensure TRANSCRIPTION_DEVICE is correct ('cuda' or 'cpu')."
+    echo "    - If TRANSCRIPTION_MODE=openai, ensure OPENAI_API_KEY is also set."
+    echo "    - If TRANSCRIPTION_MODE=icad, ensure ICAD_URL is correct and ICAD_API_KEY/ICAD_PROFILE are set if needed."
   echo "    - Choose the correct 'geocoding.js' file (Google vs LocationIQ) for your setup."
   echo "    - Ensure the corresponding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) is uncommented and correct."
   echo "    - CRITICAL: Add your specific 'TALK_GROUP_XXXX=Location Description' lines."
