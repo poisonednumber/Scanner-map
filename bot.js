@@ -1,4 +1,4 @@
-// bot.js - Main Discord bot application
+// bot.js - Main Discord bot application with integrated webserver and initialization
 
 require('dotenv').config();
 
@@ -31,7 +31,14 @@ const {
   // --- NEW: ICAD Transcription Env Vars ---
   ICAD_URL,
   ICAD_PROFILE,
-  ICAD_API_KEY
+  ICAD_API_KEY,
+  // --- Webserver Env Vars ---
+  WEBSERVER_PORT = '3001',
+  WEBSERVER_PASSWORD,
+  ENABLE_AUTH = 'false',
+  SESSION_DURATION_DAYS = '7',
+  MAX_SESSIONS_PER_USER = '5',
+  GOOGLE_MAPS_API_KEY
 } = process.env;
 
 // --- VALIDATE AI-RELATED ENV VARS ---
@@ -96,6 +103,10 @@ const moment = require('moment-timezone');
 const TALK_GROUPS = {};
 const readline = require('readline');
 const FormData = require('form-data');
+const csv = require('csv-parser');
+const http = require('http');
+const socketIo = require('socket.io');
+const crypto = require('crypto');
 let summaryChannel;
 const SUMMARY_INTERVAL = 10 * 60 * 1000; // Changed from 5 to 10 minutes in milliseconds
 let lastSummaryUpdate = 0;
@@ -285,6 +296,335 @@ if (STORAGE_MODE === 's3') {
 }
 // --- END S3 Client Setup ---
 
+// --- INITIALIZATION FUNCTIONS ---
+
+// Function to check if talkgroups have been imported
+function checkTalkGroupsImported() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT COUNT(*) as count FROM talk_groups', (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row.count > 0);
+      }
+    });
+  });
+}
+
+// Function to import talkgroups from CSV
+function importTalkGroups() {
+  return new Promise((resolve, reject) => {
+    const talkGroupsFile = path.join(__dirname, 'talkgroups.csv');
+    
+    if (!fs.existsSync(talkGroupsFile)) {
+      logger.warn('talkgroups.csv not found. Skipping talkgroup import.');
+      resolve();
+      return;
+    }
+
+    logger.info('Importing talkgroups from CSV...');
+    let importCount = 0;
+
+    fs.createReadStream(talkGroupsFile)
+      .pipe(csv({
+        headers: ['DEC', 'HEX', 'Alpha Tag', 'Mode', 'Description', 'Tag', 'County'],
+        skipLines: 0,
+      }))
+      .on('data', (row) => {
+        const id = parseInt(row['DEC'], 10);
+        const hex = row['HEX'];
+        const alphaTag = row['Alpha Tag'];
+        const mode = row['Mode'];
+        const description = row['Description'];
+        const tag = row['Tag'];
+        const county = row['County'];
+
+        db.run(
+          `INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, hex, alphaTag, mode, description, tag, county],
+          (err) => {
+            if (err) {
+              logger.error('Error inserting talk group:', err.message);
+            } else {
+              importCount++;
+            }
+          }
+        );
+      })
+      .on('end', () => {
+        logger.info(`Successfully imported ${importCount} talkgroups.`);
+        resolve();
+      })
+      .on('error', (err) => {
+        logger.error('Error importing talkgroups:', err);
+        reject(err);
+      });
+  });
+}
+
+// Function to ensure API key exists
+function ensureApiKey() {
+  return new Promise((resolve, reject) => {
+    try {
+      // Ensure directory exists
+      const apiKeyDir = path.dirname(API_KEY_FILE);
+      if (!fs.existsSync(apiKeyDir)) {
+        fs.mkdirSync(apiKeyDir, { recursive: true });
+      }
+
+      if (!fs.existsSync(API_KEY_FILE)) {
+        // Create a default API key
+        const defaultKey = uuidv4();
+        const hashedKey = bcrypt.hashSync(defaultKey, 10);
+        const initialApiKeys = [{ 
+          key: hashedKey, 
+          name: 'Default', 
+          disabled: false,
+          created_at: new Date().toISOString(),
+          description: 'Auto-generated API key for first boot'
+        }];
+        
+        fs.writeFileSync(API_KEY_FILE, JSON.stringify(initialApiKeys, null, 2));
+        
+        logger.info(`Created default API key: ${defaultKey}`);
+        logger.info(`API key saved to: ${API_KEY_FILE}`);
+        logger.warn('IMPORTANT: Save this API key as it won\'t be shown again!');
+        resolve(defaultKey);
+      } else {
+        logger.info('API key file already exists.');
+        resolve(null);
+      }
+    } catch (err) {
+      logger.error('Error ensuring API key:', err);
+      reject(err);
+    }
+  });
+}
+
+// Function to initialize database tables
+function initializeDatabase() {
+  return new Promise((resolve, reject) => {
+    logger.info('Initializing database tables...');
+    
+    db.serialize(() => {
+      let tablesCreated = 0;
+      let totalTables = ENABLE_AUTH?.toLowerCase() === 'true' ? 7 : 5;
+      
+      const tableCreated = (err, tableName) => {
+        if (err) {
+          logger.error(`Error creating ${tableName} table:`, err);
+          reject(err);
+          return;
+        }
+        tablesCreated++;
+        if (tablesCreated === totalTables) {
+          logger.info('Database tables initialized successfully.');
+          resolve();
+        }
+      };
+
+      db.run(`CREATE TABLE IF NOT EXISTS transcriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        talk_group_id TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        transcription TEXT,
+        audio_file_path TEXT,
+        address TEXT,
+        lat REAL,
+        lon REAL,
+        category TEXT
+      )`, (err) => tableCreated(err, 'transcriptions'));
+
+      db.run(`CREATE TABLE IF NOT EXISTS global_keywords (
+        keyword TEXT UNIQUE,
+        talk_group_id TEXT
+      )`, (err) => tableCreated(err, 'global_keywords'));
+
+      db.run(`CREATE TABLE IF NOT EXISTS talk_groups (
+        id TEXT PRIMARY KEY,
+        hex TEXT,
+        alpha_tag TEXT,
+        mode TEXT,
+        description TEXT,
+        tag TEXT,
+        county TEXT
+      )`, (err) => tableCreated(err, 'talk_groups'));
+
+      db.run(`CREATE TABLE IF NOT EXISTS frequencies (
+        id INTEGER PRIMARY KEY,
+        frequency TEXT,
+        description TEXT
+      )`, (err) => tableCreated(err, 'frequencies'));
+
+      db.run(`CREATE TABLE IF NOT EXISTS audio_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transcription_id INTEGER,
+        audio_data BLOB,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(transcription_id) REFERENCES transcriptions(id)
+      )`, (err) => tableCreated(err, 'audio_files'));
+
+      // Authentication tables (if auth is enabled)
+      if (ENABLE_AUTH?.toLowerCase() === 'true') {
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          salt TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => tableCreated(err, 'users'));
+
+        db.run(`CREATE TABLE IF NOT EXISTS sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          token TEXT UNIQUE NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          expires_at DATETIME NOT NULL,
+          last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+          ip_address TEXT,
+          user_agent TEXT,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`, (err) => tableCreated(err, 'sessions'));
+      }
+    });
+  });
+}
+
+// Function to create admin user if authentication is enabled
+function createAdminUser() {
+  return new Promise((resolve, reject) => {
+    if (ENABLE_AUTH?.toLowerCase() !== 'true') {
+      logger.info('Authentication disabled, skipping admin user creation.');
+      resolve();
+      return;
+    }
+
+    if (!WEBSERVER_PASSWORD) {
+      logger.error('WEBSERVER_PASSWORD not set but authentication is enabled!');
+      reject(new Error('WEBSERVER_PASSWORD required when ENABLE_AUTH=true'));
+      return;
+    }
+
+    // Check if admin user already exists
+    db.get('SELECT id FROM users WHERE username = ?', ['admin'], (err, row) => {
+      if (err) {
+        logger.error('Error checking for admin user:', err);
+        reject(err);
+        return;
+      }
+
+      if (row) {
+        logger.info('Admin user already exists in database.');
+        resolve();
+        return;
+      }
+
+      // Create admin user
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = crypto
+        .pbkdf2Sync(WEBSERVER_PASSWORD, salt, 10000, 64, 'sha512')
+        .toString('hex');
+
+      db.run(
+        'INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)',
+        ['admin', passwordHash, salt],
+        function(err) {
+          if (err) {
+            logger.error('Error creating admin user:', err);
+            reject(err);
+          } else {
+            logger.info('Created admin user for webserver authentication.');
+            logger.info(`Admin credentials: username=admin, password=${WEBSERVER_PASSWORD}`);
+            resolve();
+          }
+        }
+      );
+    });
+  });
+}
+
+// Function to start webserver as child process
+function startWebserver() {
+  return new Promise((resolve, reject) => {
+    logger.info('Starting webserver...');
+    
+    const webserverProcess = spawn('node', ['webserver.js'], {
+      stdio: 'inherit',
+      env: { ...process.env }
+    });
+
+    webserverProcess.on('error', (err) => {
+      logger.error('Failed to start webserver:', err);
+      reject(err);
+    });
+
+    // Give the webserver a moment to start
+    setTimeout(() => {
+      logger.info(`Webserver started on port ${WEBSERVER_PORT}`);
+      resolve(webserverProcess);
+    }, 2000);
+  });
+}
+
+// Main initialization function
+async function initializeBot() {
+  try {
+    logger.info('Starting bot initialization...');
+
+    // Step 1: Initialize database
+    await initializeDatabase();
+
+    // Step 2: Ensure API key exists
+    const newApiKey = await ensureApiKey();
+    if (newApiKey) {
+      // Log the new API key one more time for visibility
+      console.log('='.repeat(60));
+      console.log('NEW API KEY GENERATED:');
+      console.log(newApiKey);
+      console.log('Please save this key - it will not be shown again!');
+      console.log('='.repeat(60));
+    }
+
+    // Step 3: Check and import talkgroups if needed
+    const talkGroupsExist = await checkTalkGroupsImported();
+    if (!talkGroupsExist) {
+      await importTalkGroups();
+    } else {
+      logger.info('Talkgroups already imported, skipping CSV import.');
+    }
+
+    // Step 4: Load talkgroups for geocoding
+    const { loadTalkGroups } = require('./geocoding');
+    const talkGroups = await loadTalkGroups(db);
+    Object.assign(TALK_GROUPS, talkGroups);
+    logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups for geocoding`);
+
+    // Step 5: Load API keys
+    loadApiKeys();
+
+    // Step 6: Create admin user for webserver if auth is enabled
+    await createAdminUser();
+
+    // Step 7: Start bot services (Discord and Express API)
+    await startBotServices();
+
+    // Step 8: Start webserver last
+    if (WEBSERVER_PORT && GOOGLE_MAPS_API_KEY) {
+      await startWebserver();
+    } else {
+      logger.warn('Webserver not started: WEBSERVER_PORT or GOOGLE_MAPS_API_KEY not configured');
+    }
+
+    logger.info('Bot initialization completed successfully!');
+    return true;
+  } catch (error) {
+    logger.error('Bot initialization failed:', error);
+    throw error;
+  }
+}
+
+// --- END INITIALIZATION FUNCTIONS ---
+
 const {
   Client,
   IntentsBitField,
@@ -349,92 +689,38 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 
 logger.info(`Using upload directory: ${UPLOAD_DIR}`);
 
-// Database setup
+// Database setup (will be initialized properly in initializeBot function)
 const db = new sqlite3.Database('./botdata.db', (err) => {
   if (err) {
     logger.error('Error opening database:', err.message);
+    process.exit(1);
   } else {
     logger.info('Connected to SQLite database.');
-
-    // Initialize geocoding module with the database
-    loadTalkGroups(db).then(talkGroups => {
-  Object.assign(TALK_GROUPS, talkGroups);
-  logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups for geocoding`);
-});
+    // Trigger initialization after database connection
+    initializeBot().catch((error) => {
+      logger.error('Fatal error during bot initialization:', error);
+      process.exit(1);
+    });
   }
 });
 
-// Create necessary tables
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS transcriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    talk_group_id TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    transcription TEXT,
-    audio_file_path TEXT,
-    address TEXT,
-    lat REAL,
-    lon REAL
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS global_keywords (
-    keyword TEXT UNIQUE,
-    talk_group_id TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS talk_groups (
-    id TEXT PRIMARY KEY,
-    hex TEXT,
-    alpha_tag TEXT,
-    mode TEXT,
-    description TEXT,
-    tag TEXT,
-    county TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS frequencies (
-    id INTEGER PRIMARY KEY,
-    frequency TEXT,
-    description TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS audio_files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    transcription_id INTEGER,
-    audio_data BLOB,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(transcription_id) REFERENCES transcriptions(id)
-  )`);
-});
-
-// Load API keys
+// Load API keys (will be called from initialization)
 let apiKeys = [];
 const loadApiKeys = () => {
   try {
-    if (!fs.existsSync(path.dirname(API_KEY_FILE))) {
-      fs.mkdirSync(path.dirname(API_KEY_FILE), { recursive: true });
-    }
-    
-    if (!fs.existsSync(API_KEY_FILE)) {
-      // Create a default API key if none exists
-      const defaultKey = uuidv4();
-      const hashedKey = bcrypt.hashSync(defaultKey, 10);
-      apiKeys = [{ key: hashedKey, name: 'Default', disabled: false }];
-      fs.writeFileSync(API_KEY_FILE, JSON.stringify(apiKeys, null, 2));
-      
-      logger.info(`Created default API key: ${defaultKey}`);
-      logger.info(`Please save this key as it won't be shown again!`);
-    } else {
+    if (fs.existsSync(API_KEY_FILE)) {
       const data = fs.readFileSync(API_KEY_FILE, 'utf8');
       apiKeys = JSON.parse(data);
       logger.info(`Loaded ${apiKeys.length} API keys.`);
+    } else {
+      logger.warn('API key file not found. This should have been created during initialization.');
+      apiKeys = [];
     }
   } catch (err) {
     logger.error('Error loading API keys:', err);
     apiKeys = [];
   }
 };
-loadApiKeys();
 
 // Helper Functions
 const validateApiKey = async (key) => {
@@ -3439,6 +3725,14 @@ client.once('ready', async () => {
   // Start the summary scheduler
   startSummaryScheduler();
   
+  // Start transcription process if needed
+  if (effectiveTranscriptionMode === 'local') {
+    logger.info('Initializing local transcription process...');
+    startTranscriptionProcess();
+  } else {
+    logger.info(`Transcription mode set to '${effectiveTranscriptionMode}'. Local Python process will not be started.`);
+  }
+  
   isBootComplete = true;
 });
 
@@ -3892,45 +4186,54 @@ app.use((err, req, res, next) => {
   return res.status(500).send('Internal Server Error.');
 });
 
-// Start the Express server and Discord bot
-const server = app.listen(PORT_NUM, () => {
-  logger.info(`Bot server is running on port ${PORT_NUM}`);
+// Start the Express server and Discord bot (only after initialization is complete)
+let server;
+let discordClientReady = false;
 
-  // Ensure the audio directory exists
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
+async function startBotServices() {
+  try {
+    // Start the Express server for bot API endpoints
+    server = app.listen(PORT_NUM, () => {
+      logger.info(`Bot server is running on port ${PORT_NUM}`);
+    });
 
-  client.login(DISCORD_TOKEN);
-});
+    // Login to Discord
+    await client.login(DISCORD_TOKEN);
+    discordClientReady = true;
+    logger.info('Discord bot logged in successfully.');
 
-// Conditionally start the local transcription process based on mode
-if (effectiveTranscriptionMode === 'local') {
-  logger.info('Initializing local transcription process...');
-  startTranscriptionProcess();
-} else {
-  logger.info(`Transcription mode set to '${effectiveTranscriptionMode}'. Local Python process will not be started.`);
-  // Optional: Add check for URL if mode is remote
-  if (effectiveTranscriptionMode === 'remote' && !FASTER_WHISPER_SERVER_URL) {
-       logger.error('FATAL: TRANSCRIPTION_MODE is remote, but FASTER_WHISPER_SERVER_URL is not set in .env!');
-       // Optionally exit if configuration is critically wrong
-       // process.exit(1);
-  }
-  // Check for ICAD URL if mode is icad
-  if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
-       logger.error('FATAL: TRANSCRIPTION_MODE is icad, but ICAD_URL is not set in .env!');
-       // Optionally exit if configuration is critically wrong
-       // process.exit(1);
+  } catch (error) {
+    logger.error('Error starting bot services:', error);
+    throw error;
   }
 }
+
+// Transcription process will be started in the Discord ready event
 
 // Handle process termination
 process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
-  server.close(() => {
-    logger.info('Express server closed.');
+  
+  const shutdownPromises = [];
+  
+  // Close bot server if it exists
+  if (server) {
+    shutdownPromises.push(new Promise((resolve) => {
+      server.close(() => {
+        logger.info('Bot Express server closed.');
+        resolve();
+      });
+    }));
+  }
+  
+  // Disconnect Discord client if ready
+  if (discordClientReady) {
     client.destroy();
     logger.info('Discord bot disconnected.');
+  }
+  
+  // Wait for server shutdown, then close database
+  Promise.all(shutdownPromises).then(() => {
     db.close((err) => {
       if (err) {
         logger.error('Error closing database connection:', err);
