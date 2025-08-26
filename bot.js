@@ -28,6 +28,10 @@ const {
   OLLAMA_URL,
   OLLAMA_MODEL,
   TRANSCRIPTION_DEVICE,
+  // --- NEW: Python Command Override ---
+  PYTHON_COMMAND,
+  // --- NEW: Auto-update Control ---
+  AUTO_UPDATE_PYTHON_PACKAGES = 'true',
   // --- NEW: ICAD Transcription Env Vars ---
   ICAD_URL,
   ICAD_PROFILE,
@@ -125,6 +129,17 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
 // Parse MAX_CONCURRENT_TRANSCRIPTIONS from env or use default
 const parsedMaxConcurrent = parseInt(MAX_CONCURRENT_TRANSCRIPTIONS, 10);
 const MAX_CONCURRENT_TRANSCRIPTIONS_VALUE = !isNaN(parsedMaxConcurrent) && parsedMaxConcurrent > 0 ? parsedMaxConcurrent : 3;
+
+// High-volume system optimizations
+const MAX_QUEUE_SIZE = 50; // Limit queue size to prevent memory issues
+const QUEUE_DRAIN_THRESHOLD = 40; // Start warning when queue gets large
+const PRIORITY_QUEUE_THRESHOLD = 30; // Start prioritizing newer items
+
+// NOTE: For very busy systems with lots of concurrent calls, consider:
+// 1. Increasing MAX_CONCURRENT_TRANSCRIPTIONS in .env (default is 3, try 5-8 for busy systems)
+// 2. Using a faster GPU for local transcription or switching to 'remote' mode
+// 3. Monitoring memory usage and adjusting MAX_QUEUE_SIZE if needed
+// 4. Consider using 'openai' transcription mode for highest reliability under load
 
 // Whitelist patterns for console INFO messages
 const allowedPatterns = [
@@ -681,6 +696,13 @@ const messageCache = new Map(); // Stores the latest message for each channel
 const MESSAGE_COOLDOWN = 15000; // 15 seconds in milliseconds
 let transcriptionProcess = null;
 let isProcessingTranscription = false;
+let currentTranscriptionId = null; // Track current transcription for timeout
+let transcriptionTimeout = null; // Timeout for current transcription
+const TRANSCRIPTION_TIMEOUT_MS = 90000; // 1.5 minutes timeout per transcription (reduced for busy systems)
+let processHealthCheck = null; // Health check interval
+let lastProcessActivity = Date.now(); // Track when we last heard from Python process
+let queueWarningLogged = false; // Prevent spam logging of queue warnings
+let lastQueueSizeLog = 0; // Track last queue size for change detection
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -1102,7 +1124,7 @@ app.get('/audio/:id', (req, res) => {
 
 // Function to start the transcription process
 // Function to start the transcription process
-function startTranscriptionProcess() {
+async function startTranscriptionProcess() {
   // *** ADD THIS CHECK AT THE TOP ***
   if (effectiveTranscriptionMode !== 'local') {
     logger.info('Transcription mode is not local, skipping Python process start.');
@@ -1110,15 +1132,355 @@ function startTranscriptionProcess() {
   }
   // *** END ADDED CHECK ***
 
+  // Clean up existing process if it exists
   if (transcriptionProcess) {
-    logger.info('Local transcription process already running, reusing existing process');
+    logger.info('Cleaning up existing transcription process before restart');
+    cleanupTranscriptionProcess();
+  }
+
+  logger.info('🚀 Starting persistent transcription process (local mode)...');
+  logger.info('⏳ Checking Python environment and packages...'); // Updated log message
+
+  // Reset state variables
+  isProcessingTranscription = false;
+  currentTranscriptionId = null;
+  if (transcriptionTimeout) {
+    clearTimeout(transcriptionTimeout);
+    transcriptionTimeout = null;
+  }
+
+  // Spawn the Python process with better error handling and version detection
+  let pythonCommand = PYTHON_COMMAND || 'python';
+  
+  // If user specified a custom Python command, use it directly
+  if (PYTHON_COMMAND) {
+    logger.info(`Using user-specified Python command: ${PYTHON_COMMAND}`);
+  } else {
+    // Try different Python commands to find the right version
+    // On Windows, also try the full path to Python 3.12
+    const pythonCommands = [
+      'python3.12', 
+      'python3', 
+      'C:\\Users\\maste\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+      'python'
+    ];
+    
+    logger.info(`AUTO_UPDATE_PYTHON_PACKAGES is set to: ${AUTO_UPDATE_PYTHON_PACKAGES}`);
+  
+    // Function to test Python version and dependencies
+    const testPythonVersion = (cmd) => {
+      return new Promise((resolve) => {
+        const testProcess = spawn(cmd, ['--version'], { stdio: 'pipe' });
+        let output = '';
+        
+        testProcess.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        testProcess.stderr.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        testProcess.on('close', (code) => {
+          if (code === 0) {
+            const versionMatch = output.match(/Python (\d+)\.(\d+)/);
+            if (versionMatch) {
+              const major = parseInt(versionMatch[1]);
+              const minor = parseInt(versionMatch[2]);
+              logger.info(`Detected ${cmd}: Python ${major}.${minor} (major: ${major}, minor: ${minor})`);
+              resolve({ cmd, version: `${major}.${minor}`, major, minor });
+            } else {
+              logger.warn(`Could not parse version from output: ${output}`);
+            }
+          } else {
+            logger.info(`Command ${cmd} failed with code ${code}`);
+          }
+          resolve(null);
+        });
+        
+        testProcess.on('error', () => {
+          resolve(null);
+        });
+      });
+    };
+    
+    // Function to test if Python has required packages
+    const testPythonPackages = (cmd) => {
+      return new Promise((resolve) => {
+        const testProcess = spawn(cmd, ['-c', 'import torch, pydub, faster_whisper; print("OK")'], { stdio: 'pipe' });
+        let output = '';
+        
+        testProcess.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        testProcess.stderr.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        testProcess.on('close', (code) => {
+          if (code === 0 && output.includes('OK')) {
+            logger.info(`✓ Package test passed for ${cmd}`);
+            resolve(true);
+          } else {
+            logger.info(`✗ Package test failed for ${cmd} (code: ${code}, output: '${output.trim()}')`);
+            resolve(false);
+          }
+        });
+        
+        testProcess.on('error', () => {
+          resolve(false);
+        });
+      });
+    };
+    
+    // Function to auto-install Python packages
+    const autoInstallPythonPackages = (cmd) => {
+      return new Promise((resolve) => {
+        logger.info(`Installing required Python packages using ${cmd}...`);
+        
+        // Detect CUDA availability for appropriate PyTorch installation
+        const commands = [
+          // Try CUDA first (most common for transcription)
+          `${cmd} -m pip install --upgrade pip`,
+          // Try PyTorch nightly first for better RTX 5090 support, fallback to stable
+          `${cmd} -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121 || ${cmd} -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`,
+          `${cmd} -m pip install faster-whisper>=0.10.0`,
+          `${cmd} -m pip install pydub>=0.25.0`,
+          `${cmd} -m pip install python-dotenv>=1.0.0`,
+          `${cmd} -m pip install numpy>=1.24.0`
+        ];
+        
+        // If CUDA fails, fallback to CPU
+        const fallbackCommands = [
+          `${cmd} -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu`,
+          `${cmd} -m pip install faster-whisper>=0.10.0`,
+          `${cmd} -m pip install pydub>=0.25.0`,
+          `${cmd} -m pip install python-dotenv>=1.0.0`,
+          `${cmd} -m pip install numpy>=1.24.0`
+        ];
+        
+        let currentCommandIndex = 0;
+        let usingFallback = false;
+        
+        const runNextCommand = () => {
+          const commandList = usingFallback ? fallbackCommands : commands;
+          
+          if (currentCommandIndex >= commandList.length) {
+            // All commands completed, test if packages are now available
+            testPythonPackages(cmd).then(hasPackages => {
+              if (hasPackages) {
+                logger.info(`✓ Successfully installed all required packages for ${cmd}`);
+                resolve(true);
+              } else if (!usingFallback) {
+                // Try fallback to CPU-only PyTorch
+                logger.warn('CUDA PyTorch installation may have failed, trying CPU version...');
+                usingFallback = true;
+                currentCommandIndex = 1; // Skip pip upgrade for fallback
+                runNextCommand();
+              } else {
+                logger.error(`Failed to install required packages for ${cmd}`);
+                resolve(false);
+              }
+            });
+            return;
+          }
+          
+          const command = commandList[currentCommandIndex];
+          logger.info(`Running: ${command}`);
+          
+          const installProcess = spawn(command, { 
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: true,
+            timeout: 300000 // 5 minute timeout for each command
+          });
+          
+          let output = '';
+          let errorOutput = '';
+          
+          installProcess.stdout.on('data', (data) => {
+            const text = data.toString();
+            output += text;
+            // Log installation progress for user feedback
+            if (text.includes('Successfully installed') || text.includes('Requirement already satisfied')) {
+              logger.info(`Package install progress: ${text.trim()}`);
+            }
+          });
+          
+          installProcess.stderr.on('data', (data) => {
+            const text = data.toString();
+            errorOutput += text;
+            // Log important errors during installation
+            if (text.includes('ERROR') || text.includes('FAILED')) {
+              logger.warn(`Package install error: ${text.trim()}`);
+            }
+          });
+          
+          installProcess.on('close', (code) => {
+            if (code === 0) {
+              logger.info(`✓ Command completed successfully`);
+            } else {
+              logger.warn(`Command failed with code ${code}: ${errorOutput.slice(0, 200)}...`);
+              if (currentCommandIndex === 1 && !usingFallback) {
+                // PyTorch CUDA install failed, switch to fallback
+                logger.warn('CUDA PyTorch installation failed, switching to CPU version...');
+                usingFallback = true;
+                currentCommandIndex = 0; // Reset to start fallback sequence
+              }
+            }
+            currentCommandIndex++;
+            setTimeout(runNextCommand, 2000); // Slightly longer delay between commands
+          });
+          
+          installProcess.on('error', (err) => {
+            logger.error(`Error running command: ${err.message}`);
+            currentCommandIndex++;
+            setTimeout(runNextCommand, 2000);
+          });
+        };
+        
+        runNextCommand();
+      });
+    };
+    
+    // Function to auto-update Python packages
+    const autoUpdatePythonPackages = (cmd) => {
+      return new Promise((resolve) => {
+        logger.info(`🔄 Updating Python packages to latest versions using ${cmd}...`);
+        
+        const updateCommands = [
+          `${cmd} -m pip install --upgrade pip`,
+          // Try PyTorch nightly first for better RTX 5090 support, fallback to stable
+          `${cmd} -m pip install --upgrade --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121 || ${cmd} -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`,
+          `${cmd} -m pip install --upgrade faster-whisper`,
+          `${cmd} -m pip install --upgrade pydub`,
+          `${cmd} -m pip install --upgrade python-dotenv`,
+          `${cmd} -m pip install --upgrade numpy`
+        ];
+        
+        let currentCommandIndex = 0;
+        
+        const runNextUpdate = () => {
+          if (currentCommandIndex >= updateCommands.length) {
+            logger.info(`✅ Package updates completed for ${cmd}`);
+            resolve(true);
+            return;
+          }
+          
+          const command = updateCommands[currentCommandIndex];
+          logger.info(`Updating: ${command}`);
+          
+          const updateProcess = spawn(command, { 
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: true 
+          });
+          
+          updateProcess.on('close', (code) => {
+            if (code === 0) {
+              logger.info(`✅ Update step ${currentCommandIndex + 1}/${updateCommands.length} completed`);
+            } else {
+              logger.warn(`⚠️ Update step ${currentCommandIndex + 1}/${updateCommands.length} failed (code ${code}), continuing...`);
+            }
+            currentCommandIndex++;
+            setTimeout(runNextUpdate, 1000);
+          });
+          
+          updateProcess.on('error', (err) => {
+            logger.error(`Error during update: ${err.message}`);
+            currentCommandIndex++;
+            setTimeout(runNextUpdate, 1000);
+          });
+        };
+        
+        runNextUpdate();
+      });
+    };
+    
+    // Find the best Python version and auto-install/update packages
+    logger.info('Detecting Python version and checking packages...');
+    let foundValidPython = false;
+    
+    for (const cmd of pythonCommands) {
+      logger.info(`Checking Python command: ${cmd}`);
+      const result = await testPythonVersion(cmd);
+      if (result && result.major >= 3 && result.minor >= 8) {
+        logger.info(`✓ Found compatible Python: ${result.cmd} (version ${result.version})`);
+        logger.info(`Testing ${result.cmd} (version ${result.version}) for required packages...`);
+        
+        // Test if this Python has the required packages
+        const hasPackages = await testPythonPackages(result.cmd);
+        if (hasPackages) {
+          pythonCommand = result.cmd;
+          logger.info(`✓ Found Python with all required packages: ${pythonCommand} (version ${result.version})`);
+          
+          // Auto-update packages to latest versions (if enabled)
+          if (AUTO_UPDATE_PYTHON_PACKAGES?.toLowerCase() === 'true') {
+            logger.info('🔄 Checking for Python package updates (this may take a moment)...');
+            await autoUpdatePythonPackages(result.cmd);
+            logger.info('✅ Package update check completed');
+          } else {
+            logger.info('Auto-update disabled, skipping package updates');
+          }
+          
+          foundValidPython = true;
+          break;
+        } else {
+          logger.warn(`${result.cmd} (version ${result.version}) is missing required packages.`);
+          
+          // Try to auto-install packages (if enabled)
+          if (AUTO_UPDATE_PYTHON_PACKAGES?.toLowerCase() === 'true') {
+            logger.info('📦 Installing required Python packages (this will take several minutes)...');
+            logger.info('⏳ Please wait while PyTorch, faster-whisper, and dependencies are downloaded...');
+            const installed = await autoInstallPythonPackages(result.cmd);
+            if (installed) {
+              pythonCommand = result.cmd;
+              logger.info(`✅ Successfully auto-installed all packages for: ${pythonCommand} (version ${result.version})`);
+              foundValidPython = true;
+              break;
+            } else {
+              logger.warn(`❌ Failed to auto-install packages for ${result.cmd}, trying next Python...`);
+            }
+          } else {
+            logger.warn('Auto-install disabled, skipping package installation for this Python');
+          }
+        }
+      } else if (result) {
+        logger.warn(`Found ${result.cmd} version ${result.version} but need Python 3.8+`);
+      } else {
+        logger.info(`Command ${cmd} not found or failed to execute`);
+      }
+    }
+    
+    if (!foundValidPython) {
+      logger.error('No suitable Python installation found and auto-installation failed!');
+      logger.error('Please manually install Python 3.8+ and required packages.');
+      logger.error('Or set PYTHON_COMMAND in .env to specify the correct Python executable');
+    }
+  }
+  
+  try {
+    transcriptionProcess = spawn(pythonCommand, ['transcribe.py'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      cwd: __dirname // Ensure we're in the right directory
+    });
+    
+    logger.info(`Spawned Python process with PID: ${transcriptionProcess.pid} using command: ${pythonCommand}`);
+  } catch (err) {
+    logger.error(`Failed to spawn transcription process: ${err.message}`);
+    transcriptionProcess = null;
     return;
   }
 
-  logger.info('Starting persistent transcription process (local mode)...'); // Updated log message
-
-  // Spawn the Python process
-  transcriptionProcess = spawn('python', ['transcribe.py']); // Assumes transcribe.py is in the same directory
+  // Set up process error handling first
+  transcriptionProcess.on('error', (err) => {
+    logger.error(`Failed to start local transcription process: ${err.message}`);
+    cleanupTranscriptionProcess();
+    if (effectiveTranscriptionMode === 'local') {
+        logger.info('Will attempt to restart local transcription process in 10 seconds due to spawn error...');
+        setTimeout(startTranscriptionProcess, 10000);
+    }
+  });
 
   // Create interface to read line-by-line from stdout
   const rl = readline.createInterface({
@@ -1126,12 +1488,14 @@ function startTranscriptionProcess() {
     crlfDelay: Infinity
   });
 
-  // Handle each line of output (EXISTING LOGIC - check if matches your current version)
+  // Handle each line of output with improved error handling
   rl.on('line', (line) => {
     try {
+      // Update activity timestamp
+      lastProcessActivity = Date.now();
+      
       // Check if line is empty or just whitespace before parsing
       if (!line || line.trim() === '') {
-          // logger.debug('Received empty line from transcription process, skipping.');
           return;
       }
 
@@ -1140,9 +1504,16 @@ function startTranscriptionProcess() {
 
       if (response.ready) {
         logger.info('Local transcription service ready');
+        // Start health check monitoring after ready signal
+        startProcessHealthCheck();
         processNextTranscription(); // Process queue on ready
       } else if (response.id && response.transcription !== undefined) {
         logger.info(`Received local transcription for ID: ${response.id}`);
+
+        // Clear timeout if this is the current transcription
+        if (currentTranscriptionId === response.id) {
+          clearTranscriptionTimeout();
+        }
 
         // Find the item and its callback in the queue
         const pendingItemIndex = transcriptionQueue.findIndex(item => item.id === response.id);
@@ -1153,7 +1524,11 @@ function startTranscriptionProcess() {
 
             // Execute the callback defined in handleNewAudio
             if (pendingItem.callback) {
-                pendingItem.callback(response.transcription);
+                try {
+                  pendingItem.callback(response.transcription);
+                } catch (callbackError) {
+                  logger.error(`Error executing callback for ID ${response.id}: ${callbackError.message}`);
+                }
             } else {
                  logger.error(`No callback function found for local transcription ID: ${response.id}`);
             }
@@ -1161,24 +1536,33 @@ function startTranscriptionProcess() {
             // Remove this item from the queue
             transcriptionQueue.splice(pendingItemIndex, 1);
 
-            // Process next item
-            isProcessingTranscription = false;
+            // Reset processing state and process next item
+            resetProcessingState();
             processNextTranscription();
         } else {
           logger.error(`No pending item found for local transcription ID: ${response.id}`);
           // Still allow queue to continue if an unexpected ID comes back
-          isProcessingTranscription = false;
+          resetProcessingState();
           processNextTranscription();
         }
       } else if (response.error) {
          logger.error(`Local transcription error for ID ${response.id}: ${response.error}`);
+
+         // Clear timeout if this is the current transcription
+         if (currentTranscriptionId === response.id) {
+           clearTranscriptionTimeout();
+         }
 
          const pendingItemIndex = transcriptionQueue.findIndex(item => item.id === response.id);
          if (pendingItemIndex !== -1) {
              const pendingItem = transcriptionQueue[pendingItemIndex];
              // Execute callback with empty string on error
              if (pendingItem.callback) {
-                 pendingItem.callback(""); // Indicate failure
+                 try {
+                   pendingItem.callback(""); // Indicate failure
+                 } catch (callbackError) {
+                   logger.error(`Error executing error callback for ID ${response.id}: ${callbackError.message}`);
+                 }
              }
              // Remove problematic item from queue
              transcriptionQueue.splice(pendingItemIndex, 1);
@@ -1187,74 +1571,229 @@ function startTranscriptionProcess() {
               logger.error(`Received error for unknown local transcription ID: ${response.id}`);
          }
 
-         // Allow queue to continue
-         isProcessingTranscription = false;
+         // Reset processing state and allow queue to continue
+         resetProcessingState();
          processNextTranscription();
 
       } else {
         logger.warn(`Unrecognized response from local transcription process: ${line}`);
-        // Reset flag just in case to prevent stall
-        isProcessingTranscription = false;
+        // Reset processing state just in case to prevent stall
+        resetProcessingState();
         processNextTranscription();
       }
     } catch (err) {
       logger.error(`Error parsing local transcription process output: ${err.message}, line: ${line}`);
-      // Allow queue to continue on parsing error
-      isProcessingTranscription = false;
+      // Reset processing state and allow queue to continue on parsing error
+      resetProcessingState();
       processNextTranscription();
     }
   });
 
-  // Handle stderr (EXISTING LOGIC)
+  // Handle stderr with selective logging - only show important messages
   transcriptionProcess.stderr.on('data', (data) => {
     const errorMsg = data.toString().trim();
-    if (errorMsg) { // Avoid logging empty lines
-       // logger.error(`Local transcription process stderr: ${errorMsg}`); // Keep stderr logging minimal unless debugging
+    if (errorMsg) {
+       // Only log important messages, not routine processing info
+       const isImportant = errorMsg.includes('ERROR') || 
+                          errorMsg.includes('FATAL') || 
+                          errorMsg.includes('WARNING') ||
+                          errorMsg.includes('WARN') ||
+                          errorMsg.includes('Exception') ||
+                          errorMsg.includes('Traceback') ||
+                          errorMsg.includes('ModuleNotFoundError') ||
+                          errorMsg.includes('ImportError') ||
+                          errorMsg.includes('CUDA') ||
+                          errorMsg.includes('torch') ||
+                          errorMsg.includes('faster_whisper') ||
+                          errorMsg.includes('Environment validation') ||
+                          errorMsg.includes('available') ||
+                          errorMsg.includes('Loaded model') ||
+                          errorMsg.includes('Using device');
+       
+       if (isImportant) {
+         logger.warn(`Local transcription process: ${errorMsg}`);
+       }
+       
+       // Check for specific Python errors that indicate critical issues
+       if (errorMsg.includes('ModuleNotFoundError') || errorMsg.includes('ImportError')) {
+         logger.error('PYTHON IMPORT ERROR DETECTED - Missing required Python packages!');
+       } else if (errorMsg.includes('CUDA') && errorMsg.includes('error')) {
+         logger.error('CUDA ERROR DETECTED - GPU may not be available or drivers are outdated!');
+       } else if (errorMsg.includes('torch') && errorMsg.includes('error')) {
+         logger.error('PYTORCH ERROR DETECTED - Check PyTorch installation!');
+       } else if (errorMsg.includes('faster_whisper') && errorMsg.includes('error')) {
+         logger.error('FASTER-WHISPER ERROR DETECTED - Check faster-whisper installation!');
+       }
     }
   });
 
-  // Handle process exit (EXISTING LOGIC - adjusted logging)
-  transcriptionProcess.on('close', (code) => {
-    logger.error(`Local transcription process exited with code ${code}`);
-    transcriptionProcess = null; // Reset process variable
-
-    // Handle any pending items (call callbacks with empty string)
-    if (transcriptionQueue.length > 0) {
-        logger.warn(`${transcriptionQueue.length} local transcription requests were pending when process exited. Failing them.`);
-        for (const item of transcriptionQueue) {
-            if (item.callback) {
-                try {
-                    item.callback(""); // Indicate failure
-                } catch (callbackError) {
-                     logger.error(`Error executing pending callback on process exit for ID ${item.id}: ${callbackError.message}`);
-                }
-            }
-        }
-        transcriptionQueue = []; // Clear the queue
+  // Handle process exit with cleanup and better diagnostics
+  transcriptionProcess.on('close', (code, signal) => {
+    logger.error(`Local transcription process exited with code ${code}, signal: ${signal}`);
+    
+    // More specific error handling based on exit conditions
+    if (code === null && signal) {
+      logger.error(`Python process was killed by signal: ${signal}`);
+    } else if (code === 1) {
+      logger.error('Python process exited with error code 1 - likely a Python runtime error');
+    } else if (code === null) {
+      logger.error('Python process exited unexpectedly (code null) - likely crashed during startup');
+      logger.error('This usually indicates missing dependencies or environment issues');
+      logger.error('Check that Python, faster-whisper, torch, and other dependencies are properly installed');
     }
+    
+    cleanupTranscriptionProcess();
 
-    isProcessingTranscription = false; // Reset processing flag
-
-    // Optional: Restart the process if it crashes and mode is still local
-    if (code !== 0 && effectiveTranscriptionMode === 'local') {
-      logger.info('Will attempt to restart local transcription process in 5 seconds...');
-      setTimeout(startTranscriptionProcess, 5000);
-    }
-  });
-
-  // Handle process errors (EXISTING LOGIC - adjusted logging)
-  transcriptionProcess.on('error', (err) => {
-    logger.error(`Failed to start local transcription process: ${err.message}`);
-    transcriptionProcess = null;
-    isProcessingTranscription = false;
-    // Maybe try restarting after delay if mode is local?
+    // Only restart if not too many recent failures
     if (effectiveTranscriptionMode === 'local') {
-        logger.info('Will attempt to restart local transcription process in 10 seconds due to spawn error...');
-        setTimeout(startTranscriptionProcess, 10000);
+      if (code === null) {
+        // For null exit codes (startup crashes), wait longer and provide guidance
+        logger.error('STARTUP CRASH DETECTED - Will NOT automatically restart to prevent loop');
+        logger.error('Please check Python environment and dependencies manually');
+        logger.error('Run "python transcribe.py" manually to see the full error');
+      } else {
+        logger.info('Will attempt to restart local transcription process in 15 seconds...');
+        setTimeout(startTranscriptionProcess, 15000);
+      }
     }
   });
 
-  logger.info('Local transcription process spawned, waiting for ready signal...');
+  logger.info('🔄 Python transcription process started, loading AI model...');
+  logger.info('⏳ Please wait while the large-v3 model loads (this takes 10-30 seconds)...');
+  
+  // Add a timeout to detect if Python process never sends ready signal
+  const readyTimeout = setTimeout(() => {
+    if (transcriptionProcess && transcriptionProcess.pid) {
+      logger.error('TIMEOUT: Python process started but never sent ready signal after 30 seconds');
+      logger.error('This indicates the Python process is stuck during model loading or initialization');
+      logger.error('Common causes: GPU memory issues, model download problems, or dependency conflicts');
+      logger.error('Try running: python transcribe.py manually to see detailed error output');
+      cleanupTranscriptionProcess();
+    }
+  }, 60000); // 60 second timeout for ready signal (increased for busy systems)
+  
+  // Clear the timeout when we receive any valid JSON response (including ready signal)
+  const originalHandler = rl.listeners('line')[0];
+  if (originalHandler) {
+    rl.removeListener('line', originalHandler);
+    rl.on('line', (line) => {
+      // Clear timeout on any valid JSON response from Python
+      try {
+        if (line && line.trim()) {
+          const response = JSON.parse(line);
+          if (response.ready || response.id) {
+            clearTimeout(readyTimeout);
+          }
+        }
+      } catch (e) {
+        // Ignore JSON parse errors
+      }
+      // Call the original handler
+      originalHandler(line);
+    });
+  }
+}
+
+// Helper function to cleanup transcription process and state
+function cleanupTranscriptionProcess() {
+  // Stop health check
+  if (processHealthCheck) {
+    clearInterval(processHealthCheck);
+    processHealthCheck = null;
+  }
+
+  // Clear current transcription timeout
+  clearTranscriptionTimeout();
+
+  // Handle any pending items (call callbacks with empty string)
+  if (transcriptionQueue.length > 0) {
+      logger.warn(`${transcriptionQueue.length} local transcription requests were pending when process was cleaned up. Failing them.`);
+      for (const item of transcriptionQueue) {
+          if (item.callback) {
+              try {
+                  item.callback(""); // Indicate failure
+              } catch (callbackError) {
+                   logger.error(`Error executing pending callback on cleanup for ID ${item.id}: ${callbackError.message}`);
+              }
+          }
+      }
+      transcriptionQueue = []; // Clear the queue
+  }
+
+  // Reset all state variables
+  resetProcessingState();
+  
+  // Clean up process reference
+  if (transcriptionProcess) {
+    try {
+      transcriptionProcess.kill('SIGTERM');
+    } catch (err) {
+      logger.warn(`Error killing transcription process: ${err.message}`);
+    }
+    transcriptionProcess = null;
+  }
+}
+
+// Helper function to reset processing state
+function resetProcessingState() {
+  isProcessingTranscription = false;
+  currentTranscriptionId = null;
+  clearTranscriptionTimeout();
+}
+
+// Helper function to clear transcription timeout
+function clearTranscriptionTimeout() {
+  if (transcriptionTimeout) {
+    clearTimeout(transcriptionTimeout);
+    transcriptionTimeout = null;
+  }
+}
+
+// Helper function to start process health check
+function startProcessHealthCheck() {
+  if (processHealthCheck) {
+    clearInterval(processHealthCheck);
+  }
+  
+  processHealthCheck = setInterval(() => {
+    const timeSinceActivity = Date.now() - lastProcessActivity;
+    const queueSize = transcriptionQueue.length;
+    
+    // If no activity for 5 minutes, consider process dead
+    if (timeSinceActivity > 300000) {
+      logger.error('Transcription process appears to be dead (no activity for 5 minutes). Restarting...');
+      cleanupTranscriptionProcess();
+      if (effectiveTranscriptionMode === 'local') {
+        setTimeout(startTranscriptionProcess, 5000);
+      }
+      return;
+    }
+    
+    // High-volume system monitoring
+    if (queueSize > QUEUE_DRAIN_THRESHOLD && !queueWarningLogged) {
+      logger.warn(`HIGH VOLUME: Transcription queue is backing up with ${queueSize} items. Consider increasing MAX_CONCURRENT_TRANSCRIPTIONS or checking system resources.`);
+      queueWarningLogged = true;
+    } else if (queueSize <= QUEUE_DRAIN_THRESHOLD / 2) {
+      queueWarningLogged = false; // Reset warning when queue drains
+    }
+    
+    // Log queue status with more detail for busy systems
+    if (queueSize > 0 && Math.abs(queueSize - lastQueueSizeLog) >= 5) {
+      const oldestItem = transcriptionQueue[0];
+      const queueAge = oldestItem ? Math.round((Date.now() - oldestItem.queuedAt) / 1000) : 0;
+      logger.info(`Transcription queue: ${queueSize} items pending, processing: ${isProcessingTranscription}, oldest item: ${queueAge}s`);
+      lastQueueSizeLog = queueSize;
+    }
+    
+    // Force restart if queue is stuck with items but not processing
+    if (queueSize > 10 && !isProcessingTranscription && timeSinceActivity > 120000) {
+      logger.error(`Queue appears stuck with ${queueSize} items but not processing. Force restarting transcription process...`);
+      cleanupTranscriptionProcess();
+      if (effectiveTranscriptionMode === 'local') {
+        setTimeout(startTranscriptionProcess, 2000);
+      }
+    }
+  }, 30000); // Check every 30 seconds for busy systems
 }
 
 // Function to process the next transcription in the queue
@@ -1262,7 +1801,6 @@ function processNextTranscription() {
   // Add a check for the process existence early
   if (!transcriptionProcess) {
       logger.warn('Local transcription process not running. Cannot process queue.');
-      // Optionally handle orphaned queue items or attempt restart
       return;
   }
 
@@ -1273,23 +1811,80 @@ function processNextTranscription() {
   // Get the next item but don't remove it from the queue yet
   const nextItem = transcriptionQueue[0];
 
-  // REMOVED file existence check here, it's handled before queuing if needed
-  // if (!fs.existsSync(nextItem.path)) { ... }
+  // Additional validation for file-based transcriptions
+  if (nextItem.payload && nextItem.payload.path) {
+    if (!fs.existsSync(nextItem.payload.path)) {
+      logger.error(`Audio file missing when processing queue: ${nextItem.payload.path}. Skipping item.`);
+      // Remove the item and try next
+      transcriptionQueue.shift();
+      if (nextItem.callback) {
+        try {
+          nextItem.callback(""); // Indicate failure
+        } catch (callbackError) {
+          logger.error(`Error executing callback for missing file: ${callbackError.message}`);
+        }
+      }
+      processNextTranscription(); // Try next item
+      return;
+    }
+  }
 
-  // Mark as processing
+  // Validate payload size for buffer-based transcriptions  
+  if (nextItem.payload && nextItem.payload.audio_data_base64) {
+    const estimatedSize = nextItem.payload.audio_data_base64.length * 0.75; // Rough base64 to binary size
+    if (estimatedSize > 50 * 1024 * 1024) { // 50MB limit
+      logger.error(`Audio buffer too large for transcription: ${Math.round(estimatedSize / 1024 / 1024)}MB. Skipping item.`);
+      transcriptionQueue.shift();
+      if (nextItem.callback) {
+        try {
+          nextItem.callback(""); // Indicate failure
+        } catch (callbackError) {
+          logger.error(`Error executing callback for oversized file: ${callbackError.message}`);
+        }
+      }
+      processNextTranscription(); // Try next item
+      return;
+    }
+  }
+
+  // Mark as processing and set timeout
   isProcessingTranscription = true;
+  currentTranscriptionId = nextItem.id;
+  
+  // Set timeout for this transcription
+  transcriptionTimeout = setTimeout(() => {
+    logger.error(`Transcription timeout for ID ${currentTranscriptionId}. Restarting process...`);
+    // Force restart the process on timeout
+    cleanupTranscriptionProcess();
+    if (effectiveTranscriptionMode === 'local') {
+      setTimeout(startTranscriptionProcess, 5000);
+    }
+  }, TRANSCRIPTION_TIMEOUT_MS);
 
   // Send the pre-constructed payload to the python process
   try {
-    transcriptionProcess.stdin.write(JSON.stringify(nextItem.payload) + '\n');
-    logger.info(`Sent payload to local transcription process for ID: ${nextItem.id}`);
+    const payload = JSON.stringify(nextItem.payload) + '\n';
+    transcriptionProcess.stdin.write(payload);
+    logger.info(`Sent payload to local transcription process for ID: ${nextItem.id} (payload size: ${payload.length} chars)`);
+    lastProcessActivity = Date.now(); // Update activity timestamp
   } catch (error) {
       logger.error(`Error writing to local transcription process stdin for ID ${nextItem.id}: ${error.message}`);
-      // Handle error: potentially retry, fail the item, restart process?
-      isProcessingTranscription = false;
-      // Maybe remove the item from the queue or mark as failed
-      transcriptionQueue.shift(); // Remove the failed item
-      processNextTranscription(); // Try next
+      // Clear timeout and reset state
+      clearTranscriptionTimeout();
+      resetProcessingState();
+      
+      // Remove the failed item from queue
+      transcriptionQueue.shift();
+      if (nextItem.callback) {
+        try {
+          nextItem.callback(""); // Indicate failure
+        } catch (callbackError) {
+          logger.error(`Error executing callback for stdin error: ${callbackError.message}`);
+        }
+      }
+      
+      // Try next item
+      processNextTranscription();
   }
 }
 
@@ -1686,10 +2281,16 @@ function handleNewAudio(audioData) {
                     logger.info(`Updated DB with empty transcription for ID ${transcriptionId}`);
                     // Clean up temp file only if storage was S3
                     if (STORAGE_MODE === 's3') {
+                      // Use setImmediate to avoid file handle race conditions
+                      setImmediate(() => {
                          fs.unlink(tempPath, (errUnlink) => {
-                           if (errUnlink) logger.error(`Error deleting temp file (after empty transcription) ${tempPath}:`, errUnlink);
-                           else logger.info(`Deleted temp file (after empty transcription): ${path.basename(tempPath)}`);
+                           if (errUnlink && errUnlink.code !== 'ENOENT') {
+                             logger.error(`Error deleting temp file (after empty transcription) ${tempPath}:`, errUnlink);
+                           } else if (!errUnlink) {
+                             logger.info(`Deleted temp file (after empty transcription): ${path.basename(tempPath)}`);
+                           }
                          });
+                      });
                     }
                   });
                   return;
@@ -1709,10 +2310,16 @@ function handleNewAudio(audioData) {
 
                   // Clean up temp file only if storage was S3
                   if (STORAGE_MODE === 's3') {
+                    // Use setImmediate to avoid file handle race conditions
+                    setImmediate(() => {
                       fs.unlink(tempPath, (errUnlink) => {
-                         if (errUnlink) logger.error(`Error deleting temp file (after successful transcription) ${tempPath}:`, errUnlink);
-                         else logger.info(`Deleted temp file (after successful transcription): ${path.basename(tempPath)}`);
+                         if (errUnlink && errUnlink.code !== 'ENOENT') {
+                           logger.error(`Error deleting temp file (after successful transcription) ${tempPath}:`, errUnlink);
+                         } else if (!errUnlink) {
+                           logger.info(`Deleted temp file (after successful transcription): ${path.basename(tempPath)}`);
+                         }
                       });
+                    });
                   }
                   logger.info(`Successfully processed: ${filename}`);
                 });
@@ -1741,6 +2348,15 @@ function handleNewAudio(audioData) {
                 if (STORAGE_MODE === 's3') {
                     // S3 Storage + Local Transcription: Send buffer
                     logger.info(`Queueing local transcription (ID: ${localRequestId}) for DB ID ${transcriptionId} using BASE64 BUFFER`);
+                    
+                    // Check buffer size before encoding to prevent memory issues
+                    const bufferSizeMB = fileBuffer.length / (1024 * 1024);
+                    if (bufferSizeMB > 45) { // Leave some headroom under the 50MB limit
+                      logger.error(`Audio buffer too large for local transcription: ${bufferSizeMB.toFixed(2)}MB. Failing transcription for ID ${transcriptionId}.`);
+                      processingCallback(""); // Fail the transcription
+                      return;
+                    }
+                    
                     payload = {
                         command: 'transcribe',
                         id: localRequestId,
@@ -1749,30 +2365,74 @@ function handleNewAudio(audioData) {
                     // NOTE: tempPath will be deleted later in processingCallback
                 } else {
                     // Local Storage + Local Transcription: Send path
-                    // Check file exists before sending path
-                    if (!fs.existsSync(tempPath)) {
-                         logger.error(`Local audio file ${tempPath} missing before queuing for local transcription (ID ${transcriptionId}). Aborting.`);
-                         // Call callback with error/empty string?
+                    // Use the final path if available, otherwise use tempPath for local mode
+                    const pathToUse = finalPathIfLocal || tempPath;
+                    
+                    // Double-check file exists before queuing (race condition protection)
+                    if (!fs.existsSync(pathToUse)) {
+                         logger.error(`Local audio file ${pathToUse} missing before queuing for local transcription (ID ${transcriptionId}). Aborting.`);
                          processingCallback(""); // Fail the transcription
                          return; // Don't queue
                     }
-                    logger.info(`Queueing local transcription (ID: ${localRequestId}) for DB ID ${transcriptionId} using PATH: ${tempPath}`);
+                    
+                    // Verify file is readable
+                    try {
+                      fs.accessSync(pathToUse, fs.constants.R_OK);
+                    } catch (accessError) {
+                      logger.error(`Local audio file ${pathToUse} not readable before queuing: ${accessError.message}`);
+                      processingCallback(""); // Fail the transcription
+                      return;
+                    }
+                    
+                    logger.info(`Queueing local transcription (ID: ${localRequestId}) for DB ID ${transcriptionId} using PATH: ${pathToUse}`);
                     payload = {
                         command: 'transcribe',
                         id: localRequestId,
-                        path: tempPath // Send the path to the temp file
+                        path: pathToUse // Send the final path or temp path
                     };
                 }
 
+                // Check if queue is getting too large (high-volume protection)
+                if (transcriptionQueue.length >= MAX_QUEUE_SIZE) {
+                  logger.error(`Transcription queue full (${MAX_QUEUE_SIZE} items). Dropping oldest items to prevent memory issues.`);
+                  
+                  // Remove oldest items beyond threshold, keeping newer ones
+                  const itemsToRemove = transcriptionQueue.length - PRIORITY_QUEUE_THRESHOLD;
+                  for (let i = 0; i < itemsToRemove; i++) {
+                    const droppedItem = transcriptionQueue.shift();
+                    if (droppedItem && droppedItem.callback) {
+                      try {
+                        droppedItem.callback(""); // Fail the dropped transcription
+                        logger.warn(`Dropped transcription ID ${droppedItem.dbTranscriptionId} due to queue overflow`);
+                      } catch (callbackError) {
+                        logger.error(`Error executing callback for dropped item: ${callbackError.message}`);
+                      }
+                    }
+                  }
+                }
+
                 // Add the job with its specific payload to the queue
-                transcriptionQueue.push({
+                const queueItem = {
                    id: localRequestId, // ID for matching response from Python
                    payload: payload, // Contains either path or base64 data
                    callback: processingCallback,
-                   dbTranscriptionId: transcriptionId
-                   // Removed retry logic here for simplicity, can be added back if needed
+                   dbTranscriptionId: transcriptionId,
+                   queuedAt: Date.now(), // Track when item was queued for debugging
+                   priority: Date.now() // Use timestamp as priority (newer = higher priority for busy systems)
+                };
+                
+                // For very busy systems, add to front if queue is large (prioritize recent calls)
+                if (transcriptionQueue.length > PRIORITY_QUEUE_THRESHOLD) {
+                  transcriptionQueue.unshift(queueItem); // Add to front
+                  logger.info(`HIGH VOLUME: Added transcription to front of queue (current size: ${transcriptionQueue.length})`);
+                } else {
+                  transcriptionQueue.push(queueItem); // Normal operation
+                }
+                
+                // Use setImmediate to avoid potential race conditions in queue processing
+                setImmediate(() => {
+                  processNextTranscription(); // Trigger the local queue processor
                 });
-                processNextTranscription(); // Trigger the local queue processor
             }
             // --- End mode choice ---
         };
@@ -4215,6 +4875,12 @@ process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
   
   const shutdownPromises = [];
+  
+  // Clean up transcription process first
+  if (transcriptionProcess) {
+    logger.info('Cleaning up transcription process...');
+    cleanupTranscriptionProcess();
+  }
   
   // Close bot server if it exists
   if (server) {
