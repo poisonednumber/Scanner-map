@@ -439,11 +439,12 @@
         </label>
       </div>
       <div class="user-management-dropdown">
-        <button id="user-menu-btn" class="cyberpunk-button">User Management</button>
+        <button id="user-menu-btn" class="cyberpunk-button">Settings</button>
         <div id="user-menu-content" class="dropdown-content">
           <a href="#" id="add-user-btn">Add User</a>
           <a href="#" id="view-users-btn">View Users</a>
           <a href="#" id="manage-sessions-btn">Manage Sessions</a>
+          <a href="#" id="call-purge-btn">Call Purge</a>
         </div>
       </div>
     </div>
@@ -503,6 +504,94 @@
         </div>
     </div>
   </div>
+
+  <!-- Call Purge Modal -->
+  <div id="call-purge-modal" class="modal">
+    <div class="modal-content call-purge-modal-content">
+      <h2>Call Purge</h2>
+      <p class="purge-description">Remove calls from the map while preserving all call information. Selected calls will no longer appear on the map but remain in the database.</p>
+      
+      <div class="form-group">
+        <label for="purge-talkgroup-search">Search Talkgroups:</label>
+        <input type="text" id="purge-talkgroup-search" placeholder="Start typing..." />
+      </div>
+      
+      <div id="purge-talkgroup-list" class="purge-talkgroup-list">
+        <div class="loading-placeholder">Loading talkgroups...</div>
+      </div>
+      
+      <div class="form-group">
+        <label for="purge-category-select">Category:</label>
+        <select id="purge-category-select" class="styled-select">
+          <option value="">All Categories</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label>Time Range:</label>
+        <div class="time-range-options">
+          <button type="button" class="time-preset-btn" data-hours="1">Last 1 hour</button>
+          <button type="button" class="time-preset-btn" data-hours="3">Last 3 hours</button>
+          <button type="button" class="time-preset-btn" data-hours="6">Last 6 hours</button>
+          <button type="button" class="time-preset-btn" data-hours="12">Last 12 hours</button>
+          <button type="button" class="time-preset-btn" data-hours="24">Last 24 hours</button>
+          <button type="button" class="time-preset-btn" data-hours="48">Last 2 days</button>
+          <button type="button" class="time-preset-btn" data-hours="168">Last 7 days</button>
+        </div>
+        <div class="custom-time-section">
+          <label for="purge-custom-time-toggle">
+            <input type="checkbox" id="purge-custom-time-toggle" />
+            Custom Time Range
+          </label>
+          <div id="purge-custom-time-inputs" class="custom-time-inputs" style="display: none;">
+            <div class="time-input-row">
+              <div class="time-input-group">
+                <label for="purge-start-date">Start Date:</label>
+                <input type="date" id="purge-start-date" />
+              </div>
+              <div class="time-input-group">
+                <label for="purge-start-time">Start Time:</label>
+                <input type="time" id="purge-start-time" />
+              </div>
+            </div>
+            <div class="time-input-row">
+              <div class="time-input-group">
+                <label for="purge-end-date">End Date:</label>
+                <input type="date" id="purge-end-date" />
+              </div>
+              <div class="time-input-group">
+                <label for="purge-end-time">End Time:</label>
+                <input type="time" id="purge-end-time" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-buttons">
+        <button type="button" id="purge-confirm-btn" class="confirm-btn">Purge Calls</button>
+        <button type="button" id="undo-last-purge-btn" class="undo-btn" style="display: none;">Undo Last Purge</button>
+        <button type="button" class="cancel-btn" onclick="document.getElementById('call-purge-modal').style.display='none'">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <!-- END Call Purge Modal -->
+  
+  <!-- Call Purge Confirmation Modal -->
+  <div id="purge-confirmation-modal" class="modal">
+    <div class="modal-content confirmation-modal-content">
+      <h2>Confirm Call Purge</h2>
+      <div id="purge-confirmation-message" class="confirmation-message">
+        <!-- Message will be populated by JavaScript -->
+      </div>
+      <div class="modal-buttons">
+        <button type="button" id="purge-confirm-yes" class="confirm-btn">Yes, Purge Calls</button>
+        <button type="button" id="purge-confirm-no" class="cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <!-- END Call Purge Confirmation Modal -->
+  
   <div id="audio-container" style="display: none;"></div>
 
   <!-- Talkgroup History Modal -->
@@ -588,7 +677,7 @@
       if (gKey) {
         return new Promise((resolve) => {
           const gScript = document.createElement('script');
-          gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&callback=onGoogleMapsLoaded`;
+          gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&v=beta&callback=onGoogleMapsLoaded`;
           gScript.async = true;
           gScript.defer = true;
           window.onGoogleMapsLoaded = () => {

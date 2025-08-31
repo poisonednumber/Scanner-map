@@ -418,6 +418,35 @@ body, html {
     color: var(--background-color);
 }
 
+/* Confirmation Modal Styles */
+.confirmation-modal-content {
+    max-width: 400px;
+    text-align: center;
+}
+
+.confirmation-message {
+    margin: 20px 0;
+    padding: 15px;
+    background-color: rgba(255, 255, 0, 0.1);
+    border: 1px solid rgba(255, 255, 0, 0.3);
+    border-radius: 4px;
+    font-size: 16px;
+    line-height: 1.4;
+}
+
+.confirmation-modal-content .modal-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-top: 25px;
+}
+
+.confirmation-modal-content .modal-buttons button {
+    min-width: 120px;
+    padding: 10px 20px;
+    font-size: 14px;
+}
+
 .heatmap-controls label {
     display: flex;
     align-items: center;
@@ -1154,6 +1183,24 @@ input[type="time"] {
     color: var(--background-color);
 }
 
+.modal-buttons button.undo-btn {
+    background-color: #ffc107;
+    color: #212529;
+    border: 1px solid #ffc107;
+}
+
+.modal-buttons button.undo-btn:hover {
+    background-color: #e0a800;
+    border-color: #e0a800;
+}
+
+.modal-buttons button.undo-btn:disabled {
+    background-color: #6c757d;
+    border-color: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 
 @keyframes pulse {
     0% {
@@ -1437,13 +1484,41 @@ input[type="time"] {
     text-decoration: none !important;
 }
 
+/* Admin-only elements styling */
+.correction-link.admin-only {
+    background-color: #4a148c; /* Purple background for admin elements */
+    border-color: #7b1fa2;
+}
+
+.correction-link.admin-only:hover {
+    background-color: #6a1b9a;
+    border-color: #8e24aa;
+}
+
+/* Admin-only message styling */
+.admin-only-message {
+    color: #9e9e9e !important;
+    font-size: 11px;
+    padding: 4px 8px;
+    background-color: #424242;
+    border: 1px solid #616161;
+    border-radius: 4px;
+    opacity: 0.7;
+    cursor: not-allowed;
+    display: inline-block;
+    text-align: center;
+    width: auto;
+    min-width: 80px;
+    font-family: 'Share Tech Mono', monospace;
+}
+
 /* Mobile responsiveness for popup links */
 @media screen and (max-width: 768px) {
     .popup-top-container {
         padding: 0 5px 10px 5px;
     }
 
-    .street-view-link, .correction-link {
+    .street-view-link, .correction-link, .admin-only-message {
         font-size: 11px;
         padding: 3px 6px;
         min-width: 70px;
@@ -1865,60 +1940,66 @@ input[type="time"] {
   animation: slideDown 0.3s ease-out;
 }
 
-#address-search-input {
+/* Style the new PlaceAutocompleteElement's input part */
+place-autocomplete-element::part(input) {
     width: 100%;
-    max-width: 500px;
     padding: 8px 10px;
-    background-color: #000;
-    color: #00ff00;
-    border: 1px solid #00ff00;
-    border-radius: 4px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 14px;
-    box-sizing: border-box; /* Add box-sizing */
+    background-color: #000 !important;
+    color: #00ff00 !important;
+    border: 1px solid #00ff00 !important;
+    border-radius: 4px !important;
+    font-family: 'Share Tech Mono', monospace !important;
+    font-size: 14px !important;
+    box-sizing: border-box !important;
 }
 
+/* Style for the icons inside the input (search, clear) */
+place-autocomplete-element::part(icon) {
+    fill: var(--primary-color) !important;
+}
+
+
 /* Google Autocomplete dropdown theming */
-.pac-container {
+.pac-container, .gmp-pac-container {
+  /* This container is added to the body, so we style it globally */
   z-index: 2001 !important;
-  background-color: var(--background-color);
+  background-color: #0d0d0d;
   border: 1px solid var(--primary-color);
   border-radius: 4px;
-  box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
-  margin-top: 5px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
   font-family: 'Share Tech Mono', monospace;
 }
 
-.pac-item {
+.pac-item, .gmp-pac-item {
   padding: 10px;
   color: var(--text-color);
   border-bottom: 1px solid rgba(0, 255, 0, 0.1);
   transition: all 0.2s;
-  background-color: var(--background-color);
+  background-color: #0d0d0d;
 }
 
-.pac-item:hover {
+.pac-item:hover, .gmp-pac-item:hover {
   background-color: rgba(0, 255, 0, 0.1);
   cursor: pointer;
 }
 
-.pac-item-query {
-  color: var(--primary-color) !important;
+.pac-item-query, .gmp-pac-suggestion-main-text {
+  color: var(--text-color) !important;
   font-size: 14px;
 }
 
-.pac-matched {
-  color: #00ff00 !important;
-  text-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
+.pac-matched, .gmp-pac-suggestion-main-text-match {
+  color: var(--primary-color) !important;
+  font-weight: bold;
 }
 
 /* Scrollbar styling */
-.pac-container::-webkit-scrollbar {
+.pac-container::-webkit-scrollbar, .gmp-pac-container::-webkit-scrollbar {
   width: 8px;
   background-color: var(--background-color);
 }
 
-.pac-container::-webkit-scrollbar-thumb {
+.pac-container::-webkit-scrollbar-thumb, .gmp-pac-container::-webkit-scrollbar-thumb {
   background-color: var(--primary-color);
   border-radius: 4px;
   border: 1px solid rgba(0, 255, 0, 0.3);
@@ -1930,28 +2011,28 @@ input[type="time"] {
     padding: 10px;
   }
 
-  #address-search-input {
+  place-autocomplete-element::part(input) {
     font-size: 14px !important; /* Keep readable size */
     padding: 6px 8px !important;
   }
 
-  .pac-container {
+  .pac-container, .gmp-pac-container {
     margin: 0 10px;
     max-width: calc(100% - 20px);
   }
 
-  .pac-item {
+  .pac-item, .gmp-pac-item {
     padding: 8px;
     font-size: 14px;
   }
 }
 
 /* Hide Google branding */
-.pac-logo::after {
+.pac-logo::after, .gmp-pac-logo {
   display: none !important;
 }
 
-.pac-icon {
+.pac-icon, .gmp-pac-icon {
   display: none !important;
 }
 /* Scrollbar Styles for Category Sidebar */
@@ -2568,6 +2649,221 @@ input[type="time"] {
         right: 10px !important;  /* Keep it to the right */
         /* bottom: auto !important; left: auto !important; are implicitly handled or not needed */
         z-index: 1001 !important; 
+    }
+}
+
+/* Mobile responsiveness for Call Purge modal */
+@media screen and (max-width: 768px) {
+    .call-purge-modal-content {
+        max-width: 95vw;
+        max-height: 90vh;
+    }
+    
+    .time-range-options {
+        justify-content: center;
+    }
+    
+    .time-preset-btn {
+        font-size: 11px;
+        padding: 5px 10px;
+    }
+    
+    .time-input-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+}
+
+/* Call Purge Modal Content Styles */
+.call-purge-modal-content {
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.time-input-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 12px;
+    color: var(--text-color);
+}
+
+.time-input-group input {
+    width: 100%;
+    padding: 6px;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+/* Additional Call Purge Modal Styles */
+.purge-description {
+    color: var(--text-color);
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: rgba(0, 255, 0, 0.1);
+    border: 1px solid rgba(0, 255, 0, 0.3);
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.purge-talkgroup-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 15px;
+    background-color: var(--background-color);
+}
+
+.purge-talkgroup-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 5px;
+    margin-bottom: 3px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.purge-talkgroup-item:hover {
+    background-color: rgba(0, 51, 0, 0.2);
+}
+
+.purge-talkgroup-item input[type="checkbox"] {
+    margin-right: 10px;
+    accent-color: var(--primary-color);
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+}
+
+.purge-talkgroup-item label {
+    font-size: 14px;
+    color: var(--text-color);
+    flex-grow: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.time-range-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.time-preset-btn {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    transition: all 0.3s;
+}
+
+.time-preset-btn:hover {
+    background-color: var(--hover-color);
+    border-color: var(--primary-color);
+}
+
+.time-preset-btn.active {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+    border-color: var(--primary-color);
+}
+
+.custom-time-section {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: rgba(0, 255, 0, 0.05);
+}
+
+.custom-time-inputs {
+    margin-top: 15px;
+}
+
+.time-input-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.time-input-group {
+    flex: 1;
+}
+
+.time-input-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 12px;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.time-input-group input[type="date"],
+.time-input-group input[type="time"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.time-input-group input[type="date"]:focus,
+.time-input-group input[type="time"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(0, 255, 0, 0.2);
+}
+
+.time-input-group input[type="date"]:hover,
+.time-input-group input[type="time"]:hover {
+    border-color: var(--hover-color);
+}
+
+/* Custom time toggle styling */
+.custom-time-section label[for="purge-custom-time-toggle"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.custom-time-section input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+}
+
+/* Responsive design for custom time inputs */
+@media (max-width: 768px) {
+    .time-input-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .time-input-group {
+        flex: none;
     }
 }
 

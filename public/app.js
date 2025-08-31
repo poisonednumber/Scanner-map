@@ -3,7 +3,7 @@
 // Global variables
 let map, markerGroups;
 const markers = {};
-const allMarkers = {}; // Store all markers for filtering
+let allMarkers = {}; // Store all markers for filtering
 let timeRangeHours; // Time range from config
 let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
 let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
@@ -27,6 +27,8 @@ let currentTalkgroupOffset = 0;
 let isLoadingMoreTalkgroupCalls = false;
 let hasMoreTalkgroupCalls = true;
 let isSearchingForTargetCall = false; // NEW: State for target search
+let isAdminUser = false; // NEW: Track admin status
+let authEnabled = false; // NEW: Track if authentication is enabled
 
 const USER_LOCATION_ZOOM_LEVEL = 16; // ENSURE THIS GLOBAL CONSTANT IS DECLARED
 
@@ -1129,17 +1131,21 @@ function addMarker(call, isNew = false) {
         streetViewLink.innerHTML = 'Street View';
         // style.cssText is no longer needed here if using class
         
-        // Create correction link
-        const correctionLink = document.createElement('a');
-        correctionLink.href = '#';
-        correctionLink.className = 'correction-link';
-        correctionLink.textContent = 'Edit Marker';
-        // style.cssText is no longer needed here if using class
-        correctionLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            showCorrectionModal(call.id, marker);
-        });
+        // Create correction link (admin only when auth enabled, always when auth disabled)
+        let correctionLink = null;
+        if (isAdminUser || !authEnabled) { // Show button for admin users OR when auth is disabled
+            correctionLink = document.createElement('a');
+            correctionLink.href = '#';
+            correctionLink.className = authEnabled ? 'correction-link admin-only' : 'correction-link'; // Only add admin-only class when auth is enabled
+            correctionLink.textContent = 'Edit Marker';
+            correctionLink.title = authEnabled ? 'Admin Only - Edit Marker Location' : 'Edit Marker Location'; // Adjust title based on auth status
+            // style.cssText is no longer needed here if using class
+            correctionLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showCorrectionModal(call.id, marker);
+            });
+        }
 
         // Create timestamp container (right side)
         const timestampContainer = document.createElement('div');
@@ -1148,7 +1154,16 @@ function addMarker(call, isNew = false) {
 
         // Add links to the left container
         topLinksContainer.appendChild(streetViewLink);
-        topLinksContainer.appendChild(correctionLink);
+        if (correctionLink) {
+            topLinksContainer.appendChild(correctionLink);
+        } else if (authEnabled) {
+            // Show admin-only message for non-admin users when auth is enabled
+            const adminOnlyMsg = document.createElement('span');
+            adminOnlyMsg.className = 'admin-only-message';
+            adminOnlyMsg.textContent = 'Admin Only';
+            adminOnlyMsg.title = 'Edit Marker requires admin privileges';
+            topLinksContainer.appendChild(adminOnlyMsg);
+        }
 
         // Add both containers to the top container
         topContainer.appendChild(topLinksContainer);
@@ -1331,7 +1346,7 @@ function showCorrectionModal(callId, marker) {
   });
 }
 
-function startAddressSearch(callId, originalMarker, modal) {
+async function startAddressSearch(callId, originalMarker, modal) {
   modal.remove();
 
   if (!markers[callId] || !allMarkers[callId]) {
@@ -1388,13 +1403,8 @@ function startAddressSearch(callId, originalMarker, modal) {
         <span style="flex: 1; color: #00ff00; overflow: hidden; text-overflow: ellipsis;">${transcription}</span>
       </div>
     </div>
-    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-      <input id="address-search-input" type="text" style="
-        width: 100%; max-width: 500px;
-        padding: 8px 10px; background-color: #000; color: #00ff00;
-        border: 1px solid #00ff00; border-radius: 4px;
-        font-family: 'Share Tech Mono', monospace; font-size: 14px;
-      " placeholder="Enter address...">
+    <div id="address-search-container" style="display: flex; justify-content: center; margin-bottom: 10px; padding: 0 15px;">
+      <!-- Autocomplete element will be dynamically inserted here -->
     </div>
     <div style="display: flex; justify-content: center; gap: 10px;">
       <button id="confirm-address" style="
@@ -1415,37 +1425,91 @@ function startAddressSearch(callId, originalMarker, modal) {
 
   document.body.appendChild(banner);
 
-  const input = document.getElementById('address-search-input');
   const confirmBtn = document.getElementById('confirm-address');
   let newLocation = previewMarker.getLatLng();
   let newAddress = '';
 
-  setTimeout(() => input.focus(), 100);
+  try {
+    const { PlaceAutocompleteElement } = await google.maps.importLibrary("places");
+    const { Place } = await google.maps.importLibrary("places");
 
-  const autocomplete = new google.maps.places.Autocomplete(input, {
-    componentRestrictions: { country: "us" },
-    fields: ['geometry', 'formatted_address'],
-    types: ['geocode']
-  });
+    const autocompleteElement = new PlaceAutocompleteElement({
+        componentRestrictions: { country: "us" },
+    });
+    
+    const searchContainer = document.getElementById('address-search-container');
+    searchContainer.appendChild(autocompleteElement);
 
-  autocomplete.addListener('place_changed', () => {
-    const place = autocomplete.getPlace();
-    if (!place.geometry) {
-      showNotification('No location found', 'error');
-      return;
-    }
+    // Defer style injection to ensure the component's shadowRoot is ready.
+    // A single setTimeout(0) is not always reliable. We will poll until the shadowRoot is available.
+    const styleAutocomplete = (retries = 10, delay = 50) => {
+      // Check for shadowRoot
+      if (autocompleteElement.shadowRoot) {
+          // Force styles into the shadow DOM for the input element
+          const style = document.createElement('style');
+          style.textContent = `
+              :host {
+                  width: 100%;
+              }
+              ::part(input) {
+                  background-color: #000 !important;
+                  color: #00ff00 !important;
+                  border: 1px solid #00ff00 !important;
+                  border-radius: 4px !important;
+                  font-family: 'Share Tech Mono', monospace !important;
+                  padding: 8px 10px !important;
+              }
+              ::part(icon) {
+                  fill: #00ff00 !important;
+              }
+          `;
+          autocompleteElement.shadowRoot.appendChild(style);
+          autocompleteElement.focus();
+      } else if (retries > 0) {
+        // If shadowRoot doesn't exist, wait and try again
+        setTimeout(() => styleAutocomplete(retries - 1, delay), delay);
+      } else {
+        // If we've run out of retries, log the error
+        console.error("Could not style autocomplete: shadowRoot not found after multiple attempts.");
+      }
+    };
+    
+    styleAutocomplete();
 
-    newAddress = place.formatted_address;
-    newLocation = L.latLng(
-      place.geometry.location.lat(),
-      place.geometry.location.lng()
-    );
+    autocompleteElement.addEventListener('gmp-placechange', async (event) => {
+        const place = event.detail.place;
+        if (!place || !place.id) {
+            showNotification('No location selected.', 'info');
+            return;
+        }
+        
+        // Fetch details to get geometry and formatted address
+        await place.fetchFields({ fields: ['geometry', 'formattedAddress'] });
+        
+        if (!place.geometry || !place.geometry.location) {
+             showNotification('Selected place has no location data.', 'error');
+             return;
+        }
 
-    previewMarker.setLatLng(newLocation);
-    map.setView(newLocation, 17);
-    confirmBtn.style.opacity = '1';
-    confirmBtn.style.pointerEvents = 'auto';
-  });
+        newAddress = place.formattedAddress;
+        newLocation = L.latLng(
+            place.geometry.location.lat(),
+            place.geometry.location.lng()
+        );
+
+        previewMarker.setLatLng(newLocation);
+        map.setView(newLocation, 17);
+        confirmBtn.style.opacity = '1';
+        confirmBtn.style.pointerEvents = 'auto';
+    });
+
+  } catch (error) {
+    console.error("Error loading Google Places Autocomplete component:", error);
+    showNotification("Could not load address search component.", "error");
+    banner.remove();
+    markerGroups.addLayer(originalMarker);
+    return;
+  }
 
   function getOriginalAddress(lat, lng) {
     return fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${appConfig.geocoding.googleApiKey}`)
@@ -2143,6 +2207,10 @@ function getAdditionalTranscriptions(callId, skip, container, button) {
 }
 
 function clearMarkers() {
+    console.log(`[DEBUG] clearMarkers started`);
+    console.log(`[DEBUG] Current markers count: ${Object.keys(markers).length}`);
+    console.log(`[DEBUG] Current allMarkers count: ${Object.keys(allMarkers).length}`);
+    
     // First, remove all pulse markers
     Object.keys(markers).forEach(callId => {
         if (markers[callId] && markers[callId].pulseMarker) {
@@ -2153,43 +2221,56 @@ function clearMarkers() {
     // Then clear all regular markers
     markerGroups.clearLayers();
     Object.keys(markers).forEach(key => delete markers[key]);
+    
+    // Clear allMarkers object as well
+    Object.keys(allMarkers).forEach(key => delete allMarkers[key]);
 
     // Clear heatmap data if it exists
     if (heatmapLayer) {
         heatmapLayer.setLatLngs([]);
     }
+    
+    console.log(`[DEBUG] clearMarkers completed`);
+    console.log(`[DEBUG] Markers count after clear: ${Object.keys(markers).length}`);
+    console.log(`[DEBUG] allMarkers count after clear: ${Object.keys(allMarkers).length}`);
 }
 
 function loadCalls(hours) {
-    console.log(`Requesting calls for the last ${hours} hours`);
+    console.log(`[DEBUG] loadCalls started with hours: ${hours}`);
+    console.log(`[DEBUG] Current allMarkers count before fetch: ${Object.keys(allMarkers).length}`);
+    
     fetch(`/api/calls?hours=${hours}`)
         .then(response => response.json())
         .then(calls => {
-            console.log(`Received ${calls.length} calls from server`);
+            console.log(`[DEBUG] Received ${calls.length} calls from server`);
             if (calls.length > 0) {
-                console.log(`Oldest call received: ${calls[calls.length - 1].timestamp}`);
-                console.log(`Newest call received: ${calls[0].timestamp}`);
+                console.log(`[DEBUG] Oldest call received: ${calls[calls.length - 1].timestamp}`);
+                console.log(`[DEBUG] Newest call received: ${calls[0].timestamp}`);
             }
             
             // Clear existing markers
+            console.log(`[DEBUG] Clearing existing markers...`);
             clearMarkers();
+            console.log(`[DEBUG] Markers cleared. allMarkers count after clear: ${Object.keys(allMarkers).length}`);
             
             // Reset newest call IDs
             newestCallIds = [];
             
             // Filter for valid calls
             const validCalls = calls.filter(isValidCall);
-            console.log(`${validCalls.length} valid calls`);
+            console.log(`[DEBUG] ${validCalls.length} valid calls after filtering`);
             
             // Sort calls by timestamp (newest first)
             validCalls.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             
             // Add all markers to the map
+            console.log(`[DEBUG] Adding ${validCalls.length} markers to map...`);
             validCalls.forEach(call => addMarker(call));
+            console.log(`[DEBUG] Markers added. allMarkers count after adding: ${Object.keys(allMarkers).length}`);
             
             // Get the newest 3 call IDs
             newestCallIds = validCalls.slice(0, MAX_PULSING_MARKERS).map(call => call.id);
-            console.log(`Newest call IDs: ${newestCallIds}`);
+            console.log(`[DEBUG] Newest call IDs: ${newestCallIds}`);
             
             // Apply pulsing effect to newest calls
             updatePulsingMarkers();
@@ -2204,9 +2285,11 @@ function loadCalls(hours) {
             
             // Fit map to markers
             fitMapToMarkers();
+            
+            console.log(`[DEBUG] loadCalls completed successfully`);
         })
         .catch(error => {
-            console.error('Error loading calls:', error);
+            console.error('[DEBUG] Error loading calls:', error);
         });
 }
 
@@ -3206,9 +3289,20 @@ function setupUserManagement() {
         });
     }
     
+    // Call Purge button click
+    const callPurgeBtn = document.getElementById('call-purge-btn');
+    if (callPurgeBtn) {
+        callPurgeBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showCallPurgeModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
     // Setup modal forms
     setupAddUserForm();
     setupModalCancelButtons();
+    setupCallPurgeModal();
 }
 
 function showAddUserModal() {
@@ -3446,6 +3540,44 @@ function terminateSession(token) {
         });
     }
 }
+// Function to check if current user is admin
+async function checkAdminStatus() {
+  try {
+    const response = await fetch('/api/auth/is-admin');
+    const data = await response.json();
+    const wasAdmin = isAdminUser;
+    const wasAuthEnabled = authEnabled;
+    
+    isAdminUser = data.isAdmin;
+    authEnabled = data.authEnabled;
+    
+    console.log(`[Auth] Admin status: ${isAdminUser}, Auth enabled: ${authEnabled}`);
+    
+    // If admin status or auth status changed, update existing markers
+    if (wasAdmin !== isAdminUser || wasAuthEnabled !== authEnabled) {
+      updateExistingMarkersForAdminStatus();
+    }
+  } catch (error) {
+    console.error('[Auth] Error checking admin status:', error);
+    isAdminUser = false;
+    authEnabled = false;
+  }
+}
+
+// Function to update existing markers when admin status changes
+function updateExistingMarkersForAdminStatus() {
+  console.log(`[Auth] Updating existing markers for admin status: ${isAdminUser}`);
+  
+  // Update all existing markers
+  Object.keys(markers).forEach(callId => {
+    const marker = markers[callId];
+    if (marker && marker.isPopupOpen()) {
+      // If popup is open, close it to force refresh
+      marker.closePopup();
+    }
+  });
+}
+
 // Function to setup the sidebar toggle button
 function setupSidebarToggle() {
   const toggleBtn = document.getElementById('sidebar-toggle-btn');
@@ -3521,11 +3653,19 @@ function initializeApp() {
     // Start timestamp updates
     startTimestampUpdates();
     
+    // Check admin status
+    checkAdminStatus();
+    
+    // Set up periodic admin status check
+    setInterval(checkAdminStatus, 30000); // Check every 30 seconds
+    
     fetch('/api/sessions/current')
         .then(response => response.json())
         .then(data => {
             currentSessionToken = data.session?.token;
             setupSessionManagement();
+            // Re-check admin status after session setup
+            checkAdminStatus();
         })
         .catch(error => {
             console.error('Error getting current session:', error);
@@ -4195,6 +4335,12 @@ function debugVolume(newVolume) {
 // Make debugVolume available globally
 window.debugVolume = debugVolume;
 
+// Function to handle authentication state changes (can be called from login/logout)
+window.handleAuthStateChange = function() {
+    console.log('[Auth] Authentication state changed, checking admin status...');
+    checkAdminStatus();
+};
+
 // Global function to set all audio volumes
 function setGlobalVolume(volume) {
     // Clamp volume to 0-1 range
@@ -4555,3 +4701,538 @@ function setupUserLocationButton() {
     }
 }
 // END NEW: User Location Feature
+
+// Call Purge Modal Functions
+function setupCallPurgeModal() {
+    const callPurgeModal = document.getElementById('call-purge-modal');
+    const purgeTalkgroupSearch = document.getElementById('purge-talkgroup-search');
+    const purgeTalkgroupList = document.getElementById('purge-talkgroup-list');
+    const purgeCategorySelect = document.getElementById('purge-category-select');
+    const purgeCustomTimeToggle = document.getElementById('purge-custom-time-toggle');
+    const purgeCustomTimeInputs = document.getElementById('purge-custom-time-inputs');
+    const purgeConfirmBtn = document.getElementById('purge-confirm-btn');
+    
+    // Initialize category dropdown
+    populatePurgeCategoryDropdown();
+    
+    // Initialize talkgroup list
+    populatePurgeTalkgroupList();
+    
+    // Search functionality
+    if (purgeTalkgroupSearch) {
+        purgeTalkgroupSearch.addEventListener('input', handlePurgeTalkgroupSearch);
+    }
+    
+    // Custom time toggle
+    if (purgeCustomTimeToggle) {
+        purgeCustomTimeToggle.addEventListener('change', function() {
+            purgeCustomTimeInputs.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+    
+    // Time preset buttons
+    document.querySelectorAll('.time-preset-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            // Remove active class from all buttons
+            document.querySelectorAll('.time-preset-btn').forEach(b => b.classList.remove('active'));
+            // Add active class to clicked button
+            this.classList.add('active');
+            
+            // Set custom time inputs to hidden
+            purgeCustomTimeToggle.checked = false;
+            purgeCustomTimeInputs.style.display = 'none';
+        });
+    });
+    
+    // Purge confirm button
+    if (purgeConfirmBtn) {
+        purgeConfirmBtn.addEventListener('click', executeCallPurge);
+    }
+    
+    // Undo last purge button
+    const undoLastPurgeBtn = document.getElementById('undo-last-purge-btn');
+    if (undoLastPurgeBtn) {
+        undoLastPurgeBtn.addEventListener('click', undoLastPurge);
+    }
+    
+    // Set default date/time values
+    setDefaultPurgeDateTime();
+}
+
+function showCallPurgeModal() {
+    const modal = document.getElementById('call-purge-modal');
+    if (modal) {
+        // Check if user has admin access when auth is enabled
+        if (authEnabled && !isAdminUser) {
+            alert('Admin access required to purge calls.');
+            return;
+        }
+        
+        modal.style.display = 'block';
+        populatePurgeTalkgroupList();
+        setDefaultPurgeDateTime();
+        
+        // Reset form state
+        document.querySelectorAll('.time-preset-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('purge-custom-time-toggle').checked = false;
+        document.getElementById('purge-custom-time-inputs').style.display = 'none';
+        
+        // Check if undo is available
+        checkUndoAvailability();
+    }
+}
+
+function populatePurgeCategoryDropdown() {
+    const categorySelect = document.getElementById('purge-category-select');
+    if (!categorySelect) return;
+    
+    // Clear existing options
+    categorySelect.innerHTML = '<option value="">All Categories</option>';
+    
+    // Fetch categories from the API
+    fetch('/api/categories')
+        .then(response => response.json())
+        .then(categories => {
+            categories.forEach(category => {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = category;
+                categorySelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading categories for purge:', error);
+            // Fallback to existing categories if API fails
+            Object.keys(categoryCounts).forEach(category => {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = category;
+                categorySelect.appendChild(option);
+            });
+        });
+}
+
+function populatePurgeTalkgroupList() {
+    const talkgroupList = document.getElementById('purge-talkgroup-list');
+    if (!talkgroupList) return;
+    
+    talkgroupList.innerHTML = '<div class="loading-placeholder">Loading talkgroups...</div>';
+    
+    fetch('/api/talkgroups')
+        .then(response => response.json())
+        .then(talkgroups => {
+            if (talkgroups.length === 0) {
+                talkgroupList.innerHTML = '<div class="loading-placeholder">No talkgroups found.</div>';
+                return;
+            }
+            
+            talkgroupList.innerHTML = `
+                <div class="purge-talkgroup-item">
+                    <input type="checkbox" id="purge-tg-all" data-tg-id="all" />
+                    <label for="purge-tg-all"><strong>All Talkgroups</strong></label>
+                </div>
+                <hr style="margin: 8px 0; border: none; border-top: 1px solid #ccc;">
+                ${talkgroups.map(tg => `
+                    <div class="purge-talkgroup-item">
+                        <input type="checkbox" id="purge-tg-${tg.id}" data-tg-id="${tg.id}" class="individual-tg" />
+                        <label for="purge-tg-${tg.id}">${tg.name}</label>
+                    </div>
+                `).join('')}
+            `;
+            
+            // Add event listeners for "All Talkgroups" functionality
+            const allTalkgroupsCheckbox = document.getElementById('purge-tg-all');
+            const individualCheckboxes = document.querySelectorAll('.individual-tg');
+            
+            // When "All Talkgroups" is checked, uncheck individual ones
+            allTalkgroupsCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    individualCheckboxes.forEach(cb => cb.checked = false);
+                }
+            });
+            
+            // When individual talkgroup is checked, uncheck "All Talkgroups"
+            individualCheckboxes.forEach(cb => {
+                cb.addEventListener('change', function() {
+                    if (this.checked) {
+                        allTalkgroupsCheckbox.checked = false;
+                    }
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error loading talkgroups for purge:', error);
+            talkgroupList.innerHTML = '<div class="loading-placeholder error">Error loading talkgroups.</div>';
+        });
+}
+
+function handlePurgeTalkgroupSearch() {
+    const searchInput = document.getElementById('purge-talkgroup-search');
+    const talkgroupList = document.getElementById('purge-talkgroup-list');
+    if (!searchInput || !talkgroupList) return;
+    
+    const searchTerm = searchInput.value.toLowerCase();
+    const talkgroupItems = talkgroupList.querySelectorAll('.purge-talkgroup-item');
+    
+    talkgroupItems.forEach(item => {
+        const label = item.querySelector('label');
+        const text = label.textContent.toLowerCase();
+        item.style.display = text.includes(searchTerm) ? 'block' : 'none';
+    });
+}
+
+function setDefaultPurgeDateTime() {
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    
+    // Set default end date/time to now
+    document.getElementById('purge-end-date').value = now.toISOString().split('T')[0];
+    document.getElementById('purge-end-time').value = now.toTimeString().slice(0, 5);
+    
+    // Set default start date/time to 1 hour ago
+    document.getElementById('purge-start-date').value = oneHourAgo.toISOString().split('T')[0];
+    document.getElementById('purge-start-time').value = oneHourAgo.toTimeString().slice(0, 5);
+}
+
+async function executeCallPurge() {
+    console.log('[DEBUG] executeCallPurge started');
+    
+    const selectedTalkgroups = Array.from(document.querySelectorAll('#purge-talkgroup-list input[type="checkbox"]:checked'))
+        .map(cb => cb.dataset.tgId)
+        .filter(id => id !== 'all'); // Filter out the "all" option since backend handles empty array as "all talkgroups"
+    
+    const selectedCategories = [];
+    const categorySelect = document.getElementById('purge-category-select');
+    if (categorySelect && categorySelect.value) {
+        selectedCategories.push(categorySelect.value);
+    }
+    
+    const timeRange = getSelectedTimeRange();
+    
+    console.log('[DEBUG] Selected talkgroups:', selectedTalkgroups);
+    console.log('[DEBUG] Selected categories:', selectedCategories);
+    console.log('[DEBUG] Time range:', timeRange);
+    
+    // Note: Empty selectedCategories means "All Categories" (no filter applied)
+    // This is handled by the backend, so we don't need to validate against empty array
+    
+    if (!timeRange.start || !timeRange.end) {
+        showNotification('Please select a valid time range', 'error');
+        return;
+    }
+    
+    // Convert to Unix timestamps (seconds)
+    const startTime = Math.floor(new Date(timeRange.start).getTime() / 1000);
+    const endTime = Math.floor(new Date(timeRange.end).getTime() / 1000);
+    
+    console.log('[DEBUG] Unix timestamps - start:', startTime, 'end:', endTime);
+    
+    try {
+        // First, get the count of calls that would be affected
+        const countParams = new URLSearchParams();
+        if (selectedTalkgroups.length > 0) {
+            countParams.append('talkgroupIds', selectedTalkgroups.join(','));
+        }
+        if (selectedCategories.length > 0) {
+            countParams.append('categories', selectedCategories.join(','));
+        }
+        countParams.append('timeRangeStart', startTime);
+        countParams.append('timeRangeEnd', endTime);
+        
+        console.log('[DEBUG] Count params:', countParams.toString());
+        
+        const countResponse = await fetch(`/api/calls/purge-count?${countParams.toString()}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authEnabled && currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {})
+            }
+        });
+        
+        console.log('[DEBUG] Count response status:', countResponse.status);
+        console.log('[DEBUG] Count response ok:', countResponse.ok);
+        
+        if (!countResponse.ok) {
+            const errorText = await countResponse.text();
+            console.log('[DEBUG] Count response error text:', errorText);
+            throw new Error(`Failed to get call count: ${countResponse.status} ${countResponse.statusText}`);
+        }
+        
+        const contentType = countResponse.headers.get('content-type');
+        console.log('[DEBUG] Count response content-type:', contentType);
+        
+        if (!contentType || !contentType.includes('application/json')) {
+            const responseText = await countResponse.text();
+            console.log('[DEBUG] Count response non-JSON text:', responseText);
+            throw new Error('Invalid response format from server');
+        }
+        
+        const countData = await countResponse.json();
+        console.log('[DEBUG] Count data received:', countData);
+        
+        const callCount = countData.count;
+        console.log('[DEBUG] Call count:', callCount);
+        
+        if (callCount === 0) {
+            showNotification('No calls found matching the selected criteria', 'success');
+            return;
+        }
+        
+        // Show custom confirmation modal
+        const confirmed = await showPurgeConfirmation(callCount);
+        console.log('[DEBUG] User confirmed:', confirmed);
+        
+        if (!confirmed) {
+            console.log('[DEBUG] User cancelled, returning');
+            return;
+        }
+        
+        // Proceed with the purge
+        console.log('[DEBUG] Proceeding with purge...');
+        
+        const purgeResponse = await fetch('/api/calls/purge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authEnabled && currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {})
+            },
+            body: JSON.stringify({
+                talkgroupIds: selectedTalkgroups,
+                categories: selectedCategories,
+                timeRangeStart: startTime,
+                timeRangeEnd: endTime
+            })
+        });
+        
+        console.log('[DEBUG] Purge response status:', purgeResponse.status);
+        
+        if (!purgeResponse.ok) {
+            const errorText = await purgeResponse.text();
+            console.log('[DEBUG] Purge response error text:', errorText);
+            throw new Error(`Purge failed: ${purgeResponse.status} ${purgeResponse.statusText}`);
+        }
+        
+        const contentTypePurge = purgeResponse.headers.get('content-type');
+        console.log('[DEBUG] Purge response content-type:', contentTypePurge);
+        
+        if (!contentTypePurge || !contentTypePurge.includes('application/json')) {
+            const responseText = await purgeResponse.text();
+            console.log('[DEBUG] Purge response non-JSON text:', responseText);
+            throw new Error('Invalid response format from server during purge');
+        }
+        
+        const purgeResult = await purgeResponse.json();
+        console.log('[DEBUG] Purge result:', purgeResult);
+        
+        showNotification(`Successfully purged ${callCount} calls from the map`, 'success');
+        
+        // Check if undo is now available
+        checkUndoAvailability();
+        
+        // Close the modal
+        const modal = document.getElementById('call-purge-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        
+        // Reload the map to reflect changes
+        console.log('[DEBUG] Reloading map...');
+        console.log('[DEBUG] timeRangeHours:', timeRangeHours);
+        console.log('[DEBUG] Calling loadCalls...');
+        loadCalls(timeRangeHours);
+        console.log('[DEBUG] Map reloaded');
+        
+    } catch (error) {
+        console.error('[DEBUG] Error during purge process:', error);
+        showNotification(`Error during purge process: ${error.message}`, 'error');
+    }
+}
+
+// Show custom confirmation modal for purge operations
+function showPurgeConfirmation(callCount) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('purge-confirmation-modal');
+        const message = document.getElementById('purge-confirmation-message');
+        const confirmBtn = document.getElementById('purge-confirm-yes');
+        const cancelBtn = document.getElementById('purge-confirm-no');
+        
+        if (!modal || !message || !confirmBtn || !cancelBtn) {
+            console.error('[DEBUG] Confirmation modal elements not found');
+            resolve(false);
+            return;
+        }
+        
+        // Set the message
+        message.textContent = `This will purge ${callCount} call${callCount !== 1 ? 's' : ''} from the map. Are you sure you want to continue?`;
+        
+        // Show the modal
+        modal.style.display = 'block';
+        
+        // Set up event listeners
+        const handleConfirm = () => {
+            modal.style.display = 'none';
+            cleanup();
+            resolve(true);
+        };
+        
+        const handleCancel = () => {
+            modal.style.display = 'none';
+            cleanup();
+            resolve(false);
+        };
+        
+        const handleModalClick = (e) => {
+            if (e.target === modal) {
+                handleCancel();
+            }
+        };
+        
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            modal.removeEventListener('click', handleModalClick);
+        };
+        
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        modal.addEventListener('click', handleModalClick);
+    });
+}
+
+function resetPurgeButton() {
+    const confirmBtn = document.getElementById('purge-confirm-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Purge Calls';
+    }
+}
+
+// Check if undo is available for the last purge operation
+async function checkUndoAvailability() {
+    const undoBtn = document.getElementById('undo-last-purge-btn');
+    if (!undoBtn) return;
+    
+    try {
+        const response = await fetch('/api/calls/can-undo-purge', {
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authEnabled && currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {})
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.canUndo) {
+                undoBtn.style.display = 'inline-block';
+                undoBtn.disabled = false;
+                undoBtn.title = data.message;
+            } else {
+                undoBtn.style.display = 'none';
+            }
+        } else {
+            undoBtn.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error checking undo availability:', error);
+        undoBtn.style.display = 'none';
+    }
+}
+
+// Undo the last purge operation
+async function undoLastPurge() {
+    const undoBtn = document.getElementById('undo-last-purge-btn');
+    if (!undoBtn) return;
+    
+    // Disable button during operation
+    undoBtn.disabled = true;
+    undoBtn.textContent = 'Undoing...';
+    
+    try {
+        const response = await fetch('/api/calls/undo-last-purge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authEnabled && currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {})
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            showNotification(data.message, 'success');
+            
+            // Hide the undo button
+            undoBtn.style.display = 'none';
+            
+            // Reload the map to show restored calls
+            loadCalls(timeRangeHours);
+        } else {
+            const errorData = await response.json();
+            showNotification(`Error: ${errorData.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error undoing purge:', error);
+        showNotification('Error undoing purge operation', 'error');
+    } finally {
+        // Re-enable button
+        undoBtn.disabled = false;
+        undoBtn.textContent = 'Undo Last Purge';
+    }
+}
+
+function reloadMapAfterPurge() {
+    // Clear existing markers
+    Object.values(allMarkers).forEach(({ marker }) => {
+        if (marker && map.hasLayer(marker)) {
+            map.removeLayer(marker);
+        }
+    });
+    
+    // Clear marker groups
+    if (markerGroups) {
+        map.removeLayer(markerGroups);
+        markerGroups = L.layerGroup();
+        map.addLayer(markerGroups);
+    }
+    
+    // Reset marker storage
+    allMarkers = {};
+    
+    // Reload calls with current time range
+    loadCalls(timeRangeHours);
+}
+
+function getSelectedTimeRange() {
+    if (document.getElementById('purge-custom-time-toggle').checked) {
+        // Custom time range
+        const startDate = document.getElementById('purge-start-date').value;
+        const startTime = document.getElementById('purge-start-time').value;
+        const endDate = document.getElementById('purge-end-date').value;
+        const endTime = document.getElementById('purge-end-time').value;
+        
+        if (!startDate || !startTime || !endDate || !endTime) {
+            return null;
+        }
+        
+        return {
+            start: `${startDate}T${startTime}:00`,
+            end: `${endDate}T${endTime}:00`
+        };
+    } else {
+        // Preset time range
+        const activePreset = document.querySelector('.time-preset-btn.active');
+        if (!activePreset) {
+            return null;
+        }
+        
+        const hours = parseInt(activePreset.dataset.hours);
+        const endTime = new Date();
+        const startTime = new Date(endTime.getTime() - hours * 60 * 60 * 1000);
+        
+        return {
+            start: startTime.toISOString(),
+            end: endTime.toISOString()
+        };
+    }
+}
+
+
