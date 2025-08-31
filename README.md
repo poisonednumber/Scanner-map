@@ -8,7 +8,7 @@ Ingests calls from SDRTrunk, TrunkRecorder, or any **rdio-scanner compatible end
 - Displays calls on an interactive map with **playback** and **Discord integration**
 
 ## 💬 Community Support
-[![Discord](https://img.shields.io/discord/123456789?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/X7vej75zZy)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da?logo=discord)](https://discord.gg/X7vej75zZy)
 
 **Join our Discord community for:**
 - 🆘 Installation help and troubleshooting
