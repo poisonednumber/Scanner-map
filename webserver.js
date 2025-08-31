@@ -57,6 +57,22 @@ app.get('/api/config/google-api-key', (req, res) => {
   res.json({ apiKey: GOOGLE_MAPS_API_KEY });
 });
 
+// Add endpoint to check if current user is admin
+app.get('/api/auth/is-admin', async (req, res) => {
+  if (!authEnabled) {
+    return res.json({ isAdmin: false, authEnabled: false });
+  }
+  
+  const authHeader = req.headers['authorization'];
+  const adminStatus = await isAdminUser(authHeader);
+  res.json({ isAdmin: adminStatus, authEnabled: true });
+});
+
+// Test endpoint to verify server is working
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'Server is working', timestamp: Date.now() });
+});
+
 // --- NEW: S3 Client Setup ---
 let s3 = null;
 if (STORAGE_MODE === 's3') {
@@ -346,85 +362,121 @@ const basicAuth = async (req, res, next) => {
       return res.status(401).send('Authentication required.');
     }
 
-    const base64Credentials = authHeader.split(' ')[1];
-    if (!base64Credentials) {
-      res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
-      return res.status(401).send('Invalid authentication format.');
+    // Check if it's a Bearer token (session-based auth)
+    if (authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      if (!token) {
+        return res.status(401).send('Invalid Bearer token format.');
+      }
+
+      // Validate the session token
+      const session = await validateSession(token);
+      if (!session) {
+        return res.status(401).send('Invalid or expired session token.');
+      }
+
+      // Get the user from the session
+      const user = await new Promise((resolve, reject) => {
+        db.get('SELECT id, username FROM users WHERE id = ?', [session.user_id], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+
+      if (!user) {
+        return res.status(401).send('User not found for session.');
+      }
+
+      // Set user info in request for downstream use
+      req.user = { id: user.id, username: user.username };
+      req.session = session;
+      return next();
     }
 
-    const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-    const [username, password] = credentials.split(':');
+    // Check if it's Basic auth (username:password)
+    if (authHeader.startsWith('Basic ')) {
+      const base64Credentials = authHeader.split(' ')[1];
+      if (!base64Credentials) {
+        res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
+        return res.status(401).send('Invalid authentication format.');
+      }
 
-    // Check credentials against database
-    db.get(
-      'SELECT id, password_hash, salt FROM users WHERE username = ?',
-      [username],
-      async (err, user) => {
-        if (err) {
-          console.error('Database error during authentication:', err);
-          return res.status(500).send('Internal server error.');
-        }
+      const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+      const [username, password] = credentials.split(':');
 
-        if (!user) {
-          res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
-          return res.status(401).send('Invalid credentials.');
-        }
+      // Check credentials against database
+      db.get(
+        'SELECT id, password_hash, salt FROM users WHERE username = ?',
+        [username],
+        async (err, user) => {
+          if (err) {
+            console.error('Database error during authentication:', err);
+            return res.status(500).send('Internal server error.');
+          }
 
-        const hashedPassword = hashPassword(password, user.salt);
-        if (hashedPassword === user.password_hash) {
-          // Get all active sessions for user, ordered by creation date
-          db.all(
-            `SELECT id, created_at, expires_at 
-             FROM sessions 
-             WHERE user_id = ? AND expires_at > datetime('now')
-             ORDER BY created_at ASC`,
-            [user.id],
-            async (err, sessions) => {
-              if (err) {
-                return res.status(500).send('Internal server error.');
-              }
+          if (!user) {
+            res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
+            return res.status(401).send('Invalid credentials.');
+          }
 
-              // If at session limit, remove oldest session
-              if (sessions.length >= MAX_SESSIONS) {
-                db.run(
-                  'DELETE FROM sessions WHERE id = ?',
-                  [sessions[0].id],
-                  async (err) => {
-                    if (err) {
-                      console.error('Error removing oldest session:', err);
-                      return res.status(500).send('Internal server error.');
-                    }
-                    console.log(`Removed oldest session for user ${username}`);
-                    try {
-                      const session = await createSession(user.id, req);
-                      req.user = { id: user.id, username };
-                      req.session = session;
-                      next();
-                    } catch (err) {
-                      console.error('Error creating session:', err);
-                      return res.status(500).send('Internal server error.');
-                    }
-                  }
-                );
-              } else {
-                try {
-                  const session = await createSession(user.id, req);
-                  req.user = { id: user.id, username };
-                  req.session = session;
-                  next();
-                } catch (err) {
-                  console.error('Error creating session:', err);
+          const hashedPassword = hashPassword(password, user.salt);
+          if (hashedPassword === user.password_hash) {
+            // Get all active sessions for user, ordered by creation date
+            db.all(
+              `SELECT id, created_at, expires_at 
+               FROM sessions 
+               WHERE user_id = ? AND expires_at > datetime('now')
+               ORDER BY created_at ASC`,
+              [user.id],
+              async (err, sessions) => {
+                if (err) {
                   return res.status(500).send('Internal server error.');
                 }
+
+                // If at session limit, remove oldest session
+                if (sessions.length >= MAX_SESSIONS) {
+                  db.run(
+                    'DELETE FROM sessions WHERE id = ?',
+                    [sessions[0].id],
+                    async (err) => {
+                      if (err) {
+                        console.error('Error removing oldest session:', err);
+                        return res.status(500).send('Internal server error.');
+                      }
+                      console.log(`Removed oldest session for user ${username}`);
+                      try {
+                        const session = await createSession(user.id, req);
+                        req.user = { id: user.id, username };
+                        req.session = session;
+                        next();
+                      } catch (err) {
+                        console.error('Error creating session:', err);
+                        return res.status(500).send('Internal server error.');
+                      }
+                    }
+                  );
+                } else {
+                  try {
+                    const session = await createSession(user.id, req);
+                    req.user = { id: user.id, username };
+                    req.session = session;
+                    next();
+                  } catch (err) {
+                    console.error('Error creating session:', err);
+                    return res.status(500).send('Internal server error.');
+                  }
+                }
               }
-            }
-          );
-        } else {
-          res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
-          return res.status(401).send('Invalid credentials.');
+            );
+          } else {
+            res.set('WWW-Authenticate', 'Basic realm="Protected Area"');
+            return res.status(401).send('Invalid credentials.');
+          }
         }
-      }
-    );
+      );
+    } else {
+      return res.status(401).send('Unsupported authentication method. Use Basic or Bearer.');
+    }
   } catch (err) {
     console.error('Authentication error:', err);
     return res.status(500).send('Internal server error.');
@@ -454,7 +506,97 @@ const adminAuth = (req, res, next) => {
   }
 };
 
+// Helper function to check if user is admin
+async function isAdminUser(authHeader) {
+  if (!authEnabled || !authHeader) {
+    return false;
+  }
+
+  try {
+    // Check if it's a Bearer token (session-based auth)
+    if (authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      if (!token) {
+        return false;
+      }
+
+      // Validate the session token
+      const session = await validateSession(token);
+      if (!session) {
+        return false;
+      }
+
+      // Get the user from the session
+      const user = await new Promise((resolve, reject) => {
+        db.get('SELECT username FROM users WHERE id = ?', [session.user_id], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+
+      // Check if the user is admin
+      return user && user.username === 'admin';
+    }
+
+    // Check if it's Basic auth (username:password)
+    if (authHeader.startsWith('Basic ')) {
+      const base64Credentials = authHeader.split(' ')[1];
+      if (!base64Credentials) {
+        return false;
+      }
+
+      const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+      const [username, password] = credentials.split(':');
+
+      return username === 'admin' && password === WEBSERVER_PASSWORD;
+    }
+
+    return false;
+  } catch (error) {
+    console.error('Error in isAdminUser:', error);
+    return false;
+  }
+}
+
 // --- NEW HELPER FUNCTION ---
+// Store the last purge operation details for undo functionality
+let lastPurgeDetails = null;
+
+// Function to store original coordinates before purging
+async function storeOriginalCoordinates(talkgroupIds, categories, timeRangeStart, timeRangeEnd) {
+  return new Promise((resolve, reject) => {
+    // Build the WHERE clause to get calls that will be purged
+    let whereConditions = ['lat IS NOT NULL AND lon IS NOT NULL'];
+    let params = [];
+
+    // If no talkgroups selected, it means "all talkgroups" (no filter applied)
+    if (talkgroupIds && talkgroupIds.length > 0) {
+      whereConditions.push(`talk_group_id IN (${talkgroupIds.map(() => '?').join(',')})`);
+      params.push(...talkgroupIds);
+    }
+    // If no talkgroups selected, don't add any filter - this means "all talkgroups"
+
+    if (categories && categories.length > 0) {
+      whereConditions.push(`UPPER(category) IN (${categories.map(() => 'UPPER(?)').join(',')})`);
+      params.push(...categories);
+    }
+
+    whereConditions.push('timestamp BETWEEN ? AND ?');
+    params.push(timeRangeStart, timeRangeEnd);
+
+    const whereClause = whereConditions.join(' AND ');
+    const selectQuery = `SELECT id, lat, lon FROM transcriptions WHERE ${whereClause}`;
+
+    db.all(selectQuery, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
+
 async function serveAudioFromDb(res, transcriptionId) {
     console.log(`[Audio DB] Serving audio for ID ${transcriptionId} from database blob.`);
     try {
@@ -1266,6 +1408,346 @@ app.get('/api/talkgroups', (req, res) => {
       res.json(talkgroups);
     }
   );
+});
+
+// Get all available categories for selection UI
+app.get('/api/categories', (req, res) => {
+  const categories = [
+    'Medical Emergency', 'Injured Person', 'Disturbance', 'Vehicle Collision',
+    'Burglary', 'Assault', 'Structure Fire', 'Missing Person', 'Medical Call',
+    'Building Fire', 'Stolen Vehicle', 'Service Call', 'Vehicle Stop',
+    'Unconscious Person', 'Reckless Driver', 'Person With A Gun',
+    'Altered Level of Consciousness', 'Breathing Problems', 'Fight',
+    'Carbon Monoxide', 'Abduction', 'Passed Out Person', 'Hazmat',
+    'Fire Alarm', 'Traffic Hazard', 'Intoxicated Person', 'Mvc',
+    'Animal Bite', 'Assist', 'Other'
+  ];
+  
+  res.json(categories);
+});
+
+// Get count of calls that would be purged (Admin Only when auth is enabled)
+app.get('/api/calls/purge-count', async (req, res) => {
+  // Check authentication if enabled
+  if (ENABLE_AUTH?.toLowerCase() === 'true') {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !(await isAdminUser(authHeader))) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+  }
+
+  // Parse query parameters - handle both array and single values
+  const talkgroupIds = req.query.talkgroupIds ? 
+    (Array.isArray(req.query.talkgroupIds) ? req.query.talkgroupIds : [req.query.talkgroupIds]) : [];
+  const categories = req.query.categories ? 
+    (Array.isArray(req.query.categories) ? req.query.categories : [req.query.categories]) : [];
+  
+  // Handle timeRange parameters from query string
+  const timeRangeStart = req.query.timeRangeStart;
+  const timeRangeEnd = req.query.timeRangeEnd;
+
+  // Validate input
+  if (!timeRangeStart || !timeRangeEnd) {
+    return res.status(400).json({ error: 'Time range is required' });
+  }
+
+  // Build the WHERE clause dynamically
+  let whereConditions = ['lat IS NOT NULL AND lon IS NOT NULL']; // Only count calls that have coordinates
+  let params = [];
+
+  // Add talkgroup filter if specified
+  if (talkgroupIds.length > 0) {
+    whereConditions.push(`talk_group_id IN (${talkgroupIds.map(() => '?').join(',')})`);
+    params.push(...talkgroupIds);
+  }
+
+  // Add category filter if specified
+  if (categories.length > 0) {
+    // Use UPPER() to make case-insensitive comparison
+    whereConditions.push(`UPPER(category) IN (${categories.map(() => 'UPPER(?)').join(',')})`);
+    params.push(...categories);
+  }
+
+  // Add time range filter
+  whereConditions.push('timestamp BETWEEN ? AND ?');
+  const startTime = parseInt(timeRangeStart);
+  const endTime = parseInt(timeRangeEnd);
+  
+  // Validate parsed timestamps
+  if (isNaN(startTime) || isNaN(endTime)) {
+    console.error(`[Purge Count] Invalid timestamps: start=${timeRangeStart} (parsed: ${startTime}), end=${timeRangeEnd} (parsed: ${endTime})`);
+    return res.status(400).json({ error: 'Invalid timestamp format' });
+  }
+  
+  params.push(startTime, endTime);
+
+  const whereClause = whereConditions.join(' AND ');
+
+  // Execute the count query
+  const countQuery = `SELECT COUNT(*) as count FROM transcriptions WHERE ${whereClause}`;
+  
+  // Check if database is available
+  if (!db) {
+    console.error('[Purge Count] Database not available');
+    return res.status(500).json({ error: 'Database not available' });
+  }
+  
+  db.get(countQuery, params, (err, row) => {
+    if (err) {
+      console.error('Error counting calls:', err);
+      return res.status(500).json({ error: 'Failed to count calls' });
+    }
+
+    if (!row) {
+      console.error('[Purge Count] No result from count query');
+      return res.status(500).json({ error: 'Failed to count calls - no result' });
+    }
+
+    res.json({ 
+      success: true, 
+      count: row.count
+    });
+  });
+});
+
+// Purge calls by setting coordinates to NULL (Admin Only when auth is enabled)
+app.post('/api/calls/purge', async (req, res) => {
+  try {
+    // Check authentication if enabled
+    if (ENABLE_AUTH?.toLowerCase() === 'true') {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !(await isAdminUser(authHeader))) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+    }
+
+    const { talkgroupIds, categories, timeRangeStart, timeRangeEnd } = req.body;
+
+    // Validate input
+    if (!timeRangeStart || !timeRangeEnd) {
+      return res.status(400).json({ error: 'Time range is required' });
+    }
+
+    // Build the WHERE clause dynamically
+    let whereConditions = ['lat IS NOT NULL AND lon IS NOT NULL']; // Only purge calls that have coordinates
+    let params = [];
+
+      // Add talkgroup filter if specified
+  // If no talkgroups selected, it means "all talkgroups" (no filter applied)
+  if (talkgroupIds && talkgroupIds.length > 0) {
+    whereConditions.push(`talk_group_id IN (${talkgroupIds.map(() => '?').join(',')})`);
+    params.push(...talkgroupIds);
+  }
+  // If no talkgroups selected, don't add any filter - this means "all talkgroups"
+
+    // Add category filter if specified
+    if (categories && categories.length > 0) {
+      // Use UPPER() to make case-insensitive comparison
+      whereConditions.push(`UPPER(category) IN (${categories.map(() => 'UPPER(?)').join(',')})`);
+      params.push(...categories);
+    }
+
+    // Add time range filter
+    whereConditions.push('timestamp BETWEEN ? AND ?');
+    const startTime = parseInt(timeRangeStart);
+    const endTime = parseInt(timeRangeEnd);
+    
+    // Validate parsed timestamps
+    if (isNaN(startTime) || isNaN(endTime)) {
+      console.error(`[Purge] Invalid timestamps: start=${timeRangeStart} (parsed: ${startTime}), end=${timeRangeEnd} (parsed: ${endTime})`);
+      return res.status(400).json({ error: 'Invalid timestamp format' });
+    }
+    
+    params.push(startTime, endTime);
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Check if database is available
+    if (!db) {
+      console.error('[Purge] Database not available');
+      return res.status(500).json({ error: 'Database not available' });
+    }
+
+    // Store original coordinates before purging
+    try {
+      const originalCoords = await storeOriginalCoordinates(talkgroupIds, categories, startTime, endTime);
+      
+      // Execute the purge query
+      const purgeQuery = `UPDATE transcriptions SET lat = NULL, lon = NULL WHERE ${whereClause}`;
+      
+      db.run(purgeQuery, params, function(err) {
+        if (err) {
+          console.error('Error purging calls:', err);
+          return res.status(500).json({ error: 'Failed to purge calls' });
+        }
+
+        // Store the last purge details for undo functionality
+        lastPurgeDetails = {
+          talkgroupIds: talkgroupIds || [],
+          categories: categories || [],
+          timeRangeStart: startTime,
+          timeRangeEnd: endTime,
+          purgedCount: this.changes,
+          timestamp: Date.now(),
+          originalCoordinates: originalCoords
+        };
+
+        res.json({ 
+          success: true, 
+          purgedCount: this.changes,
+          message: `Successfully purged ${this.changes} calls from the map`
+        });
+      });
+    } catch (coordError) {
+      console.error('Error storing original coordinates:', coordError);
+      return res.status(500).json({ error: 'Failed to store original coordinates for undo' });
+    }
+  } catch (error) {
+    console.error('Unexpected error in purge endpoint:', error);
+    res.status(500).json({ error: 'Internal server error during purge operation' });
+  }
+});
+
+// Check if there's a purge operation that can be undone
+app.get('/api/calls/can-undo-purge', async (req, res) => {
+  // Check authentication if enabled
+  if (ENABLE_AUTH?.toLowerCase() === 'true') {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !(await isAdminUser(authHeader))) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+  }
+
+  if (!lastPurgeDetails) {
+    return res.json({ canUndo: false, message: 'No purge operation to undo' });
+  }
+
+  // No time limit for undo operations
+
+  res.json({ 
+    canUndo: true, 
+    message: `Can undo purge of ${lastPurgeDetails.purgedCount} calls`,
+    purgeDetails: {
+      categories: lastPurgeDetails.categories,
+      talkgroups: lastPurgeDetails.talkgroupIds,
+      timeRange: {
+        start: new Date(lastPurgeDetails.timeRangeStart * 1000).toLocaleString(),
+        end: new Date(lastPurgeDetails.timeRangeEnd * 1000).toLocaleString()
+      },
+      timestamp: new Date(lastPurgeDetails.timestamp).toLocaleString()
+    }
+  });
+});
+
+// Undo last purge operation (Admin Only when auth is enabled)
+app.post('/api/calls/undo-last-purge', async (req, res) => {
+  try {
+    // Check authentication if enabled
+    if (ENABLE_AUTH?.toLowerCase() === 'true') {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !(await isAdminUser(authHeader))) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+    }
+
+    // Check if there's a last purge to undo
+    if (!lastPurgeDetails) {
+      return res.status(400).json({ error: 'No purge operation to undo' });
+    }
+
+    // No time limit for undo operations
+
+    // Build the WHERE clause to restore coordinates
+    let whereConditions = ['lat IS NULL AND lon IS NULL']; // Only restore calls that have no coordinates
+    let params = [];
+
+    // Add talkgroup filter if specified
+    if (lastPurgeDetails.talkgroupIds && lastPurgeDetails.talkgroupIds.length > 0) {
+      whereConditions.push(`talk_group_id IN (${lastPurgeDetails.talkgroupIds.map(() => '?').join(',')})`);
+      params.push(...lastPurgeDetails.talkgroupIds);
+    }
+
+    // Add category filter if specified
+    if (lastPurgeDetails.categories && lastPurgeDetails.categories.length > 0) {
+      // Use UPPER() to make case-insensitive comparison
+      whereConditions.push(`UPPER(category) IN (${lastPurgeDetails.categories.map(() => 'UPPER(?)').join(',')})`);
+      params.push(...lastPurgeDetails.categories);
+    }
+
+    // Add time range filter
+    whereConditions.push('timestamp BETWEEN ? AND ?');
+    params.push(lastPurgeDetails.timeRangeStart, lastPurgeDetails.timeRangeEnd);
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Execute the restore query
+    const restoreQuery = `UPDATE transcriptions SET lat = (SELECT lat FROM transcriptions_backup WHERE id = transcriptions.id), lon = (SELECT lon FROM transcriptions_backup WHERE id = transcriptions.id) WHERE ${whereClause}`;
+    
+    // Since we don't have a backup table, we'll need to restore from the original coordinates
+    // For now, we'll use a different approach - restore based on the original query
+    const restoreQuery2 = `UPDATE transcriptions SET lat = (SELECT lat FROM transcriptions WHERE id = transcriptions.id), lon = (SELECT lon FROM transcriptions WHERE id = transcriptions.id) WHERE ${whereClause}`;
+    
+    // Check if database is available
+    if (!db) {
+      console.error('[Undo Purge] Database not available');
+      return res.status(500).json({ error: 'Database not available' });
+    }
+
+    // Check if we have the original coordinates stored
+    if (!lastPurgeDetails.originalCoordinates || lastPurgeDetails.originalCoordinates.length === 0) {
+      return res.status(400).json({ error: 'No original coordinates available for restoration' });
+    }
+
+    // Restore the original coordinates for each call
+    let restoredCount = 0;
+    let hasError = false;
+
+    for (const coord of lastPurgeDetails.originalCoordinates) {
+      const restoreQuery = `UPDATE transcriptions SET lat = ?, lon = ? WHERE id = ?`;
+      
+      db.run(restoreQuery, [coord.lat, coord.lon, coord.id], function(err) {
+        if (err) {
+          console.error(`Error restoring coordinates for call ${coord.id}:`, err);
+          hasError = true;
+        } else {
+          restoredCount++;
+        }
+      });
+    }
+
+    // Wait a bit for all updates to complete, then respond
+    setTimeout(() => {
+      if (hasError) {
+        return res.status(500).json({ error: 'Some calls could not be restored' });
+      }
+
+      // Clear the last purge details after successful undo
+      const undonePurgeDetails = { ...lastPurgeDetails };
+      lastPurgeDetails = null;
+
+      res.json({ 
+        success: true, 
+        restoredCount: restoredCount,
+        message: `Successfully restored ${restoredCount} calls to the map`,
+        undonePurge: undonePurgeDetails
+      });
+    }, 100);
+
+  } catch (error) {
+    console.error('Unexpected error in undo purge endpoint:', error);
+    res.status(500).json({ error: 'Internal server error during undo operation' });
+  }
+});
+
+// General error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// 404 handler for unmatched routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
 });
 
 // Graceful Shutdown

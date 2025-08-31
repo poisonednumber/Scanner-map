@@ -7,7 +7,8 @@ const {
   BOT_PORT: PORT,  
   PUBLIC_DOMAIN,
   DISCORD_TOKEN,
-  MAPPED_TALK_GROUPS: mappedTalkGroupsString, 
+  MAPPED_TALK_GROUPS: mappedTalkGroupsString,
+  ENABLE_MAPPED_TALK_GROUPS = 'true',
   TIMEZONE,
   API_KEY_FILE,
   SUMMARY_LOOKBACK_HOURS,
@@ -36,13 +37,33 @@ const {
   ICAD_URL,
   ICAD_PROFILE,
   ICAD_API_KEY,
+  // --- NEW: OpenAI Transcription Prompting ---
+  OPENAI_TRANSCRIPTION_PROMPT,
   // --- Webserver Env Vars ---
   WEBSERVER_PORT = '3001',
   WEBSERVER_PASSWORD,
   ENABLE_AUTH = 'false',
   SESSION_DURATION_DAYS = '7',
   MAX_SESSIONS_PER_USER = '5',
-  GOOGLE_MAPS_API_KEY
+  GOOGLE_MAPS_API_KEY,
+  // --- NEW: Two-Tone Detection Env Vars ---
+  ENABLE_TWO_TONE_MODE,
+  TWO_TONE_TALK_GROUPS: twoToneTalkGroupsString,
+  TWO_TONE_QUEUE_SIZE,
+  TONE_DETECTION_TYPE,
+  TWO_TONE_MIN_TONE_LENGTH,
+  TWO_TONE_MAX_TONE_LENGTH,
+  PULSED_MIN_CYCLES,
+  PULSED_MIN_ON_MS,
+  PULSED_MAX_ON_MS,
+  PULSED_MIN_OFF_MS,
+  PULSED_MAX_OFF_MS,
+  PULSED_BANDWIDTH_HZ,
+  LONG_TONE_MIN_LENGTH,
+  LONG_TONE_BANDWIDTH_HZ,
+  TONE_DETECTION_THRESHOLD,
+  TONE_FREQUENCY_BAND,
+  TONE_TIME_RESOLUTION_MS
 } = process.env;
 
 // --- VALIDATE AI-RELATED ENV VARS ---
@@ -125,6 +146,49 @@ const LOOKBACK_PERIOD = LOOKBACK_HOURS * 60 * 60 * 1000; // Convert hours to mil
 const MAPPED_TALK_GROUPS = mappedTalkGroupsString
   ? mappedTalkGroupsString.split(',').map(id => id.trim())
   : [];
+const IS_MAPPED_TALK_GROUPS_ENABLED = ENABLE_MAPPED_TALK_GROUPS.toLowerCase() === 'true';
+
+// Parse Two-Tone configuration
+const IS_TWO_TONE_MODE_ENABLED = ENABLE_TWO_TONE_MODE.toLowerCase() === 'true';
+const TWO_TONE_TALK_GROUPS = twoToneTalkGroupsString
+  ? twoToneTalkGroupsString.split(',').map(id => id.trim())
+  : [];
+const TWO_TONE_QUEUE_SIZE_VALUE = parseInt(TWO_TONE_QUEUE_SIZE, 10) || 1;
+// Validate required two-tone environment variables if two-tone mode is enabled
+if (ENABLE_TWO_TONE_MODE && ENABLE_TWO_TONE_MODE.toLowerCase() === 'true') {
+  const requiredTwoToneVars = [
+    'ENABLE_TWO_TONE_MODE', 'TWO_TONE_TALK_GROUPS', 'TWO_TONE_QUEUE_SIZE',
+    'TONE_DETECTION_TYPE', 'TWO_TONE_MIN_TONE_LENGTH', 'TWO_TONE_MAX_TONE_LENGTH',
+    'PULSED_MIN_CYCLES', 'PULSED_MIN_ON_MS', 'PULSED_MAX_ON_MS',
+    'PULSED_MIN_OFF_MS', 'PULSED_MAX_OFF_MS', 'PULSED_BANDWIDTH_HZ',
+    'LONG_TONE_MIN_LENGTH', 'LONG_TONE_BANDWIDTH_HZ', 'TONE_DETECTION_THRESHOLD',
+    'TONE_FREQUENCY_BAND', 'TONE_TIME_RESOLUTION_MS'
+  ];
+  
+  const missingVars = requiredTwoToneVars.filter(varName => !process.env[varName]);
+  if (missingVars.length > 0) {
+    console.error(`FATAL: Two-tone mode is enabled but missing required environment variables: ${missingVars.join(', ')}`);
+    console.error('Please add these variables to your .env file. See TWO_TONE_ENV_ADDITIONS.txt for the complete list.');
+    process.exit(1);
+  }
+}
+
+const TWO_TONE_CONFIG = {
+  detectionType: TONE_DETECTION_TYPE,
+  minToneLength: parseFloat(TWO_TONE_MIN_TONE_LENGTH),
+  maxToneLength: parseFloat(TWO_TONE_MAX_TONE_LENGTH),
+  pulsedMinCycles: parseInt(PULSED_MIN_CYCLES, 10),
+  pulsedMinOnMs: parseInt(PULSED_MIN_ON_MS, 10),
+  pulsedMaxOnMs: parseInt(PULSED_MAX_ON_MS, 10),
+  pulsedMinOffMs: parseInt(PULSED_MIN_OFF_MS, 10),
+  pulsedMaxOffMs: parseInt(PULSED_MAX_OFF_MS, 10),
+  pulsedBandwidthHz: parseInt(PULSED_BANDWIDTH_HZ, 10),
+  longToneMinLength: parseFloat(LONG_TONE_MIN_LENGTH),
+  longToneBandwidthHz: parseInt(LONG_TONE_BANDWIDTH_HZ, 10),
+  detectionThreshold: parseFloat(TONE_DETECTION_THRESHOLD),
+  frequencyBand: TONE_FREQUENCY_BAND,
+  timeResolutionMs: parseInt(TONE_TIME_RESOLUTION_MS, 10)
+};
 
 // Parse MAX_CONCURRENT_TRANSCRIPTIONS from env or use default
 const parsedMaxConcurrent = parseInt(MAX_CONCURRENT_TRANSCRIPTIONS, 10);
@@ -140,6 +204,438 @@ const PRIORITY_QUEUE_THRESHOLD = 30; // Start prioritizing newer items
 // 2. Using a faster GPU for local transcription or switching to 'remote' mode
 // 3. Monitoring memory usage and adjusting MAX_QUEUE_SIZE if needed
 // 4. Consider using 'openai' transcription mode for highest reliability under load
+
+// Two-Tone Detection System
+let twoToneQueue = []; // Queue to track calls after two-tone detection
+let pendingToneDetections = new Map(); // Track ongoing tone detections
+let lastTwoToneTime = 0; // Timestamp of last detected two-tone
+let lastDetectedToneGroup = null; // Talk group where last tone was detected
+
+// *** NEW: Tone Detection Queue to prevent race conditions ***
+let toneDetectionQueue = []; // Queue for tone detection requests
+let isProcessingToneDetection = false; // Flag to prevent concurrent processing
+
+function addToTwoToneQueue(callInfo) {
+  logger.info(`Adding call to two-tone queue: ${callInfo.id} (TG ${callInfo.talkGroupID})`);
+  twoToneQueue.push({
+    ...callInfo,
+    addedAt: Date.now()
+  });
+  
+  // Keep queue size manageable - remove old calls for the same talk group
+  const sameTgCalls = twoToneQueue.filter(call => call.talkGroupID === callInfo.talkGroupID);
+  if (sameTgCalls.length > TWO_TONE_QUEUE_SIZE_VALUE) {
+    // Find and remove the oldest call for this talk group
+    const oldestIndex = twoToneQueue.findIndex(call => call.talkGroupID === callInfo.talkGroupID);
+    if (oldestIndex !== -1) {
+      const removed = twoToneQueue.splice(oldestIndex, 1)[0];
+      logger.info(`Removed old call from two-tone queue: ${removed.id} (TG ${removed.talkGroupID})`);
+    }
+  }
+}
+
+function shouldCheckForAddress(talkGroupID, transcriptionId) {
+  let shouldCheck = false;
+  
+  // Check 1: Traditional mapped talk groups (if enabled)
+  if (IS_MAPPED_TALK_GROUPS_ENABLED && MAPPED_TALK_GROUPS.includes(talkGroupID)) {
+    shouldCheck = true;
+    logger.info(`Address check: Talk group ${talkGroupID} is in mapped talk groups`);
+  }
+  
+  // Check 2: Two-tone queue (if two-tone mode is enabled)
+  if (IS_TWO_TONE_MODE_ENABLED) {
+    const queueIndex = twoToneQueue.findIndex(call => call.id === transcriptionId);
+    if (queueIndex !== -1) {
+      // Remove from queue since we're processing it
+      twoToneQueue.splice(queueIndex, 1);
+      shouldCheck = true;
+      logger.info(`Address check: Call ${transcriptionId} found in two-tone queue`);
+    }
+  }
+  
+  if (!shouldCheck) {
+    logger.info(`Address check: Skipping - not in mapped groups (${IS_MAPPED_TALK_GROUPS_ENABLED}) and not in two-tone queue`);
+  }
+  
+  return shouldCheck;
+}
+
+function handleToneDetectionResult(hasTwoTone, detectedTones, transcriptionId, talkGroupID, detectedType = 'unknown') {
+  if (hasTwoTone) {
+    lastTwoToneTime = Date.now();
+    lastDetectedToneGroup = talkGroupID; // Store which talk group had the tone
+    
+    // Clear any existing queue entries for this talk group to start fresh
+    const initialQueueLength = twoToneQueue.length;
+    twoToneQueue = twoToneQueue.filter(call => call.talkGroupID !== talkGroupID);
+    const removedCount = initialQueueLength - twoToneQueue.length;
+    if (removedCount > 0) {
+      logger.info(`Cleared ${removedCount} existing queue entries for TG ${talkGroupID} after new tone detection`);
+    }
+    
+    // *** NEW: Check if this call needs address extraction ***
+    // If this call was skipped for address extraction earlier, process it now
+    if (IS_TWO_TONE_MODE_ENABLED && TWO_TONE_TALK_GROUPS.includes(talkGroupID)) {
+      // Get the transcription text from the database to check if it has content
+      db.get(`SELECT transcription FROM transcriptions WHERE id = ?`, [transcriptionId], async (err, row) => {
+        if (!err && row && row.transcription && row.transcription.length >= 15) {
+          logger.info(`Tone detected on call ID ${transcriptionId} - checking if address extraction was skipped`);
+          
+          // Check if this call already has coordinates (meaning address was already processed)
+          db.get(`SELECT lat, lon FROM transcriptions WHERE id = ?`, [transcriptionId], async (err2, coordRow) => {
+            if (!err2 && coordRow && (coordRow.lat === null || coordRow.lon === null)) {
+              logger.info(`Address extraction was skipped for tone call ID ${transcriptionId} - processing now`);
+              
+              try {
+                await extractAndProcessAddress(transcriptionId, row.transcription, talkGroupID);
+                logger.info(`Successfully processed address extraction for tone call ID ${transcriptionId}`);
+              } catch (addressError) {
+                logger.error(`Error processing address extraction for tone call ID ${transcriptionId}: ${addressError.message}`);
+              }
+            } else if (!err2 && coordRow && coordRow.lat !== null && coordRow.lon !== null) {
+              logger.info(`Address extraction already completed for tone call ID ${transcriptionId}`);
+            }
+          });
+        }
+      });
+    }
+
+    // Build tone details for the main message
+    let toneDetails = '';
+    if (detectedTones && detectedTones.length > 0) {
+      // Build comprehensive tone details including all detected tones
+      const toneDetailsList = [];
+      
+      detectedTones.forEach((tone, index) => {
+        if (tone.tone_a && tone.tone_b) {
+          // Two-tone sequence with separate fields
+          toneDetailsList.push(`${tone.tone_a?.toFixed(1)}Hz + ${tone.tone_b?.toFixed(1)}Hz`);
+        } else if (tone.detected) {
+          // Handle both single tones and two-tone arrays
+          if (Array.isArray(tone.detected)) {
+            // Two-tone sequence with array format [freq1, freq2]
+            const freq1 = Math.round(tone.detected[0]);
+            const freq2 = Math.round(tone.detected[1]);
+            const length1 = tone.tone_a_length ? `${tone.tone_a_length.toFixed(1)}s` : '';
+            const length2 = tone.tone_b_length ? `${tone.tone_b_length.toFixed(1)}s` : '';
+            toneDetailsList.push(`${freq1}Hz (${length1}) + ${freq2}Hz (${length2})`);
+          } else {
+            // Single frequency (long tone)
+            const length = tone.length ? `${tone.length.toFixed(1)}s` : '';
+            toneDetailsList.push(`${Math.round(tone.detected)}Hz (${length})`);
+          }
+        } else if (tone.frequency) {
+          // Alternative frequency field
+          const length = tone.length ? `${tone.length.toFixed(1)}s` : '';
+          toneDetailsList.push(`${tone.frequency?.toFixed(1)}Hz (${length})`);
+        }
+      });
+      
+      if (toneDetailsList.length > 0) {
+        toneDetails = ` TONE_DETAILS[${detectedType}: ${toneDetailsList.join(' | ')}]TONE_DETAILS`;
+      }
+    }
+    
+    logger.info(`Dispatch tone detected on TG ${talkGroupID}!${toneDetails} Next ${TWO_TONE_QUEUE_SIZE_VALUE} calls from this talk group will be checked for addresses`);
+    
+    // Log additional detected tone frequencies if any
+    if (detectedTones && detectedTones.length > 0) {
+      detectedTones.forEach((tone, index) => {
+        if (tone.tone_a && tone.tone_b) {
+          logger.info(`  Tone ${index + 1}: ${tone.tone_a?.toFixed(1)}Hz → ${tone.tone_b?.toFixed(1)}Hz`);
+        } else if (tone.detected) {
+          // Handle both single tones and two-tone arrays
+          if (Array.isArray(tone.detected)) {
+            // Two-tone sequence with array format [freq1, freq2]
+            const freq1 = tone.detected[0]?.toFixed(1);
+            const freq2 = tone.detected[1]?.toFixed(1);
+            const length1 = tone.tone_a_length ? `${tone.tone_a_length.toFixed(1)}s` : '';
+            const length2 = tone.tone_b_length ? `${tone.tone_b_length.toFixed(1)}s` : '';
+            logger.info(`  Tone ${index + 1}: ${freq1}Hz (${length1}) → ${freq2}Hz (${length2})`);
+          } else {
+            // Single frequency (long tone)
+            logger.info(`  Tone ${index + 1}: ${tone.detected?.toFixed(1)}Hz (${tone.length?.toFixed(1)}s)`);
+          }
+        } else if (tone.frequency) {
+          logger.info(`  Pulse ${index + 1}: ${tone.frequency?.toFixed(1)}Hz`);
+        }
+      });
+    }
+  } else {
+    logger.info(`No dispatch tone detected for TG ${talkGroupID} (ID: ${transcriptionId})`);
+    
+    // Clean up stale queue entries when no tone is detected
+    cleanStaleQueueEntries();
+  }
+}
+
+// Clean up stale queue entries (older than 10 minutes)
+function cleanStaleQueueEntries() {
+  const now = Date.now();
+  const staleThreshold = 10 * 60 * 1000; // 10 minutes
+  const initialLength = twoToneQueue.length;
+  
+  twoToneQueue = twoToneQueue.filter(call => {
+    const age = now - call.addedAt;
+    return age < staleThreshold;
+  });
+  
+  const removedCount = initialLength - twoToneQueue.length;
+  if (removedCount > 0) {
+    logger.info(`Cleaned ${removedCount} stale queue entries (older than 10 minutes)`);
+  }
+}
+
+function detectTwoTone(audioFilePath, transcriptionId, talkGroupID, callback) {
+  // For non-local modes, use a separate Python process for tone detection
+  if (effectiveTranscriptionMode !== 'local') {
+    logger.info(`Using standalone tone detection for ${effectiveTranscriptionMode} mode`);
+    return detectTwoToneStandalone(audioFilePath, transcriptionId, talkGroupID, callback);
+  }
+  
+  if (!transcriptionProcess) {
+    logger.error('Transcription process not available for tone detection');
+    if (callback) callback(false, null);
+    return;
+  }
+  
+  const requestId = uuidv4();
+  pendingToneDetections.set(requestId, {
+    transcriptionId,
+    talkGroupID,
+    audioFilePath,
+    callback,
+    startTime: Date.now()
+  });
+  
+  logger.info(`Starting tone detection for ID ${transcriptionId} (request: ${requestId})`);
+  
+  const toneDetectionPayload = {
+    command: 'detect_tones',
+    id: requestId,
+    path: audioFilePath
+  };
+  
+  try {
+    transcriptionProcess.stdin.write(JSON.stringify(toneDetectionPayload) + '\n');
+  } catch (error) {
+    logger.error(`Error sending tone detection command: ${error.message}`);
+    pendingToneDetections.delete(requestId);
+    if (callback) callback(false, error);
+  }
+}
+
+// *** NEW: Queue-based tone detection to prevent race conditions ***
+function detectTwoToneQueued(audioFilePath, transcriptionId, talkGroupID, callback) {
+  // Add to queue instead of running immediately
+  toneDetectionQueue.push({
+    audioFilePath,
+    transcriptionId,
+    talkGroupID,
+    callback,
+    addedAt: Date.now()
+  });
+  
+  logger.info(`Queued tone detection for ID ${transcriptionId} (queue length: ${toneDetectionQueue.length})`);
+  
+  // Start processing if not already running
+  if (!isProcessingToneDetection) {
+    processNextToneDetection();
+  }
+}
+
+function processNextToneDetection() {
+  if (toneDetectionQueue.length === 0 || isProcessingToneDetection) {
+    return;
+  }
+  
+  isProcessingToneDetection = true;
+  const request = toneDetectionQueue.shift();
+  
+  logger.info(`Processing tone detection for ID ${request.transcriptionId} (queue length: ${toneDetectionQueue.length})`);
+  
+  // Use the standalone detection function
+  detectTwoToneStandalone(request.audioFilePath, request.transcriptionId, request.talkGroupID, (hasTwoTone, detectedTones, detectedType) => {
+    // Call the original callback
+    if (request.callback) {
+      request.callback(hasTwoTone, detectedTones, detectedType);
+    }
+    
+    // Mark as done and process next
+    isProcessingToneDetection = false;
+    
+    // Process next request if any
+    if (toneDetectionQueue.length > 0) {
+      setImmediate(() => processNextToneDetection());
+    }
+  });
+}
+
+function detectTwoToneStandalone(audioFilePath, transcriptionId, talkGroupID, callback) {
+  const { spawn } = require('child_process');
+  
+  logger.info(`Starting standalone tone detection for ID ${transcriptionId}`);
+  
+  // Create the Python command to run tone detection
+  const pythonCommand = PYTHON_COMMAND || 'python';
+  
+  logger.info(`Using Python command: ${pythonCommand}`);
+  logger.info(`Running: ${pythonCommand} tone_detect.py "${audioFilePath}"`);
+  const toneArgs = [
+    'tone_detect.py',
+    audioFilePath
+  ];
+  
+  // Set environment variables for the Python process
+  const env = {
+    ...process.env,
+    TONE_DETECTION_TYPE: TWO_TONE_CONFIG.detectionType,
+    TWO_TONE_MIN_TONE_LENGTH: TWO_TONE_CONFIG.minToneLength.toString(),
+    TWO_TONE_MAX_TONE_LENGTH: TWO_TONE_CONFIG.maxToneLength.toString(),
+    PULSED_MIN_CYCLES: TWO_TONE_CONFIG.pulsedMinCycles.toString(),
+    PULSED_MIN_ON_MS: TWO_TONE_CONFIG.pulsedMinOnMs.toString(),
+    PULSED_MAX_ON_MS: TWO_TONE_CONFIG.pulsedMaxOnMs.toString(),
+    PULSED_MIN_OFF_MS: TWO_TONE_CONFIG.pulsedMinOffMs.toString(),
+    PULSED_MAX_OFF_MS: TWO_TONE_CONFIG.pulsedMaxOffMs.toString(),
+    PULSED_BANDWIDTH_HZ: TWO_TONE_CONFIG.pulsedBandwidthHz.toString(),
+    LONG_TONE_MIN_LENGTH: TWO_TONE_CONFIG.longToneMinLength.toString(),
+    LONG_TONE_BANDWIDTH_HZ: TWO_TONE_CONFIG.longToneBandwidthHz.toString(),
+    TONE_DETECTION_THRESHOLD: TWO_TONE_CONFIG.detectionThreshold.toString(),
+    TONE_FREQUENCY_BAND: TWO_TONE_CONFIG.frequencyBand,
+    TONE_TIME_RESOLUTION_MS: TWO_TONE_CONFIG.timeResolutionMs.toString()
+  };
+  
+  try {
+    const toneProcess = spawn(pythonCommand, toneArgs, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: env,
+      timeout: 30000 // 30 second timeout
+    });
+    
+    let output = '';
+    let errorOutput = '';
+    
+    toneProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    toneProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+    
+    toneProcess.on('close', (code) => {
+      if (code === 0) {
+        try {
+          const result = JSON.parse(output);
+          const hasTwoTone = result.has_two_tone || false;
+          
+          // Extract tones from the CLI output JSON
+          let detectedTones = [];
+          let detectedType = result.detected_type || 'unknown';
+          if (result.detection_result && result.detection_result.cli_output) {
+            try {
+              const cliResult = JSON.parse(result.detection_result.cli_output);
+              // Combine all detected tone types into one array
+              detectedTones = [
+                ...(cliResult.long_tone || []),
+                ...(cliResult.two_tone || []),
+                ...(cliResult.pulsed || [])
+              ];
+            } catch (cliParseError) {
+              logger.warn(`Error parsing CLI output: ${cliParseError.message}`);
+            }
+          }
+          
+          logger.info(`Standalone tone detection result for ID ${transcriptionId}: ${hasTwoTone} (${detectedTones.length} tones)`);
+          
+          // Log stderr output for debugging
+          if (errorOutput.trim()) {
+            logger.info(`Tone detection stderr output: ${errorOutput.trim()}`);
+          }
+          
+          // Log stdout for debugging
+          if (output.trim()) {
+            logger.info(`Tone detection stdout output: ${output.trim()}`);
+          }
+          
+          // Note: Don't process the result here - let the callback handle it via handleToneDetectionResult()
+          
+          if (callback) {
+            callback(hasTwoTone, detectedTones, detectedType);
+          }
+        } catch (parseError) {
+          logger.error(`Error parsing tone detection output: ${parseError.message}`);
+          logger.error(`Raw output: ${output}`);
+          if (callback) callback(false, null, 'unknown');
+        }
+      } else {
+        logger.error(`Standalone tone detection failed with code ${code}`);
+        logger.error(`Error output: ${errorOutput}`);
+        if (callback) callback(false, null, 'unknown');
+      }
+    });
+    
+    toneProcess.on('error', (error) => {
+      logger.error(`Standalone tone detection process error: ${error.message}`);
+      if (callback) callback(false, null, 'unknown');
+    });
+    
+  } catch (error) {
+    logger.error(`Error starting standalone tone detection: ${error.message}`);
+    if (callback) callback(false, null, 'unknown');
+  }
+}
+
+function handleLocalToneDetectionResult(result) {
+  const requestId = result.id;
+  const pendingDetection = pendingToneDetections.get(requestId);
+  
+  if (!pendingDetection) {
+    logger.warn(`Received tone detection result for unknown request: ${requestId}`);
+    return;
+  }
+  
+  pendingToneDetections.delete(requestId);
+  
+  const { transcriptionId, talkGroupID, callback } = pendingDetection;
+  const hasTwoTone = result.has_two_tone || false;
+  const detectedTones = result.detected_tones || [];
+  
+  logger.info(`Tone detection result for ID ${transcriptionId}: ${hasTwoTone} (${detectedTones.length} tones)`);
+  
+  if (hasTwoTone) {
+    lastTwoToneTime = Date.now();
+    lastDetectedToneGroup = talkGroupID; // Store which talk group had the tone
+    logger.info(`Tone detected on TG ${talkGroupID}! Next ${TWO_TONE_QUEUE_SIZE_VALUE} calls from this talk group will be checked for addresses`);
+    
+    // Log detected tone frequencies
+    detectedTones.forEach((tone, index) => {
+      if (tone.tone_a && tone.tone_b) {
+        logger.info(`  Tone ${index + 1}: ${tone.tone_a?.toFixed(1)}Hz → ${tone.tone_b?.toFixed(1)}Hz`);
+      } else if (tone.detected) {
+        // Handle both single tones and two-tone arrays
+        if (Array.isArray(tone.detected)) {
+          // Two-tone sequence with array format [freq1, freq2]
+          const freq1 = tone.detected[0]?.toFixed(1);
+          const freq2 = tone.detected[1]?.toFixed(1);
+          const length1 = tone.tone_a_length ? `${tone.tone_a_length.toFixed(1)}s` : '';
+          const length2 = tone.tone_b_length ? `${tone.tone_b_length.toFixed(1)}s` : '';
+          logger.info(`  Tone ${index + 1}: ${freq1}Hz (${length1}) → ${freq2}Hz (${length2})`);
+        } else {
+          // Single frequency (long tone)
+          logger.info(`  Tone ${index + 1}: ${tone.detected?.toFixed(1)}Hz (${tone.length?.toFixed(1)}s)`);
+        }
+      } else if (tone.frequency) {
+        logger.info(`  Pulse ${index + 1}: ${tone.frequency?.toFixed(1)}Hz`);
+      }
+    });
+  }
+  
+  if (callback) {
+    callback(hasTwoTone, detectedTones);
+  }
+}
 
 // Whitelist patterns for console INFO messages
 const allowedPatterns = [
@@ -191,7 +687,9 @@ const allowedPatterns = [
   // /^Received remote transcription for/,
 
   // Add specific essential INFO messages you *do* want to see below:
-  /^Example essential message pattern$/,
+  
+  // Two-tone detection messages (only the main alert)
+  /^Dispatch tone detected on TG \d+!/,
 
 ];
 
@@ -264,6 +762,23 @@ const logger = winston.createLogger({
                     color = '\x1b[33m'; // Yellow overrides level color
                 } else if (message.includes('Extracted Address') || message.includes('Geocoded Address')) {
                     color = '\x1b[32m'; // Green overrides level color
+                } else if (message.includes('Dispatch tone detected on TG')) {
+                    // Special handling for tone detection messages with blue details
+                    if (message.includes('TONE_DETAILS')) {
+                        // Split the message at the tone details markers
+                        const parts = message.split('TONE_DETAILS');
+                        if (parts.length === 3) {
+                            // parts[0] = "Dispatch tone detected on TG 4005! "
+                            // parts[1] = "[long: 436Hz, 1.0s]"  
+                            // parts[2] = " Next 1 calls..."
+                            formattedMessage = `\x1b[33m${parts[0]}\x1b[34m${parts[1]}\x1b[33m${parts[2]}\x1b[0m`;
+                            color = ''; // Don't apply additional color since we handle it inline
+                        } else {
+                            color = '\x1b[33m'; // Yellow fallback
+                        }
+                    } else {
+                        color = '\x1b[33m'; // Yellow for tone detection alerts without details
+                    }
                 }
 
                 // Handle Transcription Text coloring separately
@@ -1491,7 +2006,7 @@ async function startTranscriptionProcess() {
   // Handle each line of output with improved error handling
   rl.on('line', (line) => {
     try {
-      // Update activity timestamp
+      // Update activity timestamp (process is alive and responding)
       lastProcessActivity = Date.now();
       
       // Check if line is empty or just whitespace before parsing
@@ -1507,6 +2022,14 @@ async function startTranscriptionProcess() {
         // Start health check monitoring after ready signal
         startProcessHealthCheck();
         processNextTranscription(); // Process queue on ready
+      } else if (response.heartbeat) {
+        // Heartbeat received - process is alive during radio silence
+        logger.debug(`Transcription process heartbeat received (${new Date(response.timestamp * 1000).toLocaleTimeString()})`);
+        // Activity is already updated above, no need to do anything else
+      } else if (response.id && response.has_two_tone !== undefined) {
+        // Handle tone detection result
+        logger.info(`Received tone detection result for ID: ${response.id}`);
+        handleLocalToneDetectionResult(response);
       } else if (response.id && response.transcription !== undefined) {
         logger.info(`Received local transcription for ID: ${response.id}`);
 
@@ -1759,9 +2282,17 @@ function startProcessHealthCheck() {
     const timeSinceActivity = Date.now() - lastProcessActivity;
     const queueSize = transcriptionQueue.length;
     
-    // If no activity for 5 minutes, consider process dead
-    if (timeSinceActivity > 300000) {
-      logger.error('Transcription process appears to be dead (no activity for 5 minutes). Restarting...');
+    // Only restart if there's BOTH no activity AND items in queue (indicating a real problem)
+    // Radio silence (no queue items) is normal and shouldn't trigger restart
+    if (timeSinceActivity > 600000 && queueSize > 0) { // 10 minutes + queue items = real problem
+      logger.error(`Transcription process appears stuck (no activity for 10 minutes with ${queueSize} items queued). Restarting...`);
+      cleanupTranscriptionProcess();
+      if (effectiveTranscriptionMode === 'local') {
+        setTimeout(startTranscriptionProcess, 5000);
+      }
+      return;
+    } else if (timeSinceActivity > 1800000) { // 30 minutes with no activity at all (safety net)
+      logger.warn(`Very long radio silence detected (30+ minutes). Performing health check restart as precaution...`);
       cleanupTranscriptionProcess();
       if (effectiveTranscriptionMode === 'local') {
         setTimeout(startTranscriptionProcess, 5000);
@@ -1785,15 +2316,15 @@ function startProcessHealthCheck() {
       lastQueueSizeLog = queueSize;
     }
     
-    // Force restart if queue is stuck with items but not processing
-    if (queueSize > 10 && !isProcessingTranscription && timeSinceActivity > 120000) {
-      logger.error(`Queue appears stuck with ${queueSize} items but not processing. Force restarting transcription process...`);
+    // Force restart if queue is definitely stuck (more conservative)
+    if (queueSize > 15 && !isProcessingTranscription && timeSinceActivity > 300000) { // 5 minutes + 15+ items = real stuck
+      logger.error(`Queue definitely stuck with ${queueSize} items and no processing for 5 minutes. Force restarting transcription process...`);
       cleanupTranscriptionProcess();
       if (effectiveTranscriptionMode === 'local') {
         setTimeout(startTranscriptionProcess, 2000);
       }
     }
-  }, 30000); // Check every 30 seconds for busy systems
+  }, 60000); // Check every 60 seconds (less frequent)
 }
 
 // Function to process the next transcription in the queue
@@ -2010,9 +2541,16 @@ async function transcribeWithOpenAIAPI(filePath, callback) {
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath));
     form.append('model', 'whisper-1'); // OpenAI's primary transcription model
+    
+    const filenameForLog = path.basename(filePath);
+    
+    // Add custom prompt if configured to improve scanner audio transcription
+    if (OPENAI_TRANSCRIPTION_PROMPT) {
+      form.append('prompt', OPENAI_TRANSCRIPTION_PROMPT);
+      logger.info(`Using custom OpenAI transcription prompt for ${filenameForLog}`);
+    }
 
     const apiEndpoint = `https://api.openai.com/v1/audio/transcriptions`;
-    const filenameForLog = path.basename(filePath);
     logger.info(`Sending OpenAI transcription request for ${filenameForLog} to ${apiEndpoint}`);
 
     const controller = new AbortController();
@@ -2274,11 +2812,39 @@ function handleNewAudio(audioData) {
         const afterStorageComplete = (finalPathIfLocal) => { // finalPathIfLocal is null for S3, path string for local
 
             // Define the common callback for processing transcription results
-            const processingCallback = (transcriptionText) => {
+            const processingCallback = async (transcriptionText) => {
                 if (!transcriptionText) {
-                  logger.warn(`No transcription obtained for ID ${transcriptionId} (${filename})`);
-                  updateTranscription(transcriptionId, "", () => {
+                  // Check if this might be a tone file by looking at the talk group
+                  const possibleToneFile = IS_TWO_TONE_MODE_ENABLED && TWO_TONE_TALK_GROUPS.includes(talkGroupID);
+                  const warningMsg = possibleToneFile ? 
+                    `No transcription obtained for ID ${transcriptionId} (${filename}) - likely tone file or too short` :
+                    `No transcription obtained for ID ${transcriptionId} (${filename}) - file too short or no speech`;
+                  
+                  logger.warn(warningMsg);
+                  updateTranscription(transcriptionId, "", async () => {
                     logger.info(`Updated DB with empty transcription for ID ${transcriptionId}`);
+                    
+                    // *** IMPORTANT: Check for two-tone even with empty transcription ***
+                    // Tone files might contain only tones without voice content
+                    if (IS_TWO_TONE_MODE_ENABLED && TWO_TONE_TALK_GROUPS.includes(talkGroupID)) {
+                      logger.info(`Checking for two-tone in talk group ${talkGroupID} (ID: ${transcriptionId}) - empty transcription`);
+                      
+                      // Use the audio file path for tone detection
+                      const audioPathForTones = STORAGE_MODE === 's3' ? 
+                        `https://${S3_ENDPOINT.replace('https://', '').replace('http://', '')}/${S3_BUCKET_NAME}/${filename}` :
+                        (finalPathIfLocal || path.join(__dirname, 'audio', filename));
+                      
+                      // Wait for tone detection to complete before continuing
+                      await new Promise((resolve) => {
+                        detectTwoToneQueued(audioPathForTones, transcriptionId, talkGroupID, (hasTwoTone, detectedTones, detectedType) => {
+                          handleToneDetectionResult(hasTwoTone, detectedTones, transcriptionId, talkGroupID, detectedType);
+                          resolve();
+                        });
+                      });
+                      
+                      logger.info(`Tone detection completed for ID ${transcriptionId} (empty transcription)`);
+                    }
+                    
                     // Clean up temp file only if storage was S3
                     if (STORAGE_MODE === 's3') {
                       // Use setImmediate to avoid file handle race conditions
@@ -2298,11 +2864,11 @@ function handleNewAudio(audioData) {
 
                 logger.info(`Transcription Text: ${transcriptionText}`);
                 // We got transcription text, update the database
-                updateTranscription(transcriptionId, transcriptionText, () => {
+                updateTranscription(transcriptionId, transcriptionText, async () => {
                   logger.info(`Updated DB transcription for ID ${transcriptionId}`);
 
-                  // Now handle the logic that uses the transcription
-                  handleNewTranscription(
+                  // Now handle the logic that uses the transcription - WAIT for it to complete
+                  await handleNewTranscription(
                     transcriptionId, transcriptionText, talkGroupID, systemName,
                     talkGroupName, source, talkGroupGroup, storagePath, // Pass storagePath
                     totalErrors, totalSpikes // <-- Pass new counts
@@ -2645,17 +3211,65 @@ async function handleNewTranscription(
   logger.info(`Transcription text length: ${transcriptionText.length} characters`);
   logger.info(`Talk Group: ${talkGroupID} - ${talkGroupName}`);
 
+  // Auto-queue calls after two-tone detection (if in two-tone mode)
+  if (IS_TWO_TONE_MODE_ENABLED && lastTwoToneTime > 0 && lastDetectedToneGroup) {
+    const timeSinceTwoTone = Date.now() - lastTwoToneTime;
+    const isSameTalkGroup = talkGroupID === lastDetectedToneGroup;
+    const sameTgQueueCount = twoToneQueue.filter(call => call.talkGroupID === talkGroupID).length;
+    
+    const shouldAutoQueue = timeSinceTwoTone < 60000 && // Within 1 minute of two-tone
+                           isSameTalkGroup && // Same talk group as tone detection
+                           sameTgQueueCount < TWO_TONE_QUEUE_SIZE_VALUE; // Queue not full for this TG
+    
+    if (shouldAutoQueue) {
+      logger.info(`Auto-queuing call ID ${id} from TG ${talkGroupID} for address extraction (${timeSinceTwoTone}ms after tone)`);
+      addToTwoToneQueue({
+        id: id,
+        talkGroupID: talkGroupID,
+        talkGroupName: talkGroupName,
+        transcriptionText: transcriptionText
+      });
+    } else if (IS_TWO_TONE_MODE_ENABLED && lastTwoToneTime > 0) {
+      if (!isSameTalkGroup) {
+        logger.info(`Skipping auto-queue for ID ${id}: Different talk group (${talkGroupID} vs ${lastDetectedToneGroup})`);
+      } else if (sameTgQueueCount >= TWO_TONE_QUEUE_SIZE_VALUE) {
+        logger.info(`Skipping auto-queue for ID ${id}: Queue full for TG ${talkGroupID}`);
+      }
+    }
+  }
+
   const timeout = setTimeout(() => {
     logger.error(`Timeout occurred in handleNewTranscription for ID ${id}`);
   }, 40000); // Increased timeout from 15 to 40 seconds
 
   try {
-    if (transcriptionText.length >= 15 && MAPPED_TALK_GROUPS.includes(talkGroupID)) {
+    // Handle address extraction based on mode
+    if (transcriptionText.length >= 15 && shouldCheckForAddress(talkGroupID, id)) {
       await extractAndProcessAddress(id, transcriptionText, talkGroupID);
     } else if (transcriptionText.length < 15) {
       logger.info(`Skipping address extraction for short transcription (ID ${id}): ${transcriptionText.length} characters`);
-    } else {
+    } else if (!IS_TWO_TONE_MODE_ENABLED) {
       logger.info(`Skipping address extraction for non-whitelisted talk group: ${talkGroupID}`);
+    }
+
+    // Handle two-tone detection if enabled and this is a monitored talk group
+    if (IS_TWO_TONE_MODE_ENABLED && TWO_TONE_TALK_GROUPS.includes(talkGroupID) && audioFilePath) {
+      logger.info(`Checking for two-tone in talk group ${talkGroupID} (ID: ${id})`);
+      
+      // Construct the proper audio path for tone detection
+      const audioPathForTones = STORAGE_MODE === 's3' ? 
+        `https://${S3_ENDPOINT.replace('https://', '').replace('http://', '')}/${S3_BUCKET_NAME}/${audioFilePath}` :
+        path.join(__dirname, 'audio', audioFilePath); // Construct full local path
+      
+      // Wait for tone detection to complete before continuing
+      await new Promise((resolve) => {
+        detectTwoToneQueued(audioPathForTones, id, talkGroupID, (hasTwoTone, detectedTones, detectedType) => {
+          handleToneDetectionResult(hasTwoTone, detectedTones, id, talkGroupID, detectedType);
+          resolve();
+        });
+      });
+      
+      logger.info(`Tone detection completed for ID ${id}`);
     }
 
     // Store the message URL

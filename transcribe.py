@@ -1,4 +1,5 @@
 # persistent_transcribe.py
+# Enhanced with OpenAI-style prompting support for better scanner audio transcription
 import sys
 import io
 import torch
@@ -11,6 +12,16 @@ import numpy as np
 from pydub import AudioSegment
 from dotenv import load_dotenv
 
+# Import tone detection module
+try:
+    from tone_detect import ToneDetector
+    TONE_DETECTION_AVAILABLE = True
+    logger_temp = logging.getLogger(__name__)
+    logger_temp.info("✓ Tone detection module loaded successfully")
+except ImportError as e:
+    TONE_DETECTION_AVAILABLE = False
+    print(f"WARNING: Tone detection not available: {e}", file=sys.stderr)
+
 # Suppress specific CUDA compatibility warnings for newer GPUs
 warnings.filterwarnings("ignore", message=".*CUDA capability.*not compatible.*")
 warnings.filterwarnings("ignore", message=".*with CUDA capability.*")
@@ -21,6 +32,7 @@ load_dotenv()
 # Get environment variables - strict loading, no defaults
 WHISPER_MODEL = os.getenv('WHISPER_MODEL')
 TRANSCRIPTION_DEVICE = os.getenv('TRANSCRIPTION_DEVICE')
+OPENAI_TRANSCRIPTION_PROMPT = os.getenv('OPENAI_TRANSCRIPTION_PROMPT')
 
 # Validate required environment variables
 required_vars = ['WHISPER_MODEL', 'TRANSCRIPTION_DEVICE']
@@ -80,6 +92,10 @@ def validate_startup_environment():
                 return False
             else:
                 print(f"✓ CUDA available: {torch.cuda.get_device_name()}", file=sys.stderr)
+        
+        # Log prompt configuration if available
+        if OPENAI_TRANSCRIPTION_PROMPT:
+            print("✓ Custom transcription prompt configured", file=sys.stderr)
         
         print("✓ Environment validation passed", file=sys.stderr)
         return True
@@ -153,18 +169,53 @@ try:
         cpu_threads=0  # Use default CPU threads (auto-detect)
     )
     logger.info(f"Loaded model: {WHISPER_MODEL} on {device} with compute_type: {compute_type}")
+    
+    # Log prompt configuration if available
+    if OPENAI_TRANSCRIPTION_PROMPT:
+        logger.info("Custom transcription prompt configured for scanner audio context")
 except Exception as e:
     error_msg = f"Error loading model: {str(e)}"
     print(error_msg, file=sys.stderr)
     sys.exit(1)
 
+# Initialize tone detector if available
+tone_detector = None
+if TONE_DETECTION_AVAILABLE:
+    try:
+        # Get tone detection configuration from environment or use defaults
+        tone_config = {
+            'tone_a_min_length': float(os.getenv('TWO_TONE_MIN_TONE_LENGTH', '0.85')),
+            'tone_b_min_length': float(os.getenv('TWO_TONE_MAX_TONE_LENGTH', '5.0')),
+            'matching_threshold': float(os.getenv('TWO_TONE_DETECTION_THRESHOLD', '2.5')),
+            'fe_freq_band': os.getenv('TWO_TONE_FREQUENCY_BAND', '200,3000'),
+            'two_tone_bw_hz': int(os.getenv('TWO_TONE_BANDWIDTH_HZ', '25')),
+            'two_tone_min_pair_separation_hz': int(os.getenv('TWO_TONE_MIN_PAIR_SEPARATION_HZ', '40')),
+            'time_resolution_ms': int(os.getenv('TWO_TONE_TIME_RESOLUTION_MS', '50'))
+        }
+        tone_detector = ToneDetector(tone_config)
+        logger.info("✓ Tone detector initialized with configuration")
+    except Exception as e:
+        logger.warning(f"Failed to initialize tone detector: {e}")
+        tone_detector = None
+
 # Signal that the model is loaded and ready
 print(json.dumps({"ready": True}))
 sys.stdout.flush()
 
+# Track last heartbeat time
+import time
+last_heartbeat = time.time()
+
 # Main loop to process commands
 while True:
     try:
+        # Send periodic heartbeat to show process is alive during quiet periods
+        current_time = time.time()
+        if current_time - last_heartbeat > 300:  # 5 minutes
+            print(json.dumps({"heartbeat": True, "timestamp": current_time}))
+            sys.stdout.flush()
+            last_heartbeat = current_time
+        
         # Read command from stdin with timeout handling
         line = sys.stdin.readline().strip()
         if not line:
@@ -214,6 +265,40 @@ while True:
                     error_detail = f"Error processing audio buffer: {str(e)}"
             else:
                 error_detail = "Invalid command format: missing 'path' or 'audio_data_base64'."
+        elif command.get('command') == 'detect_tones':
+            # Handle tone detection command
+            if not TONE_DETECTION_AVAILABLE or not tone_detector:
+                error_detail = "Tone detection is not available. Please install icad-tone-detection."
+            elif 'path' in command:
+                audio_file_path = command['path']
+                if not os.path.isfile(audio_file_path):
+                    error_detail = f"Audio file does not exist: {audio_file_path}"
+                else:
+                    # Process tone detection immediately and return result
+                    logger.info(f"Processing tone detection request ID: {request_id} for file: {audio_file_path}")
+                    try:
+                        detection_result = tone_detector.detect_tones_in_file(audio_file_path)
+                        detected_tones = tone_detector.get_detected_tones(detection_result)
+                        
+                        response = {
+                            "id": request_id,
+                            "has_two_tone": detection_result.get('has_two_tone', False),
+                            "detected_tones": detected_tones,
+                            "file_path": audio_file_path
+                        }
+                        
+                        if 'error' in detection_result:
+                            response['error'] = detection_result['error']
+                        
+                        logger.info(f"Tone detection completed for ID {request_id}: {response['has_two_tone']}")
+                        print(json.dumps(response))
+                        sys.stdout.flush()
+                        continue  # Skip the transcription processing section
+                        
+                    except Exception as e:
+                        error_detail = f"Error during tone detection: {str(e)}"
+            else:
+                error_detail = "Tone detection requires 'path' parameter."
         else:
              error_detail = f"Invalid command: {command.get('command')}"
 
@@ -279,17 +364,25 @@ while True:
             if input_type == 'buffer':
                 import gc
                 gc.collect()  # Force garbage collection before processing large audio
+            
+            # Prepare transcription parameters
+            transcription_params = {
+                'audio_input': audio_input,  # Can be path string or numpy array
+                'language': 'en',
+                'beam_size': 3,  # Reduced from 5 to 3 for faster processing
+                'vad_filter': True,
+                'vad_parameters': {"min_silence_duration_ms": 750},  # Increased threshold for busy systems
+                'word_timestamps': False,  # Disable word timestamps for speed
+                'condition_on_previous_text': False  # Disable for better performance
+            }
+            
+            # Add prompt if available (helps with scanner audio context)
+            if OPENAI_TRANSCRIPTION_PROMPT:
+                transcription_params['prompt'] = OPENAI_TRANSCRIPTION_PROMPT
+                logger.info(f"Using custom transcription prompt for ID {request_id}")
                 
             # Try with VAD filtering first - optimized for high-volume systems
-            segments, info = model.transcribe(
-                audio_input, # Can be path string or numpy array
-                language='en',
-                beam_size=3,  # Reduced from 5 to 3 for faster processing
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 750},  # Increased threshold for busy systems
-                word_timestamps=False,  # Disable word timestamps for speed
-                condition_on_previous_text=False  # Disable for better performance
-            )
+            segments, info = model.transcribe(**transcription_params)
 
             segments_text = [segment.text for segment in segments]
             transcription = " ".join(segments_text).strip()
@@ -297,14 +390,12 @@ while True:
             # If transcription is empty after VAD filtering, try without VAD
             if not transcription:
                 logger.info(f"Retrying transcription for ID {request_id} without VAD filter.")
-                segments, info = model.transcribe(
-                    audio_input,
-                    language='en',
-                    beam_size=3,  # Reduced beam size for consistency
-                    vad_filter=False,
-                    word_timestamps=False,
-                    condition_on_previous_text=False
-                )
+                
+                # Retry without VAD but keep other parameters including prompt
+                retry_params = transcription_params.copy()
+                retry_params['vad_filter'] = False
+                
+                segments, info = model.transcribe(**retry_params)
                 segments_text = [segment.text for segment in segments]
                 transcription = " ".join(segments_text).strip()
 
