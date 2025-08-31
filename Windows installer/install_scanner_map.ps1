@@ -106,7 +106,7 @@ function Install-Prerequisites {
     Write-Host "Installing/Upgrading Git..."
     Run-Command { winget install --exact --id Git.Git --source winget --accept-package-agreements --accept-source-agreements } "Failed to install Git."
     Write-Host "Installing/Upgrading Visual Studio Build Tools (This may take a significant amount of time)..."
-    Run-Command { winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --accept-package-agreements --accept-source-agreements --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" } "Failed to install VS Build Tools."
+    Run-Command { winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --accept-package-agreements --accept-source-agreements --override "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows10SDK.20348 --includeRecommended" } "Failed to install VS Build Tools."
     Write-Host "Installing/Upgrading FFmpeg..."
     Run-Command { winget install --exact --id Gyan.FFmpeg --source winget --accept-package-agreements --accept-source-agreements } "Failed to install FFmpeg."
     Write-Host "Verifying FFmpeg (check output manually)..."
@@ -395,6 +395,20 @@ function Create-EnvFile {
     $envContent += ""
     $envContent += "# Note: The OPENAI_API_KEY from the section below is used if TRANSCRIPTION_MODE is 'openai'."
     $envContent += ""
+    
+    # --- OpenAI Transcription Prompt (Only used if TRANSCRIPTION_MODE=openai) ---
+    $envContent += "# Custom prompt to improve scanner audio transcription quality"
+    $envContent += "# This helps OpenAI better understand and transcribe police/fire/EMS scanner audio"
+    $envContent += "OPENAI_TRANSCRIPTION_PROMPT=""This is audio from a police/fire/EMS scanner radio system. The audio may contain:"
+    $envContent += "- Emergency dispatch calls and responses"
+    $envContent += "- Radio communication between first responders"
+    $envContent += "- Background noise, static, and radio artifacts"
+    $envContent += "- Police codes, fire terminology, and emergency abbreviations"
+    $envContent += "- Addresses, locations, and incident descriptions"
+    $envContent += "- Names, unit numbers, and call signs"
+    $envContent += ""
+    $envContent += "Please transcribe the audio clearly, maintaining the original meaning and context. If you hear addresses, locations, or specific details, transcribe them accurately. Handle background noise gracefully and focus on the main communication content."""
+    $envContent += ""
 
     # --- Geocoding ---
     $envContent += "#################################################################"
@@ -522,6 +536,47 @@ function Create-EnvFile {
     [void]$script:ManualEditList.Add("TALK_GROUP_XXXX mappings")
     $envContent += ""
 
+    # --- Two-Tone Detection Settings ---
+    $envContent += "#################################################################"
+    $envContent += "##              TWO-TONE DETECTION SETTINGS                    ##"
+    $envContent += "#################################################################"
+    $envContent += ""
+    $envContent += "# Enable/disable two-tone detection mode"
+    $envContent += "ENABLE_TWO_TONE_MODE=true"
+    $envContent += ""
+    $envContent += "# Comma-separated list of Talk Group IDs for two-tone detection"
+    $envContent += "TWO_TONE_TALK_GROUPS=4005"
+    $envContent += ""
+    $envContent += "# Number of calls to check for addresses after tone detection"
+    $envContent += "TWO_TONE_QUEUE_SIZE=1"
+    $envContent += ""
+    $envContent += "# Tone detection type: 'auto', 'cli', or 'python'"
+    $envContent += "TONE_DETECTION_TYPE=auto"
+    $envContent += ""
+    $envContent += "# --- Two-tone parameters ---"
+    $envContent += "TWO_TONE_MIN_TONE_LENGTH=0.7"
+    $envContent += "TWO_TONE_MAX_TONE_LENGTH=3.0"
+    $envContent += "TWO_TONE_BW_HZ=50"
+    $envContent += "TWO_TONE_MIN_PAIR_SEPARATION_HZ=100"
+    $envContent += ""
+    $envContent += "# --- Pulsed tone parameters ---"
+    $envContent += "PULSED_MIN_CYCLES=3"
+    $envContent += "PULSED_MIN_ON_MS=50"
+    $envContent += "PULSED_MAX_ON_MS=500"
+    $envContent += "PULSED_MIN_OFF_MS=25"
+    $envContent += "PULSED_MAX_OFF_MS=800"
+    $envContent += "PULSED_BANDWIDTH_HZ=50"
+    $envContent += ""
+    $envContent += "# --- Long tone parameters ---"
+    $envContent += "LONG_TONE_MIN_LENGTH=0.5"
+    $envContent += "LONG_TONE_BANDWIDTH_HZ=75"
+    $envContent += ""
+    $envContent += "# --- General detection parameters ---"
+    $envContent += "TONE_DETECTION_THRESHOLD=0.3"
+    $envContent += "TONE_FREQUENCY_BAND=300,1500"
+    $envContent += "TONE_TIME_RESOLUTION_MS=15"
+    $envContent += ""
+
     # Write the content to the .env file
     try {
         # Use Set-Content with -Encoding UTF8 for better compatibility
@@ -537,13 +592,33 @@ function Create-EnvFile {
 function Install-NodeDeps {
     Print-Message "Installing Node.js dependencies..."
     Set-Location $InstallDir
-    # Attempt npm install - Added form-data and aws-sdk
-    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
+    
+    # Clear npm cache first
+    Write-Host "Clearing npm cache..."
+    npm cache clean --force
+    
+    # Check if package.json exists, if so use it, otherwise install manually
+    if (Test-Path ".\package.json") {
+        Write-Host "Found package.json. Installing dependencies..."
+        npm install --no-audit --no-fund
+        if (-not $?) {
+            Write-Warning "npm install from package.json failed. Trying manual installation..."
+        } else {
+            Print-Message "Node.js dependencies installed from package.json."
+            return
+        }
+    }
+    
+    # Manual installation as fallback
+    Write-Host "Installing packages manually..."
+    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
+    
     if (-not $?) {
         Write-Warning "First npm install attempt failed. Trying again..."
-        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
+        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
         if (-not $?) {
              Write-Warning "npm install failed again. Please check errors and try running 'npm install' manually in $InstallDir."
+             Write-Warning "For native modules like bcrypt/sqlite3, you may need: npm install bcrypt --build-from-source"
         }
     }
     Print-Message "Node.js dependency installation attempted."
@@ -562,8 +637,8 @@ function Setup-PythonDeps {
         $torchInstallCmd = "pip3 install torch torchvision torchaudio"
     }
     Run-Command { Invoke-Expression $torchInstallCmd } "Failed to install PyTorch."
-    Write-Host "Installing faster-whisper, python-dotenv, and pydub..."
-    Run-Command { pip3 install faster-whisper python-dotenv pydub } "Failed to install faster-whisper/python-dotenv/pydub."
+    Write-Host "Installing faster-whisper, python-dotenv, pydub, and icad-tone-detection..."
+    Run-Command { pip3 install faster-whisper python-dotenv pydub icad-tone-detection } "Failed to install faster-whisper/python-dotenv/pydub/icad-tone-detection."
     Print-Message "Python dependency installation attempted."
 }
 
@@ -650,24 +725,39 @@ function Manual-StepsReminder {
     Write-Host "    - Review map center, zoom, icons, etc."
     Write-Host ""
     Write-Host "3.  API Key for SDRTrunk/TrunkRecorder:" -ForegroundColor Green
-    Write-Host "    - Edit 'GenApiKey.js' ('notepad .\GenApiKey.js') and set your desired secret key."
-    Write-Host "    - Run 'node GenApiKey.js' in this directory to get the HASHED key."
-    Write-Host "    - Create/edit 'data\apikeys.json' ('notepad .\data\apikeys.json')."
-    Write-Host "    - Add the HASHED key in the format: [{""key"":""YOUR_HASHED_KEY_HERE"",""disabled"":false}]" # Escaped quotes for PowerShell
+    Write-Host "    - API key is now AUTO-GENERATED on first boot!" -ForegroundColor Green
+    Write-Host "    - Watch the console when you first run 'node bot.js' - it will display the generated key" -ForegroundColor Yellow
+    Write-Host "    - Save this key for your SDRTrunk/TrunkRecorder configuration" -ForegroundColor Yellow
+    Write-Host "    - The hashed version is automatically saved to 'data\apikeys.json'" -ForegroundColor Green
     Write-Host ""
     Write-Host "4.  (If Skipped) Import Talk Groups:" -ForegroundColor Green
     Write-Host "    - Place 'talkgroups.csv' / 'frequencies.csv' in '$InstallDir'."
-    Write-Host "    - Run 'node import_csv.js'."
+    Write-Host "    - Talkgroups are now AUTO-IMPORTED on first boot if the CSV file exists!" -ForegroundColor Green
     Write-Host ""
-    Write-Host "5.  (Optional) Initialize Admin User (if ENABLE_AUTH=true in .env):" -ForegroundColor Green
-    Write-Host "    - Run 'node init-admin.js'."
+    Write-Host "5.  Admin User (if ENABLE_AUTH=true in .env):" -ForegroundColor Green
+    Write-Host "    - Admin user is now AUTO-CREATED on first boot!" -ForegroundColor Green
+    Write-Host "    - Uses the WEBSERVER_PASSWORD from your .env file" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "--- HOW TO RUN ---" -ForegroundColor Magenta
-    Write-Host "1. Open PowerShell/CMD 1: cd $InstallDir"
-    Write-Host "   (If using venv for Python, activate it first)"
+    Write-Host "--- HOW TO RUN (NEW INTEGRATED MODE) ---" -ForegroundColor Magenta
+    Write-Host "IMPORTANT: The bot now handles everything automatically!" -ForegroundColor Green
+    Write-Host "1. Open PowerShell/CMD: cd $InstallDir"
     Write-Host "   node bot.js"
-    Write-Host "2. Open PowerShell/CMD 2: cd $InstallDir"
-    Write-Host "   node webserver.js"
+    Write-Host ""
+    Write-Host "The bot will now automatically:" -ForegroundColor Yellow
+    Write-Host "  ✅ Create database and tables" -ForegroundColor Green
+    Write-Host "  ✅ Generate API key on first boot" -ForegroundColor Green
+    Write-Host "  ✅ Import talkgroups from CSV (if not already imported)" -ForegroundColor Green
+    Write-Host "  ✅ Create admin user (if ENABLE_AUTH=true)" -ForegroundColor Green
+    Write-Host "  ✅ Start Discord bot services" -ForegroundColor Green
+    Write-Host "  ✅ Start webserver last (after everything is ready)" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "You NO LONGER need to:" -ForegroundColor Red
+    Write-Host "  ❌ Run 'node webserver.js' separately" -ForegroundColor Red
+    Write-Host "  ❌ Run 'node GenApiKey.js' manually" -ForegroundColor Red
+    Write-Host "  ❌ Run 'node init-admin.js' manually" -ForegroundColor Red
+    Write-Host "  ❌ Run 'node import_csv.js' manually (if talkgroups.csv exists)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Just run 'node bot.js' and everything starts automatically!" -ForegroundColor Green
     Write-Host "-------------------------------------" -ForegroundColor Cyan
 }
 
