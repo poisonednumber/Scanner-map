@@ -7,6 +7,19 @@ Ingests calls from SDRTrunk, TrunkRecorder, or any **rdio-scanner compatible end
 - Extracts and geocodes locations  
 - Displays calls on an interactive map with **playback** and **Discord integration**
 
+## 💬 Community Support
+[![Discord](https://img.shields.io/discord/123456789?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/X7vej75zZy)
+
+**Join our Discord community for:**
+- 🆘 Installation help and troubleshooting
+- 📸 Share your scanner-map setups  
+- 💡 Feature requests and discussions
+- 🔔 Get notified of new releases
+
+**[Join Discord Server →](https://discord.gg/X7vej75zZy)**
+
+---
+
 <img width="1918" height="906" alt="434934279-4f51548f-e33f-4807-a11d-d91f3a6b4db1(1)" src="https://github.com/user-attachments/assets/801a6bb1-ee8b-4dcf-95a0-7b4d665ef394" />
 
 ---
@@ -145,5 +158,6 @@ Other files to edit:
 Pull requests and issue reports are welcome.  
 
 ## 📬 Support
+- **[Join our Discord community](https://discord.gg/X7vej75zZy)** for help and discussion
 - Open a GitHub Issue  
 - Contact **poisonednumber** on Discord
