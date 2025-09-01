@@ -26,6 +26,7 @@ Ingests calls from SDRTrunk, TrunkRecorder, or any **rdio-scanner compatible end
 
 ## 🔥 Recent Updates
 
+- Same geocoding.js works for both google and locationiq.
 - **Admin-restricted marker editing** — Map marker editing now locked behind admin user when authentication is enabled
 - **Purge calls from map** — New admin-only feature to remove calls by talkgroup category and time range, includes undo button to restore accidentally purged calls
 - Full **one-command integration** (no multiple terminals)  
