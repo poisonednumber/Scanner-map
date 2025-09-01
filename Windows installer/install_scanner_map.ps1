@@ -409,6 +409,10 @@ function Create-EnvFile {
     $envContent += ""
     $envContent += "Please transcribe the audio clearly, maintaining the original meaning and context. If you hear addresses, locations, or specific details, transcribe them accurately. Handle background noise gracefully and focus on the main communication content."""
     $envContent += ""
+    
+    # Note: whisper-1 automatically handles VAD and chunking on OpenAI's servers
+    # No additional configuration needed - just send the audio file
+    $envContent += ""
 
     # --- Geocoding ---
     $envContent += "#################################################################"
@@ -492,12 +496,17 @@ function Create-EnvFile {
         } else {
              $envContent += "OPENAI_API_KEY=$openaiKey"
         }
-        $envContent += "# The OpenAI model to use for chat-based tasks."
-        $openaiModel = Prompt-Input "Enter OPENAI_MODEL (for chat tasks)" 'gpt-4o-mini'
-        $envContent += "OPENAI_MODEL=$openaiModel"
+        $envContent += "# Transcription Model (fixed to whisper-1 for OpenAI transcription)"
+        $envContent += "# whisper-1 supports VAD chunking strategy and is the most reliable option"
+        $envContent += "OPENAI_TRANSCRIPTION_MODEL=whisper-1"
+        $envContent += ""
+        $envContent += "# Model for AI features like address extraction, summaries, etc. (gpt-4o, gpt-4o-mini, gpt-3.5-turbo)"
+        $openaiAiModel = Prompt-Input "Enter OPENAI_AI_MODEL (e.g., gpt-4o, gpt-4o-mini)" "gpt-4o-mini"
+        $envContent += "OPENAI_AI_MODEL=$openaiAiModel"
     } else {
         $envContent += "OPENAI_API_KEY=your_openai_api_key_here # Ignored unless AI_PROVIDER=openai or TRANSCRIPTION_MODE=openai"
-        $envContent += "OPENAI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
+        $envContent += "OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe # Ignored unless TRANSCRIPTION_MODE=openai"
+        $envContent += "OPENAI_AI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
     }
     $envContent += ""
     $envContent += "# --- Summary Settings ---"
@@ -710,7 +719,7 @@ function Manual-StepsReminder {
     Write-Host "    - Verify STORAGE_MODE is set correctly ('local' or 's3')." -ForegroundColor Yellow
     Write-Host "    - If STORAGE_MODE=s3, ensure S3 settings are correct." -ForegroundColor Yellow
     Write-Host "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')." -ForegroundColor Yellow
-    Write-Host "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set." -ForegroundColor Yellow
+            Write-Host "    - If using 'openai', ensure OPENAI_API_KEY, OPENAI_TRANSCRIPTION_MODEL, and OPENAI_AI_MODEL are set." -ForegroundColor Yellow
     Write-Host "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set." -ForegroundColor Yellow
     Write-Host "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', 'openai', or 'icad')." -ForegroundColor Yellow
     Write-Host "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct." -ForegroundColor Yellow
