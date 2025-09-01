@@ -376,6 +376,44 @@
         white-space: nowrap;
     }
     /* --- END Live Feed Setup Modal Styles --- */
+
+    /* Google Places Autocomplete Styling */
+    .pac-container {
+      background-color: #000 !important;
+      border: 1px solid #00ff00 !important;
+      border-radius: 4px !important;
+      box-shadow: 0 0 10px rgba(0, 255, 0, 0.3) !important;
+      font-family: 'Share Tech Mono', monospace !important;
+    }
+
+    .pac-item {
+      background-color: #000 !important;
+      color: #00ff00 !important;
+      border: none !important;
+      padding: 8px 12px !important;
+      cursor: pointer !important;
+    }
+
+    .pac-item:hover {
+      background-color: rgba(0, 255, 0, 0.1) !important;
+    }
+
+    .pac-item-selected {
+      background-color: rgba(0, 255, 0, 0.2) !important;
+    }
+
+    .pac-item-query {
+      color: #00ff00 !important;
+      font-weight: bold !important;
+    }
+
+    .pac-matched {
+      color: #00ccff !important;
+    }
+
+    .pac-icon {
+      filter: invert(1) hue-rotate(120deg) brightness(1.5) !important;
+    }
   </style>
 </head>
 
@@ -677,7 +715,7 @@
       if (gKey) {
         return new Promise((resolve) => {
           const gScript = document.createElement('script');
-          gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&v=beta&callback=onGoogleMapsLoaded`;
+          gScript.src = `https://maps.googleapis.com/maps/api/js?key=${gKey}&libraries=places&callback=onGoogleMapsLoaded`;
           gScript.async = true;
           gScript.defer = true;
           window.onGoogleMapsLoaded = () => {

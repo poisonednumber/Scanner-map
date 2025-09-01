@@ -2035,6 +2035,70 @@ place-autocomplete-element::part(icon) {
 .pac-icon, .gmp-pac-icon {
   display: none !important;
 }
+
+/* LocationIQ Dropdown Styles */
+.locationiq-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background-color: #000;
+  border: 1px solid #00ff00;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 4px 8px rgba(0, 255, 0, 0.3);
+}
+
+.locationiq-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #333;
+  color: #00ff00;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 12px;
+  transition: background-color 0.2s ease;
+}
+
+.locationiq-item:hover {
+  background-color: #003300;
+}
+
+.locationiq-item:last-child {
+  border-bottom: none;
+}
+
+.locationiq-dropdown::-webkit-scrollbar {
+  width: 8px;
+}
+
+.locationiq-dropdown::-webkit-scrollbar-track {
+  background: #000;
+}
+
+.locationiq-dropdown::-webkit-scrollbar-thumb {
+  background: #00ff00;
+  border-radius: 4px;
+}
+
+.locationiq-dropdown::-webkit-scrollbar-thumb:hover {
+  background: #00cc00;
+}
+
+/* Mobile responsive styles for LocationIQ dropdown */
+@media screen and (max-width: 768px) {
+  .locationiq-dropdown {
+    max-height: 150px;
+    font-size: 11px;
+  }
+  
+  .locationiq-item {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+}
 /* Scrollbar Styles for Category Sidebar */
 #category-sidebar::-webkit-scrollbar {
   width: 12px; /* Width of the scrollbar */

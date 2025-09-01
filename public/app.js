@@ -1346,6 +1346,243 @@ function showCorrectionModal(callId, marker) {
   });
 }
 
+// LocationIQ Autocomplete Dropdown Function
+function createLocationIQDropdown(inputElement, scope) {
+  const dropdown = document.createElement('div');
+  dropdown.className = 'locationiq-dropdown';
+  dropdown.style.cssText = `
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background-color: #000;
+    border: 1px solid #00ff00;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+  `;
+  
+  // Insert dropdown after input
+  inputElement.parentNode.insertBefore(dropdown, inputElement.nextSibling);
+  
+  let searchTimeout = null;
+  let selectedIndex = -1;
+  
+  // Add input event listener
+  inputElement.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    
+    // Clear previous timeout
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    
+    // Hide dropdown if query is too short
+    if (query.length < appConfig.geocoding.minQueryLength) {
+      dropdown.style.display = 'none';
+      selectedIndex = -1;
+      return;
+    }
+    
+    // Debounce search
+    searchTimeout = setTimeout(() => {
+      searchLocationIQ(query, dropdown, inputElement, scope);
+    }, 300);
+  });
+  
+  // Handle keyboard navigation
+  inputElement.addEventListener('keydown', (e) => {
+    const items = dropdown.querySelectorAll('.locationiq-item');
+    
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+        updateSelection(items, selectedIndex);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        selectedIndex = Math.max(selectedIndex - 1, -1);
+        updateSelection(items, selectedIndex);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (selectedIndex >= 0 && items[selectedIndex]) {
+          selectLocationIQItem(items[selectedIndex], inputElement, dropdown, scope);
+        }
+        break;
+      case 'Escape':
+        dropdown.style.display = 'none';
+        selectedIndex = -1;
+        break;
+    }
+  });
+  
+  // Handle clicks outside dropdown
+  document.addEventListener('click', (e) => {
+    if (!inputElement.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.style.display = 'none';
+      selectedIndex = -1;
+    }
+  });
+  
+  return dropdown;
+}
+
+// Search LocationIQ API
+  async function searchLocationIQ(query, dropdown, inputElement, scope) {
+  try {
+    // Get current map center for dynamic bias
+    const mapCenter = map.getCenter();
+    const biasLat = mapCenter.lat;
+    const biasLon = mapCenter.lng;
+    
+    // Calculate viewbox around the bias point (roughly 50km radius)
+    const viewboxRadius = 0.5; // degrees (roughly 50km)
+    const viewbox = `${biasLon + viewboxRadius},${biasLat + viewboxRadius},${biasLon - viewboxRadius},${biasLat - viewboxRadius}`;
+    
+    console.log('[LocationIQ] Viewbox created:', viewbox, 'around point:', biasLat, biasLon);
+    
+    const params = new URLSearchParams({
+      key: appConfig.geocoding.locationiqApiKey,
+      q: query,
+      countrycodes: appConfig.geocoding.locationiq.countrycodes,
+      limit: appConfig.geocoding.locationiq.limit,
+      format: 'json',
+      lat: biasLat,
+      lon: biasLon,
+      bounded: 1,
+      radius: appConfig.geocoding.locationiq.bias.radius,
+      viewbox: viewbox
+    });
+    
+    console.log('[LocationIQ] Using simplified API parameters...');
+    
+    // Debug: Log the URL being called
+    const apiUrl = `https://us1.locationiq.com/v1/autocomplete?${params}`;
+    console.log('[LocationIQ] API URL:', apiUrl.replace(appConfig.geocoding.locationiqApiKey, 'API_KEY_HIDDEN'));
+    
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`LocationIQ API error: ${response.status}`);
+    }
+    
+    const results = await response.json();
+    
+    console.log('[LocationIQ] Number of results:', results.length);
+    
+    // Clear dropdown
+    dropdown.innerHTML = '';
+    
+    if (results.length === 0) {
+      dropdown.style.display = 'none';
+      return;
+    }
+    
+    // Add results to dropdown
+    results.forEach((result, index) => {
+      const item = document.createElement('div');
+      item.className = 'locationiq-item';
+      item.style.cssText = `
+        padding: 8px 12px;
+        cursor: pointer;
+        border-bottom: 1px solid #333;
+        color: #00ff00;
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 12px;
+      `;
+      
+      // Store coordinates in dataset
+      item.dataset.lat = result.lat;
+      item.dataset.lon = result.lon;
+      
+      item.innerHTML = `
+        <div style="font-weight: bold; color: #00ccff;">${result.display_place || result.address?.name || 'Unknown'}</div>
+        <div style="color: #888; font-size: 11px;">${result.display_address || result.display_name || ''}</div>
+      `;
+      
+      item.addEventListener('click', () => {
+        selectLocationIQItem(item, inputElement, dropdown, scope);
+      });
+      
+      item.addEventListener('mouseenter', () => {
+        selectedIndex = index;
+        updateSelection(dropdown.querySelectorAll('.locationiq-item'), selectedIndex);
+      });
+      
+      dropdown.appendChild(item);
+    });
+    
+    dropdown.style.display = 'block';
+    selectedIndex = -1;
+    
+  } catch (error) {
+    console.error('[LocationIQ] Search error:', error);
+    dropdown.style.display = 'none';
+  }
+}
+
+// Select LocationIQ item
+function selectLocationIQItem(item, inputElement, dropdown, scope) {
+  const placeName = item.querySelector('div:first-child').textContent;
+  const address = item.querySelector('div:last-child').textContent;
+  
+  // Get coordinates from the item's data
+  const lat = parseFloat(item.dataset.lat);
+  const lng = parseFloat(item.dataset.lon);
+  
+  if (isNaN(lat) || isNaN(lng)) {
+    console.error('[LocationIQ] Invalid coordinates:', item.dataset);
+    showNotification('Invalid location data received.', 'error');
+    return;
+  }
+  
+  // Update input value
+  inputElement.value = `${placeName}, ${address}`;
+  
+  // Update variables in the startAddressSearch scope
+  if (scope) {
+    scope.newAddress = `${placeName}, ${address}`;
+    scope.newLocation = L.latLng(lat, lng);
+    
+    // Update preview marker and map
+    if (scope.previewMarker) {
+      scope.previewMarker.setLatLng(scope.newLocation);
+      map.setView(scope.newLocation, 17);
+    }
+    
+    // Enable confirm button
+    if (scope.confirmBtn) {
+      scope.confirmBtn.style.opacity = '1';
+      scope.confirmBtn.style.pointerEvents = 'auto';
+    }
+    
+    console.log('[LocationIQ] New location set:', scope.newLocation);
+    console.log('[LocationIQ] New address:', scope.newAddress);
+    console.log('[LocationIQ] Confirm button enabled');
+  }
+  
+  // Hide dropdown
+  dropdown.style.display = 'none';
+}
+
+// Update selection in dropdown
+function updateSelection(items, selectedIndex) {
+  items.forEach((item, index) => {
+    if (index === selectedIndex) {
+      item.style.backgroundColor = '#003300';
+      item.style.color = '#00ff00';
+    } else {
+      item.style.backgroundColor = 'transparent';
+      item.style.color = '#00ff00';
+    }
+  });
+}
+
 async function startAddressSearch(callId, originalMarker, modal) {
   modal.remove();
 
@@ -1430,81 +1667,101 @@ async function startAddressSearch(callId, originalMarker, modal) {
   let newAddress = '';
 
   try {
-    const { PlaceAutocompleteElement } = await google.maps.importLibrary("places");
-    const { Place } = await google.maps.importLibrary("places");
-
-    const autocompleteElement = new PlaceAutocompleteElement({
-        componentRestrictions: { country: "us" },
-    });
-    
+    // Create input element for autocomplete
     const searchContainer = document.getElementById('address-search-container');
-    searchContainer.appendChild(autocompleteElement);
+    const inputElement = document.createElement('input');
+    inputElement.type = 'text';
+    inputElement.placeholder = 'Enter address...';
+    inputElement.style.cssText = `
+      width: 100%;
+      padding: 8px 10px;
+      background-color: #000;
+      color: #00ff00;
+      border: 1px solid #00ff00;
+      border-radius: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      box-sizing: border-box;
+    `;
+    searchContainer.appendChild(inputElement);
 
-    // Defer style injection to ensure the component's shadowRoot is ready.
-    // A single setTimeout(0) is not always reliable. We will poll until the shadowRoot is available.
-    const styleAutocomplete = (retries = 10, delay = 50) => {
-      // Check for shadowRoot
-      if (autocompleteElement.shadowRoot) {
-          // Force styles into the shadow DOM for the input element
-          const style = document.createElement('style');
-          style.textContent = `
-              :host {
-                  width: 100%;
-              }
-              ::part(input) {
-                  background-color: #000 !important;
-                  color: #00ff00 !important;
-                  border: 1px solid #00ff00 !important;
-                  border-radius: 4px !important;
-                  font-family: 'Share Tech Mono', monospace !important;
-                  padding: 8px 10px !important;
-              }
-              ::part(icon) {
-                  fill: #00ff00 !important;
-              }
-          `;
-          autocompleteElement.shadowRoot.appendChild(style);
-          autocompleteElement.focus();
-      } else if (retries > 0) {
-        // If shadowRoot doesn't exist, wait and try again
-        setTimeout(() => styleAutocomplete(retries - 1, delay), delay);
-      } else {
-        // If we've run out of retries, log the error
-        console.error("Could not style autocomplete: shadowRoot not found after multiple attempts.");
-      }
-    };
-    
-    styleAutocomplete();
+    // Initialize autocomplete based on available providers
+    let autocompleteProvider = null;
+    let autocompleteDropdown = null;
 
-    autocompleteElement.addEventListener('gmp-placechange', async (event) => {
-        const place = event.detail.place;
-        if (!place || !place.id) {
-            showNotification('No location selected.', 'info');
-            return;
-        }
-        
-        // Fetch details to get geometry and formatted address
-        await place.fetchFields({ fields: ['geometry', 'formattedAddress'] });
+    // Check which providers are available
+    const googleAvailable = appConfig.geocoding.googleApiKey && typeof google !== 'undefined' && google.maps && google.maps.places;
+    const locationiqAvailable = appConfig.geocoding.locationiqApiKey;
+
+    if (googleAvailable) {
+      console.log('[Address Search] Using Google Places Autocomplete');
+      autocompleteProvider = 'google';
+      
+      // Create Google Places autocomplete
+      const autocomplete = new google.maps.places.Autocomplete(inputElement, {
+        componentRestrictions: { country: "us" },
+        fields: ['geometry', 'formatted_address']
+      });
+
+      // Add listener for place selection
+      autocomplete.addListener('place_changed', () => {
+        console.log('[Address Search] Google place changed event triggered');
+        const place = autocomplete.getPlace();
+        console.log('[Address Search] Selected Google place:', place);
         
         if (!place.geometry || !place.geometry.location) {
-             showNotification('Selected place has no location data.', 'error');
-             return;
+          console.error('[Address Search] No geometry data in Google place:', place);
+          showNotification('No location data available for selected place.', 'error');
+          return;
         }
 
-        newAddress = place.formattedAddress;
+        newAddress = place.formatted_address;
         newLocation = L.latLng(
-            place.geometry.location.lat(),
-            place.geometry.location.lng()
+          place.geometry.location.lat(),
+          place.geometry.location.lng()
         );
+
+        console.log('[Address Search] New location set:', newLocation);
+        console.log('[Address Search] New address:', newAddress);
 
         previewMarker.setLatLng(newLocation);
         map.setView(newLocation, 17);
         confirmBtn.style.opacity = '1';
         confirmBtn.style.pointerEvents = 'auto';
-    });
+        
+        console.log('[Address Search] Confirm button enabled');
+      });
+
+    } else if (locationiqAvailable) {
+      console.log('[Address Search] Using LocationIQ Autocomplete');
+      autocompleteProvider = 'locationiq';
+      
+      // Create scope object to pass variables
+      const scope = { newAddress, newLocation, previewMarker, confirmBtn };
+      
+      // Create LocationIQ autocomplete dropdown
+      autocompleteDropdown = createLocationIQDropdown(inputElement, scope);
+      
+    } else {
+      console.error('[Address Search] No autocomplete providers available');
+      showNotification("No address search providers available. Please check API configuration.", "error");
+      banner.remove();
+      markerGroups.addLayer(originalMarker);
+      return;
+    }
+
+    // Focus the input
+    inputElement.focus();
+
+    // Add a small delay to ensure autocomplete is ready
+    setTimeout(() => {
+      if (inputElement) {
+        inputElement.focus();
+      }
+    }, 100);
 
   } catch (error) {
-    console.error("Error loading Google Places Autocomplete component:", error);
+    console.error("Error loading address search component:", error);
     showNotification("Could not load address search component.", "error");
     banner.remove();
     markerGroups.addLayer(originalMarker);
@@ -1512,17 +1769,49 @@ async function startAddressSearch(callId, originalMarker, modal) {
   }
 
   function getOriginalAddress(lat, lng) {
-    return fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${appConfig.geocoding.googleApiKey}`)
+    // Try Google first if available, then LocationIQ as fallback
+    if (appConfig.geocoding.googleApiKey) {
+      return fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${appConfig.geocoding.googleApiKey}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.results && data.results.length > 0) {
+            return data.results[0].formatted_address;
+          } else {
+            // Fallback to LocationIQ if Google returns no results
+            return getLocationIQReverseGeocode(lat, lng);
+          }
+        })
+        .catch(err => {
+          console.error('Google reverse geocode error:', err);
+          // Fallback to LocationIQ
+          return getLocationIQReverseGeocode(lat, lng);
+        });
+    } else if (appConfig.geocoding.locationiqApiKey) {
+      return getLocationIQReverseGeocode(lat, lng);
+    } else {
+      return Promise.resolve(`Unknown (${lat}, ${lng})`);
+    }
+  }
+
+  function getLocationIQReverseGeocode(lat, lng) {
+    const params = new URLSearchParams({
+      key: appConfig.geocoding.locationiqApiKey,
+      lat: lat,
+      lon: lng,
+      format: 'json'
+    });
+    
+    return fetch(`https://us1.locationiq.com/v1/reverse?${params}`)
       .then(res => res.json())
       .then(data => {
-        if (data.results && data.results.length > 0) {
-          return data.results[0].formatted_address;
+        if (data.display_name) {
+          return data.display_name;
         } else {
           return `Unknown (${lat}, ${lng})`;
         }
       })
       .catch(err => {
-        console.error('Reverse geocode error:', err);
+        console.error('LocationIQ reverse geocode error:', err);
         return `Unknown (${lat}, ${lng})`;
       });
   }

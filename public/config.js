@@ -126,6 +126,7 @@ const config = {
   // Geocoding settings
   geocoding: {
     googleApiKey: null, // Will be set dynamically
+    locationiqApiKey: null, // Will be set dynamically
     defaultArea: {
       lat: 39.078925, 
       lng: -76.933018
@@ -133,23 +134,60 @@ const config = {
     // Maximum results to show in dropdown
     maxResults: 5,
     // Minimum characters required to trigger search
-    minQueryLength: 3
+    minQueryLength: 3,
+    // Preferred geocoding provider (google, locationiq, or auto)
+    preferredProvider: 'auto', // auto will use available providers
+    // LocationIQ specific settings
+    locationiq: {
+      countrycodes: 'us', // Limit to US results (comma-separated for multiple countries)
+      limit: 5, // Reduced maximum results for more focused results
+      normalizecity: 1, // Normalize city names
+      // Location bias settings (similar to Google's autocomplete bias)
+      bias: {
+        enabled: true, // Enable location bias
+        lat: 39.078925, // Default latitude (same as defaultArea)
+        lon: -76.933018, // Default longitude (same as defaultArea)
+        bounded: 1, // Restrict results to a bounding box around the bias point (1 = true, 0 = false)
+        radius: 25 // Reduced search radius in kilometers around the bias point for more local results
+      },
+      // Additional parameters for better geographical restriction
+      tag: 'place:city,place:town,place:village,place:suburb,place:neighbourhood', // Restrict to populated places and neighborhoods
+      importancesort: 1, // Sort by importance
+      accept_language: 'en' // Prefer English results
+    }
   }
 };
 
-// Function to fetch Google API key from server
-async function fetchGoogleApiKey() {
+// Function to fetch geocoding configuration from server
+async function fetchGeocodingConfig() {
   try {
-    const response = await fetch('/api/config/google-api-key');
+    const response = await fetch('/api/config/geocoding');
     const data = await response.json();
-    config.geocoding.googleApiKey = data.apiKey;
+    
+    if (data.google.available) {
+      config.geocoding.googleApiKey = data.google.apiKey;
+      console.log('[Config] Google Places API available');
+    }
+    
+    if (data.locationiq.available) {
+      config.geocoding.locationiqApiKey = data.locationiq.apiKey;
+      console.log('[Config] LocationIQ API available');
+    }
+    
+    // Log available providers
+    const availableProviders = [];
+    if (data.google.available) availableProviders.push('Google');
+    if (data.locationiq.available) availableProviders.push('LocationIQ');
+    
+    console.log(`[Config] Available geocoding providers: ${availableProviders.join(', ')}`);
+    
   } catch (error) {
-    console.error('Error fetching Google API key:', error);
+    console.error('Error fetching geocoding configuration:', error);
   }
 }
 
-// Fetch the API key when the config is loaded
-fetchGoogleApiKey();
+// Fetch the geocoding configuration when the config is loaded
+fetchGeocodingConfig();
 
 // Export the configuration
 window.appConfig = config;
