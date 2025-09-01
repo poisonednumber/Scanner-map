@@ -9,7 +9,8 @@ const path = require('path');
 
 // Environment variables - strict loading from .env only
 const {
-  LOCATIONIQ_API_KEY, // Renamed from GOOGLE_MAPS_API_KEY
+  LOCATIONIQ_API_KEY = null,
+  GOOGLE_MAPS_API_KEY = null, // Added for Google API support
   GEOCODING_STATE,
   GEOCODING_COUNTRY,
   GEOCODING_TARGET_COUNTIES,
@@ -47,8 +48,32 @@ if (AI_PROVIDER.toLowerCase() === 'openai') {
 // --- END VALIDATION ---
 
 // Validate required environment variables
-// Updated to check for LOCATIONIQ_API_KEY
-const requiredVars = ['LOCATIONIQ_API_KEY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
+// Check if we have at least one geocoding API key
+const hasGoogleMaps = !!GOOGLE_MAPS_API_KEY;
+const hasLocationIQ = !!LOCATIONIQ_API_KEY;
+
+if (!hasGoogleMaps && !hasLocationIQ) {
+  console.error('ERROR: At least one geocoding API key is required (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY)');
+  process.exit(1);
+}
+
+// Determine which provider to use and validate required variables
+let geocodingProvider = null;
+
+if (hasGoogleMaps && hasLocationIQ) {
+  // Both available - prefer LocationIQ for consistency with existing setup
+  geocodingProvider = 'locationiq';
+  console.log('[Geocoding] Both Google Maps and LocationIQ available, using LocationIQ');
+} else if (hasLocationIQ) {
+  geocodingProvider = 'locationiq';
+  console.log('[Geocoding] Using LocationIQ for geocoding');
+} else if (hasGoogleMaps) {
+  geocodingProvider = 'google';
+  console.log('[Geocoding] Using Google Maps for geocoding');
+}
+
+// Validate required environment variables based on provider
+const requiredVars = ['GEOCODING_STATE', 'GEOCODING_COUNTRY', 'GEOCODING_CITY', 'GEOCODING_TARGET_COUNTIES'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
@@ -56,9 +81,15 @@ if (missingVars.length > 0) {
   process.exit(1);
 }
 
+// Set default values for any missing optional variables
+if (!process.env.GEOCODING_STATE) process.env.GEOCODING_STATE = 'MD';
+if (!process.env.GEOCODING_COUNTRY) process.env.GEOCODING_COUNTRY = 'us';
+if (!process.env.GEOCODING_CITY) process.env.GEOCODING_CITY = 'Baltimore';
+if (!process.env.GEOCODING_TARGET_COUNTIES) process.env.GEOCODING_TARGET_COUNTIES = 'Baltimore,Baltimore City,Anne Arundel,Howard,Carroll,Harford';
+
 // Parse target counties into array
-const TARGET_COUNTIES = GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
-const COUNTRY_CODES = GEOCODING_COUNTRY; // LocationIQ uses country codes
+const TARGET_COUNTIES = process.env.GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
+const COUNTRY_CODES = process.env.GEOCODING_COUNTRY; // LocationIQ uses country codes
 
 // Logger setup (remains the same)
 const logger = winston.createLogger({
@@ -123,7 +154,7 @@ Object.keys(process.env).forEach(key => {
 logger.info(`Loaded ${Object.keys(TALK_GROUPS).length} talk groups from environment variables`);
 
 // Keep the TARGET_CITIES list for reference (remains the same)
-const TARGET_CITIES = TARGET_CITIES_LIST ? TARGET_CITIES_LIST.split(',').map(city => city.trim()) : [];
+const TARGET_CITIES = process.env.TARGET_CITIES_LIST ? process.env.TARGET_CITIES_LIST.split(',').map(city => city.trim()) : [];
 
 // Function to load talk groups from env vars (remains the same)
 function loadTalkGroups(db) {
@@ -308,6 +339,18 @@ async function geocodeAddress(address) {
     return null;
   }
 
+  // Check which geocoding provider to use
+  if (geocodingProvider === 'locationiq') {
+    return await geocodeAddressWithLocationIQ(address);
+  } else if (geocodingProvider === 'google') {
+    return await geocodeAddressWithGoogleMaps(address);
+  } else {
+    logger.error('No geocoding API key available');
+    return null;
+  }
+}
+
+async function geocodeAddressWithLocationIQ(address) {
   // 2. Prepare API Request
   const endpoint = `https://us1.locationiq.com/v1/search`;
   const params = new URLSearchParams({
@@ -396,7 +439,89 @@ async function geocodeAddress(address) {
     };
 
   } catch (error) {
-    logger.error(`Unexpected error in geocodeAddress for query "${address}": ${error.message}`, { stack: error.stack });
+    logger.error(`Unexpected error in geocodeAddressWithLocationIQ for query "${address}": ${error.message}`, { stack: error.stack });
+    return null;
+  }
+}
+
+async function geocodeAddressWithGoogleMaps(address) {
+  const endpoint = `https://maps.googleapis.com/maps/api/geocode/json`;
+  
+  const params = new URLSearchParams({
+    address: address,
+    key: GOOGLE_MAPS_API_KEY,
+    components: `country:${process.env.GEOCODING_COUNTRY}|administrative_area:${process.env.GEOCODING_STATE}`
+  });
+
+  try {
+    const response = await fetch(`${endpoint}?${params.toString()}`);
+    if (!response.ok) {
+      logger.error(`Geocoding API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+      logger.warn(`Geocoding API returned status: ${data.status} for address: "${address}"`);
+      return null;
+    }
+    
+    // Find the most specific result (preferring street_address over locality)
+    const preferredTypes = ['street_address', 'premise', 'subpremise', 'route', 'intersection', 'establishment', 'point_of_interest'];
+    let bestResult = null;
+    
+    // First try to find results with preferred types
+    for (const type of preferredTypes) {
+      const matchingResult = data.results.find(r => r.types.includes(type));
+      if (matchingResult) {
+        bestResult = matchingResult;
+        break;
+      }
+    }
+    
+    // If no preferred type found, use the first result
+    const result = bestResult || data.results[0];
+    const { lat, lng } = result.geometry.location;
+    const formatted_address = result.formatted_address;
+    const resultTypes = result.types;
+
+    // Skip generic city-level results
+    if (formatted_address.match(new RegExp(`^${process.env.GEOCODING_CITY}, ${process.env.GEOCODING_STATE} \\d{5}, USA$`))) {
+      logger.info(`Skipping city-level result for ${process.env.GEOCODING_CITY}: "${formatted_address}"`);
+      return null;
+    }
+
+    // Skip only generic city-level results while keeping useful partial matches
+    if (resultTypes.includes('locality') && resultTypes.length <= 3 && !formatted_address.includes('Caravan')) {
+      logger.info(`Skipping city-level result: "${formatted_address}"`);
+      return null;
+    }
+    
+    // Check for county-level results
+    if (TARGET_COUNTIES.some(county => formatted_address === `${county}, ${process.env.GEOCODING_STATE}, USA`) || 
+        (resultTypes.includes('administrative_area_level_2') && resultTypes.length <= 3)) {
+      logger.info(`Skipping county-level result: "${formatted_address}"`);
+      return null;
+    }
+
+    // Verify that the result is in one of the target counties
+    const countyComponent = result.address_components.find(component => 
+      component.types.includes('administrative_area_level_2') && 
+      TARGET_COUNTIES.includes(component.long_name)
+    );
+
+    if (countyComponent) {
+      const county = countyComponent.long_name;
+      logger.info(`Geocoded Address: "${formatted_address}" with coordinates (${lat}, ${lng}) in ${county}`);
+      return { lat, lng, formatted_address, county };
+    } else {
+      const countiesList = TARGET_COUNTIES.join(' or ');
+      logger.warn(`Geocoded address "${formatted_address}" is not within ${countiesList}.`);
+      return null;
+    }
+  } catch (error) {
+    logger.error(`Error geocoding address "${address}": ${error.message}`);
     return null;
   }
 }
@@ -547,5 +672,6 @@ module.exports = {
   geocodeAddress,
   hyperlinkAddress, // Note: Signature changed slightly if used directly
   processTranscriptAndLink, // Renamed for clarity, returns linked text now
+  processTranscript: processTranscriptAndLink, // Alias for backward compatibility
   loadTalkGroups
 };

@@ -367,7 +367,7 @@ while True:
             
             # Prepare transcription parameters
             transcription_params = {
-                'audio_input': audio_input,  # Can be path string or numpy array
+                'audio': audio_input,  # Can be path string or numpy array
                 'language': 'en',
                 'beam_size': 3,  # Reduced from 5 to 3 for faster processing
                 'vad_filter': True,
@@ -378,7 +378,7 @@ while True:
             
             # Add prompt if available (helps with scanner audio context)
             if OPENAI_TRANSCRIPTION_PROMPT:
-                transcription_params['prompt'] = OPENAI_TRANSCRIPTION_PROMPT
+                transcription_params['initial_prompt'] = OPENAI_TRANSCRIPTION_PROMPT
                 logger.info(f"Using custom transcription prompt for ID {request_id}")
                 
             # Try with VAD filtering first - optimized for high-volume systems

@@ -25,7 +25,9 @@ const {
   ENABLE_AUTH, // New environment variable for toggling authentication
   SESSION_DURATION_DAYS = "7", // Default 7 days if not specified
   MAX_SESSIONS_PER_USER = "5", // Default 5 sessions if not specified
-  GOOGLE_MAPS_API_KEY,
+  GOOGLE_MAPS_API_KEY = null,
+  // --- NEW: Geocoding API Keys ---
+  LOCATIONIQ_API_KEY = null,
   // --- NEW: Storage Env Vars ---
   STORAGE_MODE = 'local', // Default to local if not set
   S3_ENDPOINT,
@@ -41,12 +43,31 @@ const {
 } = process.env;
 
 // Validate required environment variables
-const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN', 'GOOGLE_MAPS_API_KEY'];
+const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
   console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
   process.exit(1);
+}
+
+// Check for at least one geocoding API key
+if (!GOOGLE_MAPS_API_KEY && !LOCATIONIQ_API_KEY) {
+  console.error('ERROR: At least one geocoding API key is required (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY)');
+  process.exit(1);
+}
+
+// Log geocoding API availability
+if (GOOGLE_MAPS_API_KEY) {
+  console.log('[Webserver] Google Maps API key found - Google Places autocomplete will be available');
+} else {
+  console.log('[Webserver] Google Maps API key not found - Google Places autocomplete will be disabled');
+}
+
+if (LOCATIONIQ_API_KEY) {
+  console.log('[Webserver] LocationIQ API key found - LocationIQ autocomplete will be available');
+} else {
+  console.log('[Webserver] LocationIQ API key not found - LocationIQ autocomplete will be disabled');
 }
 
 // Add endpoint to serve Google API key
@@ -55,6 +76,25 @@ app.use(express.json()); // Add this line to parse JSON bodies
 
 app.get('/api/config/google-api-key', (req, res) => {
   res.json({ apiKey: GOOGLE_MAPS_API_KEY });
+});
+
+// Add endpoint to serve LocationIQ API key
+app.get('/api/config/locationiq-api-key', (req, res) => {
+  res.json({ apiKey: LOCATIONIQ_API_KEY });
+});
+
+// Add endpoint to serve all geocoding configuration
+app.get('/api/config/geocoding', (req, res) => {
+  res.json({
+    google: {
+      available: !!GOOGLE_MAPS_API_KEY,
+      apiKey: GOOGLE_MAPS_API_KEY
+    },
+    locationiq: {
+      available: !!LOCATIONIQ_API_KEY,
+      apiKey: LOCATIONIQ_API_KEY
+    }
+  });
 });
 
 // Add endpoint to check if current user is admin

@@ -39,13 +39,16 @@ const {
   ICAD_API_KEY,
   // --- NEW: OpenAI Transcription Prompting ---
   OPENAI_TRANSCRIPTION_PROMPT,
+  OPENAI_TRANSCRIPTION_MODEL,
+  OPENAI_TRANSCRIPTION_TEMPERATURE,
   // --- Webserver Env Vars ---
   WEBSERVER_PORT = '3001',
   WEBSERVER_PASSWORD,
   ENABLE_AUTH = 'false',
   SESSION_DURATION_DAYS = '7',
   MAX_SESSIONS_PER_USER = '5',
-  GOOGLE_MAPS_API_KEY,
+  GOOGLE_MAPS_API_KEY = null,
+  LOCATIONIQ_API_KEY = null,
   // --- NEW: Two-Tone Detection Env Vars ---
   ENABLE_TWO_TONE_MODE,
   TWO_TONE_TALK_GROUPS: twoToneTalkGroupsString,
@@ -1139,10 +1142,10 @@ async function initializeBot() {
     await startBotServices();
 
     // Step 8: Start webserver last
-    if (WEBSERVER_PORT && GOOGLE_MAPS_API_KEY) {
+    if (WEBSERVER_PORT && (GOOGLE_MAPS_API_KEY || LOCATIONIQ_API_KEY)) {
       await startWebserver();
     } else {
-      logger.warn('Webserver not started: WEBSERVER_PORT or GOOGLE_MAPS_API_KEY not configured');
+      logger.warn('Webserver not started: WEBSERVER_PORT or geocoding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) not configured');
     }
 
     logger.info('Bot initialization completed successfully!');
@@ -2540,7 +2543,17 @@ async function transcribeWithOpenAIAPI(filePath, callback) {
   try {
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath));
-    form.append('model', 'whisper-1'); // OpenAI's primary transcription model
+    
+    // Use the model from environment variable, fallback to whisper-1 if not set
+    const modelToUse = OPENAI_TRANSCRIPTION_MODEL || 'whisper-1';
+    form.append('model', modelToUse);
+    
+    // Force language to English for better scanner audio transcription
+    form.append('language', 'en');
+    
+    // Add temperature parameter for transcription consistency (if supported)
+    const temperature = OPENAI_TRANSCRIPTION_TEMPERATURE || '0.0';
+    form.append('temperature', temperature);
     
     const filenameForLog = path.basename(filePath);
     
@@ -2549,9 +2562,11 @@ async function transcribeWithOpenAIAPI(filePath, callback) {
       form.append('prompt', OPENAI_TRANSCRIPTION_PROMPT);
       logger.info(`Using custom OpenAI transcription prompt for ${filenameForLog}`);
     }
+    
+    logger.info(`Using temperature ${temperature} for transcription consistency`);
 
     const apiEndpoint = `https://api.openai.com/v1/audio/transcriptions`;
-    logger.info(`Sending OpenAI transcription request for ${filenameForLog} to ${apiEndpoint}`);
+    logger.info(`Sending OpenAI transcription request for ${filenameForLog} to ${apiEndpoint} using model: ${modelToUse} with temperature: ${temperature}`);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
