@@ -370,6 +370,10 @@ create_env_file() {
     append_env ""
     append_env "Please transcribe the audio clearly, maintaining the original meaning and context. If you hear addresses, locations, or specific details, transcribe them accurately. Handle background noise gracefully and focus on the main communication content.\""
     append_env ""
+    
+    # Note: whisper-1 automatically handles VAD and chunking on OpenAI's servers
+    # No additional configuration needed - just send the audio file
+    append_env ""
 
     # --- Geocoding ---
     append_env "#################################################################"
@@ -454,12 +458,17 @@ create_env_file() {
         else
             append_env "OPENAI_API_KEY=$openai_key"
         fi
-        append_env "# The OpenAI model to use for chat-based tasks."
-        prompt_input "Enter OPENAI_MODEL (for chat tasks)" "gpt-4o-mini" openai_model
-        append_env "OPENAI_MODEL=$openai_model"
+        append_env "# Transcription Model (fixed to whisper-1 for OpenAI transcription)"
+        append_env "# whisper-1 supports VAD chunking strategy and is the most reliable option"
+        append_env "OPENAI_TRANSCRIPTION_MODEL=whisper-1"
+        append_env ""
+        append_env "# Model for AI features like address extraction, summaries, etc. (gpt-4o, gpt-4o-mini, gpt-3.5-turbo)"
+        prompt_input "Enter OPENAI_AI_MODEL (e.g., gpt-4o, gpt-4o-mini)" "gpt-4o-mini" openai_ai_model
+        append_env "OPENAI_AI_MODEL=$openai_ai_model"
     else
         append_env "OPENAI_API_KEY=your_openai_api_key_here # Ignored unless AI_PROVIDER=openai or TRANSCRIPTION_MODE=openai"
-        append_env "OPENAI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
+        append_env "OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe # Ignored unless TRANSCRIPTION_MODE=openai"
+        append_env "OPENAI_AI_MODEL=gpt-4o-mini # Ignored unless AI_PROVIDER=openai"
     fi
     append_env ""
     append_env "# --- Summary Settings ---"
@@ -693,7 +702,7 @@ manual_steps_reminder() {
   echo "    - Verify STORAGE_MODE is set correctly ('local' or 's3')."
   echo "    - If STORAGE_MODE=s3, ensure S3 settings are correct."
   echo "    - Verify AI_PROVIDER is set correctly ('ollama' or 'openai')."
-  echo "    - If using 'openai', ensure OPENAI_API_KEY and OPENAI_MODEL are set."
+      echo "    - If using 'openai', ensure OPENAI_API_KEY, OPENAI_TRANSCRIPTION_MODEL, and OPENAI_AI_MODEL are set."
   echo "    - If using 'ollama', ensure OLLAMA_URL and OLLAMA_MODEL are set."
       echo "    - Verify TRANSCRIPTION_MODE is set correctly ('local', 'remote', 'openai', or 'icad')."
     echo "    - If TRANSCRIPTION_MODE=remote, ensure FASTER_WHISPER_SERVER_URL is correct."
