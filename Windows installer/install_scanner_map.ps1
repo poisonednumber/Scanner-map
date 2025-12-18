@@ -620,11 +620,11 @@ function Install-NodeDeps {
     
     # Manual installation as fallback
     Write-Host "Installing packages manually..."
-    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
+    npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" "@snazzah/davey" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
     
     if (-not $?) {
         Write-Warning "First npm install attempt failed. Trying again..."
-        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
+        npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone discord.js "@discordjs/voice" "@snazzah/davey" prism-media "node-fetch@2" socket.io csv-parser form-data aws-sdk libsodium-wrappers node-cache openai opusscript public-ip axios --no-audit --no-fund
         if (-not $?) {
              Write-Warning "npm install failed again. Please check errors and try running 'npm install' manually in $InstallDir."
              Write-Warning "For native modules like bcrypt/sqlite3, you may need: npm install bcrypt --build-from-source"
