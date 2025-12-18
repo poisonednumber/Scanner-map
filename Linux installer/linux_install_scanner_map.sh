@@ -569,10 +569,10 @@ install_node_deps() {
   # Attempt npm install - Added form-data and aws-sdk
   local original_user=${SUDO_USER:-$(whoami)}
   echo "Running npm install as user: $original_user"
-  sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
+  sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice @snazzah/davey prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk
   if [ $? -ne 0 ]; then
       echo "npm install failed. Trying again..."
-      sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually as user '$original_user' in $INSTALL_DIR."
+      sudo -u "$original_user" npm install dotenv express sqlite3 bcrypt uuid busboy winston moment-timezone @discordjs/opus discord.js @discordjs/voice @snazzah/davey prism-media node-fetch@2 socket.io csv-parser form-data aws-sdk || echo "Warning: npm install failed again. Please check errors and try running 'npm install' manually as user '$original_user' in $INSTALL_DIR."
   fi
   print_message "Node.js dependency installation attempted."
 }
