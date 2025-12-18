@@ -57,14 +57,15 @@ class DependencyInstaller {
     if (missing.npm) missingList.push('npm');
     if (missing.python) missingList.push('Python 3');
 
-    console.log(chalk.yellow('\n⚠ Missing dependencies detected:'));
-    missingList.forEach(item => console.log(chalk.yellow(`   - ${item}`)));
+    console.log(chalk.yellow('\n⚠ Missing dependencies detected:\n'));
+    missingList.forEach(item => console.log(chalk.yellow(`   • ${item}`)));
+    console.log('');
 
     const { install } = await inquirer.prompt([
       {
         type: 'confirm',
         name: 'install',
-        message: 'Would you like to install missing dependencies automatically?',
+        message: chalk.bold('Would you like to install missing dependencies automatically?'),
         default: true
       }
     ]);

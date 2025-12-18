@@ -27,12 +27,29 @@ class InstallerCore {
   }
 
   /**
+   * Print a section header
+   */
+  printSectionHeader(title) {
+    console.log(chalk.blue.bold('\n' + '═'.repeat(50)));
+    console.log(chalk.blue.bold(`  ${title}`));
+    console.log(chalk.blue.bold('═'.repeat(50) + '\n'));
+  }
+
+  /**
+   * Print a step indicator
+   */
+  printStep(step, total, description) {
+    console.log(chalk.cyan(`[${step}/${total}]`) + ' ' + chalk.white(description));
+  }
+
+  /**
    * Main installation flow
    */
   async run() {
-    console.log(chalk.blue.bold('\n════════════════════════════════════════'));
-    console.log(chalk.blue.bold('  Scanner Map Installer'));
-    console.log(chalk.blue.bold('════════════════════════════════════════\n'));
+    // Show welcome
+    this.printSectionHeader('Scanner Map Installer');
+    console.log(chalk.gray('Welcome! This installer will guide you through setting up Scanner Map.'));
+    console.log(chalk.gray('You can press Ctrl+C at any time to cancel.\n'));
 
     // Check if running in interactive mode
     if (!this.isInteractive()) {
@@ -43,21 +60,33 @@ class InstallerCore {
     }
 
     // Step 1: Choose installation type
+    this.printStep(1, 8, 'Selecting installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
         name: 'installationType',
         message: 'Choose installation type:',
         choices: [
-          { name: 'Docker (Recommended)', value: 'docker' },
-          { name: 'Local (Non-Docker)', value: 'local' }
+          { 
+            name: '🐳 Docker (Recommended) - Easier to manage, isolated services', 
+            value: 'docker',
+            short: 'Docker'
+          },
+          { 
+            name: '💻 Local (Non-Docker) - Traditional installation, more control', 
+            value: 'local',
+            short: 'Local'
+          }
         ],
         default: 'docker'
       }
     ]);
+    console.log(chalk.green(`✓ Selected: ${installationType === 'docker' ? 'Docker' : 'Local'} installation\n`));
 
     // Step 2: Check prerequisites and install missing dependencies
-    console.log(chalk.yellow('\nChecking prerequisites...'));
+    this.printStep(2, 8, 'Checking system requirements');
+    process.stdout.write(chalk.gray('   Checking prerequisites...'));
+    
     let prerequisites;
     if (installationType === 'docker') {
       prerequisites = await this.dockerInstaller.checkPrerequisites();
@@ -65,9 +94,12 @@ class InstallerCore {
       prerequisites = await this.localInstaller.checkPrerequisites();
     }
 
+    // Clear the checking message
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+
     // If prerequisites failed, try to install missing dependencies
     if (!prerequisites.success) {
-      console.log(chalk.yellow('\nSome prerequisites are missing.'));
+      console.log(chalk.yellow('⚠ Some prerequisites are missing.\n'));
       
       // Attempt to install missing dependencies
       const installResult = await this.dependencyInstaller.checkAndInstall(installationType);
@@ -79,58 +111,73 @@ class InstallerCore {
           console.log(chalk.green('\n✓ Successfully installed:'));
           installResult.installed.forEach(item => console.log(chalk.green(`   - ${item}`)));
         }
-        console.log(chalk.yellow('\nPlease install the missing dependencies manually and run the installer again.'));
+        console.log(chalk.yellow('\n💡 Tip: Please install the missing dependencies manually and run the installer again.'));
         process.exit(1);
       }
 
       if (installResult.installed && installResult.installed.length > 0) {
-        console.log(chalk.green('\n✓ Successfully installed:'));
+        console.log(chalk.green('✓ Successfully installed:'));
         installResult.installed.forEach(item => console.log(chalk.green(`   - ${item}`)));
+        console.log('');
       }
 
       // Re-check prerequisites after installation
-      console.log(chalk.yellow('\nRe-checking prerequisites...'));
+      process.stdout.write(chalk.gray('   Re-checking prerequisites...'));
       if (installationType === 'docker') {
         prerequisites = await this.dockerInstaller.checkPrerequisites();
       } else {
         prerequisites = await this.localInstaller.checkPrerequisites();
       }
+      process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
       // If still failing after installation attempt, show errors
       if (!prerequisites.success) {
-        console.log(chalk.red('\n❌ Prerequisites check still failing:'));
-        prerequisites.errors.forEach(err => console.log(chalk.red(`   - ${err}`)));
+        console.log(chalk.red('❌ Prerequisites check still failing:\n'));
+        prerequisites.errors.forEach(err => console.log(chalk.red(`   • ${err}`)));
         if (prerequisites.warnings) {
           prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   ⚠ ${warn}`)));
         }
-        console.log(chalk.yellow('\nSome dependencies may require a system restart or terminal restart.'));
-        console.log(chalk.yellow('Please install missing dependencies manually and run the installer again.'));
+        console.log(chalk.yellow('\n💡 Tip: Some dependencies may require a system restart or terminal restart.'));
+        console.log(chalk.yellow('   Please install missing dependencies manually and run the installer again.'));
         process.exit(1);
       }
     }
 
     if (prerequisites.warnings && prerequisites.warnings.length > 0) {
-      prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   ⚠ ${warn}`)));
+      console.log(chalk.yellow('⚠ Warnings:'));
+      prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   • ${warn}`)));
+      console.log('');
     }
 
-    console.log(chalk.green('✓ Prerequisites check passed\n'));
+    console.log(chalk.green('✓ All prerequisites met\n'));
 
     // Step 3: Configure services
+    this.printStep(3, 8, 'Configuring optional services');
     const serviceConfig = await this.configureServices(installationType);
+    console.log('');
 
     // Step 4: Configure core settings
+    this.printStep(4, 8, 'Configuring core settings');
     const coreConfig = await this.configureCore();
+    console.log('');
 
     // Step 5: Configure geocoding
+    this.printStep(5, 8, 'Configuring geocoding service');
     const geocodingConfig = await this.configureGeocoding();
+    console.log('');
 
     // Step 6: Configure AI provider
-    const aiConfig = await this.configureAI(serviceConfig.enableOllama);
+    this.printStep(6, 8, 'Configuring AI provider');
+    const aiConfig = await this.configureAI(serviceConfig.enableOllama, installationType);
+    console.log('');
 
     // Step 7: Configure Discord (optional)
+    this.printStep(7, 8, 'Configuring Discord bot (optional)');
     const discordConfig = await this.configureDiscord();
+    console.log('');
 
     // Step 8: Summary and confirm
+    this.printStep(8, 8, 'Review configuration');
     const config = {
       ...serviceConfig,
       ...coreConfig,
@@ -145,18 +192,19 @@ class InstallerCore {
       {
         type: 'confirm',
         name: 'confirm',
-        message: 'Proceed with installation?',
+        message: chalk.bold('Proceed with installation?'),
         default: true
       }
     ]);
 
     if (!confirm) {
-      console.log(chalk.yellow('\nInstallation cancelled.'));
+      console.log(chalk.yellow('\n⚠ Installation cancelled by user.'));
+      console.log(chalk.gray('   You can run the installer again anytime.\n'));
       process.exit(0);
     }
 
     // Step 9: Install
-    console.log(chalk.blue('\nStarting installation...\n'));
+    console.log(chalk.blue.bold('\n🚀 Starting installation...\n'));
     let result;
     if (installationType === 'docker') {
       result = await this.dockerInstaller.install(config);
@@ -174,22 +222,26 @@ class InstallerCore {
 
     // Step 9.5: Pull TrunkRecorder image if enabled (Docker only)
     if (installationType === 'docker' && config.enableTrunkRecorder) {
+      process.stdout.write(chalk.gray('   Pulling TrunkRecorder image...'));
       const pullResult = await this.dockerInstaller.pullTrunkRecorderImage();
+      process.stdout.write('\r' + ' '.repeat(50) + '\r');
+      
       if (!pullResult.success) {
-        console.log(chalk.yellow(`\n⚠ Warning: Could not pull TrunkRecorder image: ${pullResult.error}`));
-        console.log(chalk.yellow('   Docker Compose will attempt to pull it automatically when starting services.'));
-        console.log(chalk.yellow('   You can also pull it manually with: docker pull robotastic/trunk-recorder:latest'));
+        console.log(chalk.yellow(`⚠ Warning: Could not pull TrunkRecorder image: ${pullResult.error}`));
+        console.log(chalk.gray('   Docker Compose will attempt to pull it automatically when starting services.'));
+        console.log(chalk.gray('   You can also pull it manually: docker pull robotastic/trunk-recorder:latest\n'));
       } else if (!pullResult.skipped) {
-        console.log(chalk.green('✓ TrunkRecorder image pulled successfully'));
+        console.log(chalk.green('✓ TrunkRecorder image pulled successfully\n'));
       }
     }
 
     // Step 10: Show success and next steps
-    console.log(chalk.green('\n✓ Installation completed successfully!\n'));
-    console.log(chalk.blue('Next steps:'));
+    console.log(chalk.green.bold('✅ Installation completed successfully!\n'));
+    this.printSectionHeader('Next Steps');
     result.nextSteps.forEach((step, index) => {
       console.log(chalk.white(`   ${step}`));
     });
+    console.log('');
 
     // Step 11: Ask to start services
     if (installationType === 'docker') {
@@ -203,23 +255,24 @@ class InstallerCore {
       ]);
 
       if (startNow) {
-        console.log(chalk.blue('\nStarting Docker services...'));
+        console.log(chalk.blue('🚀 Starting Docker services...\n'));
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
           if (startResult.warning) {
             // If there's a warning, it means services were already running or had conflicts
-            console.log(chalk.yellow(`⚠ ${startResult.warning}`));
-            console.log(chalk.blue('\nAccess the web interface at: http://localhost:3001'));
+            console.log(chalk.yellow(`⚠ ${startResult.warning}\n`));
           } else {
             // Services were actually started
-            console.log(chalk.green('✓ Services started successfully!'));
-            console.log(chalk.blue('\nAccess the web interface at: http://localhost:3001'));
+            console.log(chalk.green('✓ Services started successfully!\n'));
           }
+          console.log(chalk.cyan.bold('🌐 Access the web interface at: ') + chalk.underline('http://localhost:3001'));
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
-          console.log(chalk.yellow('   You can start them manually with: docker-compose up -d'));
-          console.log(chalk.yellow('   Or start individual services: docker-compose up -d scanner-map'));
+          console.log(chalk.gray('   You can start them manually with: docker-compose up -d'));
+          console.log(chalk.gray('   Or start individual services: docker-compose up -d scanner-map'));
         }
+      } else {
+        console.log(chalk.gray('   Services not started. Start them manually with: docker-compose up -d'));
       }
     }
 
@@ -245,30 +298,33 @@ class InstallerCore {
       }
     }
 
-    console.log(chalk.green('\n✨ Installation complete! Happy scanning!\n'));
+    console.log(chalk.green.bold('\n✨ Installation complete! Happy scanning! ✨\n'));
+    console.log(chalk.gray('   Need help? Check the documentation or open an issue on GitHub.\n'));
   }
 
   /**
    * Configure optional services
    */
   async configureServices(installationType) {
+    console.log(chalk.gray('   These services are optional and can be enabled later if needed.\n'));
+    
     const questions = [
       {
         type: 'confirm',
         name: 'enableOllama',
-        message: 'Enable Ollama (Local AI service)?',
+        message: 'Enable Ollama? (Local AI service for transcription)',
         default: false
       },
       {
         type: 'confirm',
         name: 'enableICAD',
-        message: 'Enable iCAD Transcribe (Advanced transcription)?',
+        message: 'Enable iCAD Transcribe? (Advanced transcription with better accuracy)',
         default: false
       },
       {
         type: 'confirm',
         name: 'enableTrunkRecorder',
-        message: 'Enable TrunkRecorder (Radio recording)?',
+        message: 'Enable TrunkRecorder? (Radio recording and call capture)',
         default: false
       }
     ];
@@ -280,6 +336,8 @@ class InstallerCore {
    * Configure core settings
    */
   async configureCore() {
+    console.log(chalk.gray('   Configure basic settings for Scanner Map.\n'));
+    
     return await inquirer.prompt([
       {
         type: 'input',
@@ -288,7 +346,10 @@ class InstallerCore {
         default: 3001,
         validate: (input) => {
           const port = parseInt(input);
-          return port > 0 && port < 65536 ? true : 'Please enter a valid port number (1-65535)';
+          if (isNaN(port) || port <= 0 || port >= 65536) {
+            return 'Please enter a valid port number (1-65535)';
+          }
+          return true;
         },
         filter: (input) => parseInt(input)
       },
@@ -299,7 +360,10 @@ class InstallerCore {
         default: 3306,
         validate: (input) => {
           const port = parseInt(input);
-          return port > 0 && port < 65536 ? true : 'Please enter a valid port number (1-65535)';
+          if (isNaN(port) || port <= 0 || port >= 65536) {
+            return 'Please enter a valid port number (1-65535)';
+          }
+          return true;
         },
         filter: (input) => parseInt(input)
       },
@@ -307,13 +371,25 @@ class InstallerCore {
         type: 'input',
         name: 'publicDomain',
         message: 'Public domain (for Discord embeds):',
-        default: 'localhost'
+        default: 'localhost',
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Domain cannot be empty';
+          }
+          return true;
+        }
       },
       {
         type: 'input',
         name: 'timezone',
-        message: 'Timezone:',
-        default: 'America/New_York'
+        message: 'Timezone (e.g., America/New_York):',
+        default: 'America/New_York',
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Timezone cannot be empty';
+          }
+          return true;
+        }
       }
     ]);
   }
@@ -322,15 +398,29 @@ class InstallerCore {
    * Configure geocoding service
    */
   async configureGeocoding() {
+    console.log(chalk.gray('   Geocoding converts addresses to coordinates for map display.\n'));
+    
     const { provider } = await inquirer.prompt([
       {
         type: 'list',
         name: 'provider',
         message: 'Choose geocoding provider:',
         choices: [
-          { name: 'Nominatim (OpenStreetMap) - FREE, no API key', value: 'nominatim' },
-          { name: 'LocationIQ - FREE tier available', value: 'locationiq' },
-          { name: 'Google Maps - Paid service', value: 'google' }
+          { 
+            name: '📍 Nominatim (OpenStreetMap) - FREE, no API key required', 
+            value: 'nominatim',
+            short: 'Nominatim'
+          },
+          { 
+            name: '🌍 LocationIQ - FREE tier available (60,000 requests/day)', 
+            value: 'locationiq',
+            short: 'LocationIQ'
+          },
+          { 
+            name: '🗺️  Google Maps - Paid service (most accurate)', 
+            value: 'google',
+            short: 'Google Maps'
+          }
         ],
         default: 'nominatim'
       }
@@ -349,7 +439,7 @@ class InstallerCore {
         {
           type: 'input',
           name: 'apiKey',
-          message: 'LocationIQ API key (optional, press Enter to skip):',
+          message: 'LocationIQ API key (optional - get one at locationiq.com):',
           default: ''
         }
       ]);
@@ -359,7 +449,7 @@ class InstallerCore {
         {
           type: 'input',
           name: 'apiKey',
-          message: 'Google Maps API key (optional, press Enter to skip):',
+          message: 'Google Maps API key (optional - get one at console.cloud.google.com):',
           default: ''
         }
       ]);
@@ -372,8 +462,10 @@ class InstallerCore {
   /**
    * Configure AI provider
    */
-  async configureAI(ollamaEnabled) {
+  async configureAI(ollamaEnabled, installationType = 'docker') {
     const defaultProvider = ollamaEnabled ? 'ollama' : 'openai';
+    
+    console.log(chalk.gray('   AI is used for transcribing and processing radio calls.\n'));
     
     const { provider } = await inquirer.prompt([
       {
@@ -381,8 +473,16 @@ class InstallerCore {
         name: 'provider',
         message: 'Choose AI provider:',
         choices: [
-          { name: 'OpenAI (ChatGPT)', value: 'openai' },
-          { name: 'Ollama (Local AI)', value: 'ollama' }
+          { 
+            name: '🤖 OpenAI (ChatGPT) - Cloud-based, requires API key', 
+            value: 'openai',
+            short: 'OpenAI'
+          },
+          { 
+            name: '🏠 Ollama (Local AI) - Runs on your machine, free', 
+            value: 'ollama',
+            short: 'Ollama'
+          }
         ],
         default: defaultProvider
       }
@@ -397,31 +497,55 @@ class InstallerCore {
         {
           type: 'input',
           name: 'apiKey',
-          message: 'OpenAI API key (optional, press Enter to skip):',
+          message: 'OpenAI API key (optional - get one at platform.openai.com):',
           default: ''
         },
         {
           type: 'input',
           name: 'model',
-          message: 'OpenAI model:',
-          default: 'gpt-4o-mini'
+          message: 'OpenAI model name:',
+          default: 'gpt-4o-mini',
+          validate: (input) => {
+            if (!input || input.trim().length === 0) {
+              return 'Model name cannot be empty';
+            }
+            return true;
+          }
         }
       ]);
       config.openaiApiKey = answers.apiKey;
       config.openaiModel = answers.model;
     } else {
+      const defaultOllamaUrl = installationType === 'docker' ? 'http://ollama:11434' : 'http://localhost:11434';
       const answers = await inquirer.prompt([
         {
           type: 'input',
           name: 'url',
           message: 'Ollama URL:',
-          default: 'http://localhost:11434'
+          default: defaultOllamaUrl,
+          validate: (input) => {
+            if (!input || input.trim().length === 0) {
+              return 'URL cannot be empty';
+            }
+            try {
+              new URL(input);
+              return true;
+            } catch {
+              return 'Please enter a valid URL';
+            }
+          }
         },
         {
           type: 'input',
           name: 'model',
-          message: 'Ollama model:',
-          default: 'llama3.1:8b'
+          message: 'Ollama model name:',
+          default: 'llama3.1:8b',
+          validate: (input) => {
+            if (!input || input.trim().length === 0) {
+              return 'Model name cannot be empty';
+            }
+            return true;
+          }
         }
       ]);
       config.ollamaUrl = answers.url;
@@ -435,6 +559,8 @@ class InstallerCore {
    * Configure Discord bot
    */
   async configureDiscord() {
+    console.log(chalk.gray('   Discord bot can send radio call notifications to Discord channels.\n'));
+    
     const { enable } = await inquirer.prompt([
       {
         type: 'confirm',
@@ -454,15 +580,21 @@ class InstallerCore {
 
     const answers = await inquirer.prompt([
       {
-        type: 'input',
+        type: 'password',
         name: 'token',
-        message: 'Discord bot token:',
-        validate: (input) => input.length > 0 || 'Discord token is required'
+        message: 'Discord bot token (get one at discord.com/developers):',
+        mask: '*',
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Discord token is required';
+          }
+          return true;
+        }
       },
       {
         type: 'input',
         name: 'clientId',
-        message: 'Discord Client ID (optional):',
+        message: 'Discord Client ID (optional - for slash commands):',
         default: ''
       }
     ]);
@@ -478,20 +610,26 @@ class InstallerCore {
    * Show installation summary
    */
   async showSummary(config) {
-    console.log(chalk.blue('\n════════════════════════════════════════'));
-    console.log(chalk.blue('  Installation Summary'));
-    console.log(chalk.blue('════════════════════════════════════════\n'));
+    console.log(chalk.blue.bold('\n📋 Installation Summary\n'));
+    console.log(chalk.gray('   Review your configuration before proceeding:\n'));
 
-    console.log(chalk.white(`Installation Type: ${chalk.cyan(config.installationType)}`));
-    console.log(chalk.white(`Web Server Port: ${chalk.cyan(config.webserverPort)}`));
-    console.log(chalk.white(`API Port: ${chalk.cyan(config.botPort)}`));
-    console.log(chalk.white(`Timezone: ${chalk.cyan(config.timezone)}`));
-    console.log(chalk.white(`Geocoding: ${chalk.cyan(config.geocodingProvider)}`));
-    console.log(chalk.white(`AI Provider: ${chalk.cyan(config.aiProvider)}`));
-    console.log(chalk.white(`Discord Bot: ${chalk.cyan(config.enableDiscord ? 'Enabled' : 'Disabled')}`));
-    console.log(chalk.white(`Ollama: ${chalk.cyan(config.enableOllama ? 'Enabled' : 'Disabled')}`));
-    console.log(chalk.white(`iCAD Transcribe: ${chalk.cyan(config.enableICAD ? 'Enabled' : 'Disabled')}`));
-    console.log(chalk.white(`TrunkRecorder: ${chalk.cyan(config.enableTrunkRecorder ? 'Enabled' : 'Disabled')}`));
+    const formatValue = (value) => {
+      if (typeof value === 'boolean') {
+        return value ? chalk.green('✓ Enabled') : chalk.gray('Disabled');
+      }
+      return chalk.cyan(value);
+    };
+
+    console.log(chalk.white('   Installation Type: ') + formatValue(config.installationType));
+    console.log(chalk.white('   Web Server Port: ') + formatValue(config.webserverPort));
+    console.log(chalk.white('   API Port: ') + formatValue(config.botPort));
+    console.log(chalk.white('   Timezone: ') + formatValue(config.timezone));
+    console.log(chalk.white('   Geocoding: ') + formatValue(config.geocodingProvider));
+    console.log(chalk.white('   AI Provider: ') + formatValue(config.aiProvider));
+    console.log(chalk.white('   Discord Bot: ') + formatValue(config.enableDiscord));
+    console.log(chalk.white('   Ollama: ') + formatValue(config.enableOllama));
+    console.log(chalk.white('   iCAD Transcribe: ') + formatValue(config.enableICAD));
+    console.log(chalk.white('   TrunkRecorder: ') + formatValue(config.enableTrunkRecorder));
     console.log('');
   }
 }
