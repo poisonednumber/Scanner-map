@@ -121,6 +121,7 @@ The installer will:
 - ✅ Create `.env` configuration file
 - ✅ Set up Docker Compose
 - ✅ Start all services automatically
+- ✅ Optionally configure auto-start on boot
 
 ### Manual Installation Steps
 
@@ -404,6 +405,51 @@ docker-compose restart scanner-map
 # View service status
 docker-compose ps
 ```
+
+### Auto-Start on Boot
+
+The installer can configure Scanner Map to automatically start when your system boots.
+
+**During Installation:**
+- The installer will prompt you to set up auto-start after asking to start services immediately
+- Choose "Yes" to configure automatic startup on boot
+
+**Manual Setup:**
+
+**Linux (systemd):**
+```bash
+# Create systemd service (if not done by installer)
+sudo systemctl enable scanner-map.service
+sudo systemctl start scanner-map.service
+
+# Check status
+sudo systemctl status scanner-map.service
+
+# Disable auto-start
+sudo systemctl disable scanner-map.service
+```
+
+**macOS (launchd):**
+```bash
+# Service is created at: ~/Library/LaunchAgents/com.scanner-map.plist
+# Load service
+launchctl load ~/Library/LaunchAgents/com.scanner-map.plist
+
+# Unload service
+launchctl unload ~/Library/LaunchAgents/com.scanner-map.plist
+```
+
+**Windows (Scheduled Task):**
+```batch
+# Task is created as "Scanner Map Auto-Start"
+# Check status
+schtasks /query /tn "Scanner Map Auto-Start"
+
+# Disable auto-start
+schtasks /delete /tn "Scanner Map Auto-Start" /f
+```
+
+**Note:** Docker containers already have `restart: unless-stopped` policy, so they will automatically restart when Docker starts. The auto-start configuration ensures Docker Compose starts the services on system boot.
 
 ### Service Configuration Files
 
