@@ -84,8 +84,10 @@ set ENABLE_TRUNKRECORDER=n
 
 set /p ENABLE_OLLAMA="Configure Ollama? (y/N): "
 echo.
+if /i "!ENABLE_OLLAMA!"=="" set ENABLE_OLLAMA=n
 if /i "!ENABLE_OLLAMA!"=="y" (
     set /p OLLAMA_DOCKER="Install Ollama via Docker? (Y/n): "
+    if /i "!OLLAMA_DOCKER!"=="" set OLLAMA_DOCKER=y
     if /i "!OLLAMA_DOCKER!"=="n" (
         set /p OLLAMA_URL="Enter Ollama URL [http://localhost:11434]: "
         if "!OLLAMA_URL!"=="" set OLLAMA_URL=http://localhost:11434
@@ -121,6 +123,7 @@ if /i "!ENABLE_ICAD!"=="y" (
 
 set /p ENABLE_TRUNKRECORDER="Configure TrunkRecorder? (y/N): "
 echo.
+if /i "!ENABLE_TRUNKRECORDER!"=="" set ENABLE_TRUNKRECORDER=n
 if /i "!ENABLE_TRUNKRECORDER!"=="y" (
     echo [INFO] TrunkRecorder will be added to docker-compose.yml
     echo [WARNING] TrunkRecorder is licensed under GPL-3.0
@@ -171,17 +174,27 @@ echo   AI Provider Configuration (Optional)
 echo ========================================
 echo.
 echo Choose an AI provider for summaries and address extraction:
-echo Press Enter to skip and use defaults (OpenAI).
+
+REM Check if Ollama is enabled - if so, default to Ollama
+set DEFAULT_AI_PROVIDER=openai
+set DEFAULT_PROMPT=[openai]
+if /i "!ENABLE_OLLAMA!"=="y" (
+    set DEFAULT_AI_PROVIDER=ollama
+    set DEFAULT_PROMPT=[ollama]
+    echo Ollama is enabled - will default to Ollama.
+) else (
+    echo Press Enter to skip and use defaults (OpenAI).
+)
 echo.
 echo 1. OpenAI (ChatGPT) - Paid API service
 echo 2. Ollama - Free local AI service
 echo.
-set AI_PROVIDER=openai
+set AI_PROVIDER=!DEFAULT_AI_PROVIDER!
 set OPENAI_API_KEY=
 set OPENAI_MODEL=gpt-4o-mini
-set /p AI_PROVIDER_CHOICE="Select AI provider (openai/ollama) [openai] or press Enter to skip: "
+set /p AI_PROVIDER_CHOICE="Select AI provider (openai/ollama) !DEFAULT_PROMPT! or press Enter to skip: "
 echo.
-if "!AI_PROVIDER_CHOICE!"=="" set AI_PROVIDER_CHOICE=openai
+if "!AI_PROVIDER_CHOICE!"=="" set AI_PROVIDER_CHOICE=!DEFAULT_AI_PROVIDER!
 if /i "!AI_PROVIDER_CHOICE!"=="openai" (
     set AI_PROVIDER=openai
     echo [INFO] OpenAI API requires an API key
@@ -200,8 +213,9 @@ if /i "!AI_PROVIDER_CHOICE!"=="openai" (
         REM Already configured above
     ) else (
         set ENABLE_OLLAMA=y
-        set /p OLLAMA_DOCKER="Install Ollama via Docker? (Y/n): "
-        if /i "!OLLAMA_DOCKER!"=="n" (
+set /p OLLAMA_DOCKER="Install Ollama via Docker? (Y/n): "
+    if /i "!OLLAMA_DOCKER!"=="" set OLLAMA_DOCKER=y
+    if /i "!OLLAMA_DOCKER!"=="n" (
             set /p OLLAMA_URL="Enter Ollama URL [http://localhost:11434]: "
             if "!OLLAMA_URL!"=="" set OLLAMA_URL=http://localhost:11434
             set OLLAMA_INSTALL_MODE=manual
@@ -218,10 +232,22 @@ if /i "!AI_PROVIDER_CHOICE!"=="openai" (
     set OPENAI_MODEL=
     echo.
 ) else (
-    set AI_PROVIDER=openai
-    set OPENAI_API_KEY=
-    set OPENAI_MODEL=gpt-4o-mini
-    echo [INFO] Defaulting to OpenAI
+    REM Use default based on Ollama status
+    if /i "!ENABLE_OLLAMA!"=="y" (
+        set AI_PROVIDER=ollama
+        set ENABLE_OLLAMA=y
+        if "!OLLAMA_URL!"=="" set OLLAMA_URL=http://ollama:11434
+        if "!OLLAMA_INSTALL_MODE!"=="" set OLLAMA_INSTALL_MODE=docker
+        if "!OLLAMA_MODEL!"=="" set OLLAMA_MODEL=llama3.1:8b
+        set OPENAI_API_KEY=
+        set OPENAI_MODEL=
+        echo [INFO] Defaulting to Ollama (since Ollama is enabled)
+    ) else (
+        set AI_PROVIDER=openai
+        set OPENAI_API_KEY=
+        set OPENAI_MODEL=gpt-4o-mini
+        echo [INFO] Defaulting to OpenAI
+    )
     echo.
 )
 

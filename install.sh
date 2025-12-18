@@ -208,17 +208,27 @@ configure_ai_provider() {
     print_header "AI Provider Configuration (Optional)"
     
     echo "Choose an AI provider for summaries and address extraction:"
-    echo "Press Enter to skip and use defaults (OpenAI)."
+    
+    # Check if Ollama is enabled - if so, default to Ollama
+    local default_provider="openai"
+    local default_prompt="[openai]"
+    if [[ "$ENABLE_OLLAMA" == "true" ]]; then
+        default_provider="ollama"
+        default_prompt="[ollama]"
+        echo "Ollama is enabled - will default to Ollama."
+    else
+        echo "Press Enter to skip and use defaults (OpenAI)."
+    fi
     echo ""
     echo "1. OpenAI (ChatGPT) - Paid API service"
     echo "2. Ollama - Free local AI service"
     echo ""
     
-    AI_PROVIDER_CHOICE=$(prompt_input "Select AI provider (openai/ollama) [openai] or press Enter to skip" "openai")
+    AI_PROVIDER_CHOICE=$(prompt_input "Select AI provider (openai/ollama) $default_prompt or press Enter to skip" "$default_provider")
     
     # If user just pressed Enter with no input, use default
     if [[ -z "$AI_PROVIDER_CHOICE" ]]; then
-        AI_PROVIDER_CHOICE="openai"
+        AI_PROVIDER_CHOICE="$default_provider"
     fi
     
     case "$AI_PROVIDER_CHOICE" in
@@ -239,26 +249,45 @@ configure_ai_provider() {
         ollama|oll|2)
             AI_PROVIDER="ollama"
             ENABLE_OLLAMA=true
-            if prompt_yes_no "Install Ollama via Docker? (Recommended)" "y"; then
-                OLLAMA_URL="http://ollama:11434"  # Docker service name
-                OLLAMA_INSTALL_MODE="docker"
-            else
-                OLLAMA_URL=$(prompt_input "Enter Ollama URL [http://localhost:11434]" "http://localhost:11434")
-                OLLAMA_INSTALL_MODE="manual"
-                print_warning "Ollama must be installed separately. See: https://ollama.com"
+            # If Ollama wasn't configured in optional services, configure it now
+            if [[ -z "$OLLAMA_URL" ]]; then
+                if prompt_yes_no "Install Ollama via Docker? (Recommended)" "y"; then
+                    OLLAMA_URL="http://ollama:11434"  # Docker service name
+                    OLLAMA_INSTALL_MODE="docker"
+                else
+                    OLLAMA_URL=$(prompt_input "Enter Ollama URL [http://localhost:11434]" "http://localhost:11434")
+                    OLLAMA_INSTALL_MODE="manual"
+                    print_warning "Ollama must be installed separately. See: https://ollama.com"
+                fi
+                OLLAMA_MODEL=$(prompt_input "Enter Ollama model (e.g., llama3.1:8b) [llama3.1:8b]" "llama3.1:8b")
             fi
-            OLLAMA_MODEL=$(prompt_input "Enter Ollama model (e.g., llama3.1:8b) [llama3.1:8b]" "llama3.1:8b")
             OPENAI_API_KEY=""
             OPENAI_MODEL=""
             ;;
         *)
-            AI_PROVIDER="openai"
-            OPENAI_API_KEY=""
-            OPENAI_MODEL="gpt-4o-mini"
-            OLLAMA_URL=""
-            OLLAMA_MODEL=""
-            ENABLE_OLLAMA=false
-            print_info "Defaulting to OpenAI"
+            # Use default based on Ollama status
+            if [[ "$ENABLE_OLLAMA" == "true" ]]; then
+                AI_PROVIDER="ollama"
+                ENABLE_OLLAMA=true
+                if [[ -z "$OLLAMA_URL" ]]; then
+                    OLLAMA_URL="http://ollama:11434"
+                    OLLAMA_INSTALL_MODE="docker"
+                fi
+                if [[ -z "$OLLAMA_MODEL" ]]; then
+                    OLLAMA_MODEL="llama3.1:8b"
+                fi
+                OPENAI_API_KEY=""
+                OPENAI_MODEL=""
+                print_info "Defaulting to Ollama (since Ollama is enabled)"
+            else
+                AI_PROVIDER="openai"
+                OPENAI_API_KEY=""
+                OPENAI_MODEL="gpt-4o-mini"
+                OLLAMA_URL=""
+                OLLAMA_MODEL=""
+                ENABLE_OLLAMA=false
+                print_info "Defaulting to OpenAI"
+            fi
             ;;
     esac
     
@@ -310,9 +339,25 @@ configure_optional_services() {
     
     echo "Scanner Map supports several optional services:"
     echo ""
-    echo "1. iCAD Transcribe - Advanced radio-optimized transcription service"
-    echo "2. TrunkRecorder - Record calls from trunked radio systems"
+    echo "1. Ollama - Local AI service for summaries and address extraction"
+    echo "2. iCAD Transcribe - Advanced radio-optimized transcription service"
+    echo "3. TrunkRecorder - Record calls from trunked radio systems"
     echo ""
+    
+    # Ollama (moved here so it can be checked in AI provider config)
+    ENABLE_OLLAMA=false
+    if prompt_yes_no "Do you want to configure Ollama? (Local AI service)" "n"; then
+        ENABLE_OLLAMA=true
+        if prompt_yes_no "Install Ollama via Docker? (Recommended)" "y"; then
+            OLLAMA_URL="http://ollama:11434"  # Docker service name
+            OLLAMA_INSTALL_MODE="docker"
+        else
+            OLLAMA_URL=$(prompt_input "Enter Ollama URL [http://localhost:11434]" "http://localhost:11434")
+            OLLAMA_INSTALL_MODE="manual"
+            print_warning "Ollama must be installed separately. See: https://ollama.com"
+        fi
+        OLLAMA_MODEL=$(prompt_input "Enter Ollama model (e.g., llama3.1:8b) [llama3.1:8b]" "llama3.1:8b")
+    fi
     
     # iCAD Transcribe
     ENABLE_ICAD=false
