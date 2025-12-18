@@ -6,6 +6,7 @@ require('dotenv').config();
 const {
   BOT_PORT: PORT,  
   PUBLIC_DOMAIN,
+  ENABLE_DISCORD = 'false',
   DISCORD_TOKEN,
   MAPPED_TALK_GROUPS: mappedTalkGroupsString,
   ENABLE_MAPPED_TALK_GROUPS = 'true',
@@ -152,7 +153,7 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
 const IS_MAPPED_TALK_GROUPS_ENABLED = ENABLE_MAPPED_TALK_GROUPS.toLowerCase() === 'true';
 
 // Parse Two-Tone configuration
-const IS_TWO_TONE_MODE_ENABLED = ENABLE_TWO_TONE_MODE.toLowerCase() === 'true';
+const IS_TWO_TONE_MODE_ENABLED = (ENABLE_TWO_TONE_MODE || '').toLowerCase() === 'true';
 const TWO_TONE_TALK_GROUPS = twoToneTalkGroupsString
   ? twoToneTalkGroupsString.split(',').map(id => id.trim())
   : [];
@@ -855,6 +856,14 @@ function importTalkGroups() {
       return;
     }
 
+    // Check if it's a directory (shouldn't happen, but handle gracefully)
+    const stats = fs.statSync(talkGroupsFile);
+    if (stats.isDirectory()) {
+      logger.warn('talkgroups.csv is a directory, not a file. Skipping talkgroup import.');
+      resolve();
+      return;
+    }
+
     logger.info('Importing talkgroups from CSV...');
     let importCount = 0;
 
@@ -899,13 +908,25 @@ function importTalkGroups() {
 function ensureApiKey() {
   return new Promise((resolve, reject) => {
     try {
+      // Set default API key file path if not provided
+      const apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
+      // Try appdata structure first (new), fallback to old structure
+      let finalApiKeyPath = apiKeyFilePath;
+      if (!API_KEY_FILE) {
+        // Try appdata structure first
+        const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
+        if (fs.existsSync(path.dirname(appdataPath))) {
+          finalApiKeyPath = appdataPath;
+        }
+      }
+      
       // Ensure directory exists
-      const apiKeyDir = path.dirname(API_KEY_FILE);
+      const apiKeyDir = path.dirname(finalApiKeyPath);
       if (!fs.existsSync(apiKeyDir)) {
         fs.mkdirSync(apiKeyDir, { recursive: true });
       }
 
-      if (!fs.existsSync(API_KEY_FILE)) {
+      if (!fs.existsSync(finalApiKeyPath)) {
         // Create a default API key
         const defaultKey = uuidv4();
         const hashedKey = bcrypt.hashSync(defaultKey, 10);
@@ -917,14 +938,51 @@ function ensureApiKey() {
           description: 'Auto-generated API key for first boot'
         }];
         
-        fs.writeFileSync(API_KEY_FILE, JSON.stringify(initialApiKeys, null, 2));
+        fs.writeFileSync(finalApiKeyPath, JSON.stringify(initialApiKeys, null, 2));
         
         logger.info(`Created default API key: ${defaultKey}`);
-        logger.info(`API key saved to: ${API_KEY_FILE}`);
+        logger.info(`API key saved to: ${finalApiKeyPath}`);
         logger.warn('IMPORTANT: Save this API key as it won\'t be shown again!');
+        
+        // Auto-update TrunkRecorder config if it exists and needs the key
+        updateTrunkRecorderApiKey(defaultKey);
+        
+        // Auto-update iCAD Transcribe config if it exists and needs the key
+        updateICADApiKey(defaultKey);
+        
         resolve(defaultKey);
       } else {
         logger.info('API key file already exists.');
+        
+        // Check if TrunkRecorder config needs API key update
+        // Try appdata structure first (new), fallback to old structure
+        let trunkRecorderConfigPath = path.join(__dirname, 'appdata', 'trunk-recorder', 'config', 'config.json');
+        if (!fs.existsSync(trunkRecorderConfigPath)) {
+          trunkRecorderConfigPath = path.join(__dirname, 'trunk-recorder', 'config', 'config.json');
+        }
+        
+        if (fs.existsSync(trunkRecorderConfigPath)) {
+          try {
+            const configData = fs.readFileSync(trunkRecorderConfigPath, 'utf8');
+            const config = JSON.parse(configData);
+            
+            // If config has placeholder, create a TrunkRecorder-specific key
+            if (config.uploadServer && 
+                (config.uploadServer.apiKey === 'AUTO_GENERATE_ON_STARTUP' || 
+                 config.uploadServer.apiKey === 'YOUR_API_KEY_HERE' ||
+                 !config.uploadServer.apiKey)) {
+              
+              logger.info('TrunkRecorder config found with placeholder. Creating TrunkRecorder-specific API key...');
+              updateTrunkRecorderApiKey(null, true); // Create new TrunkRecorder-specific key
+            }
+          } catch (err) {
+            logger.warn(`Could not auto-update TrunkRecorder config: ${err.message}`);
+          }
+        }
+        
+        // Check if iCAD Transcribe config needs API key update
+        updateICADApiKey(null, false);
+        
         resolve(null);
       }
     } catch (err) {
@@ -932,6 +990,139 @@ function ensureApiKey() {
       reject(err);
     }
   });
+}
+
+// Helper function to update TrunkRecorder config with API key
+function updateTrunkRecorderApiKey(apiKey, createNew = false) {
+  // Try appdata structure first (new), fallback to old structure
+  let trunkRecorderConfigPath = path.join(__dirname, 'appdata', 'trunk-recorder', 'config', 'config.json');
+  if (!fs.existsSync(trunkRecorderConfigPath)) {
+    trunkRecorderConfigPath = path.join(__dirname, 'trunk-recorder', 'config', 'config.json');
+  }
+  
+  if (!fs.existsSync(trunkRecorderConfigPath)) {
+    return; // Config doesn't exist yet
+  }
+  
+  try {
+    const configData = fs.readFileSync(trunkRecorderConfigPath, 'utf8');
+    const config = JSON.parse(configData);
+    
+    let keyToUse = apiKey;
+    
+    // If we need to create a new TrunkRecorder-specific key
+    if (createNew || !keyToUse) {
+      keyToUse = uuidv4();
+      const hashedKey = bcrypt.hashSync(keyToUse, 10);
+      
+      // Load existing keys - use the same path logic as ensureApiKey
+      let apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
+      if (!API_KEY_FILE) {
+        const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
+        if (fs.existsSync(path.dirname(appdataPath))) {
+          apiKeyFilePath = appdataPath;
+        }
+      }
+      const existingKeys = JSON.parse(fs.readFileSync(apiKeyFilePath, 'utf8'));
+      
+      // Check if TrunkRecorder key exists
+      const existingTrunkRecorderKey = existingKeys.find(k => k.name === 'TrunkRecorder');
+      if (existingTrunkRecorderKey) {
+        existingTrunkRecorderKey.key = hashedKey;
+        existingTrunkRecorderKey.updated_at = new Date().toISOString();
+      } else {
+        existingKeys.push({
+          key: hashedKey,
+          name: 'TrunkRecorder',
+          disabled: false,
+          created_at: new Date().toISOString(),
+          description: 'Auto-generated API key for TrunkRecorder integration'
+        });
+      }
+      
+      fs.writeFileSync(apiKeyFilePath, JSON.stringify(existingKeys, null, 2));
+      logger.info(`Created TrunkRecorder API key: ${keyToUse}`);
+    }
+    
+    // Update config
+    if (!config.uploadServer) {
+      config.uploadServer = {};
+    }
+    config.uploadServer.apiKey = keyToUse;
+    
+    fs.writeFileSync(trunkRecorderConfigPath, JSON.stringify(config, null, 2));
+    logger.info(`Auto-updated TrunkRecorder config with API key`);
+    
+    // Also save to shared file for reference
+    // Try appdata structure first (new), fallback to old structure
+    let sharedKeyPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'trunk-recorder-api-key.txt');
+    let dataDir = path.dirname(sharedKeyPath);
+    if (!fs.existsSync(dataDir)) {
+      // Fallback to old structure
+      sharedKeyPath = path.join(__dirname, 'data', 'trunk-recorder-api-key.txt');
+      dataDir = path.dirname(sharedKeyPath);
+    }
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    fs.writeFileSync(sharedKeyPath, keyToUse);
+    
+  } catch (err) {
+    logger.warn(`Could not auto-update TrunkRecorder config: ${err.message}`);
+  }
+}
+
+// Helper function to update iCAD Transcribe config with API key
+function updateICADApiKey(apiKey, createNew = false) {
+  // Try appdata structure first (new), fallback to old structure
+  let icadEnvPath = path.join(__dirname, 'appdata', 'icad-transcribe', '.env');
+  if (!fs.existsSync(icadEnvPath)) {
+    icadEnvPath = path.join(__dirname, 'icad-transcribe', '.env');
+  }
+  
+  if (!fs.existsSync(icadEnvPath)) {
+    return; // Config doesn't exist yet
+  }
+  
+  try {
+    let envContent = fs.readFileSync(icadEnvPath, 'utf8');
+    let keyToUse = apiKey;
+    
+    // Check if API key needs to be generated
+    if (envContent.includes('API_KEY=AUTO_GENERATE_ON_STARTUP') || 
+        (!envContent.includes('API_KEY=') && createNew)) {
+      
+      if (!keyToUse) {
+        keyToUse = uuidv4();
+      }
+      
+      // Update iCAD .env
+      if (envContent.includes('API_KEY=AUTO_GENERATE_ON_STARTUP')) {
+        envContent = envContent.replace('API_KEY=AUTO_GENERATE_ON_STARTUP', `API_KEY=${keyToUse}`);
+      } else if (!envContent.includes('API_KEY=')) {
+        envContent += `\nAPI_KEY=${keyToUse}\n`;
+      } else {
+        // Replace existing API_KEY line
+        envContent = envContent.replace(/API_KEY=.*/g, `API_KEY=${keyToUse}`);
+      }
+      
+      fs.writeFileSync(icadEnvPath, envContent);
+      logger.info(`Auto-updated iCAD Transcribe .env with API key`);
+      
+      // Also update Scanner Map .env if it has the placeholder
+      const scannerMapEnvPath = path.join(__dirname, '.env');
+      if (fs.existsSync(scannerMapEnvPath)) {
+        let scannerEnvContent = fs.readFileSync(scannerMapEnvPath, 'utf8');
+        if (scannerEnvContent.includes('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP')) {
+          scannerEnvContent = scannerEnvContent.replace('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP', `ICAD_API_KEY=${keyToUse}`);
+          fs.writeFileSync(scannerMapEnvPath, scannerEnvContent);
+          logger.info(`Auto-updated Scanner Map .env with iCAD API key`);
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn(`Could not auto-update iCAD Transcribe config: ${err.message}`);
+  }
 }
 
 // Function to initialize database tables
@@ -1142,10 +1333,16 @@ async function initializeBot() {
     await startBotServices();
 
     // Step 8: Start webserver last
-    if (WEBSERVER_PORT && (GOOGLE_MAPS_API_KEY || LOCATIONIQ_API_KEY)) {
+    // Check if geocoding is available (Nominatim doesn't need API key)
+    const GEOCODING_PROVIDER = process.env.GEOCODING_PROVIDER || '';
+    const hasGeocoding = GEOCODING_PROVIDER.toLowerCase() === 'nominatim' || 
+                        GOOGLE_MAPS_API_KEY || 
+                        LOCATIONIQ_API_KEY;
+    
+    if (WEBSERVER_PORT && hasGeocoding) {
       await startWebserver();
     } else {
-      logger.warn('Webserver not started: WEBSERVER_PORT or geocoding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) not configured');
+      logger.warn('Webserver not started: WEBSERVER_PORT or geocoding service not configured');
     }
 
     logger.info('Bot initialization completed successfully!');
@@ -1248,8 +1445,17 @@ const db = new sqlite3.Database('./botdata.db', (err) => {
 let apiKeys = [];
 const loadApiKeys = () => {
   try {
-    if (fs.existsSync(API_KEY_FILE)) {
-      const data = fs.readFileSync(API_KEY_FILE, 'utf8');
+    // Use the same path logic as ensureApiKey
+    let apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
+    if (!API_KEY_FILE) {
+      const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
+      if (fs.existsSync(path.dirname(appdataPath))) {
+        apiKeyFilePath = appdataPath;
+      }
+    }
+    
+    if (fs.existsSync(apiKeyFilePath)) {
+      const data = fs.readFileSync(apiKeyFilePath, 'utf8');
       apiKeys = JSON.parse(data);
       logger.info(`Loaded ${apiKeys.length} API keys.`);
     } else {
@@ -5486,10 +5692,15 @@ async function startBotServices() {
       logger.info(`Bot server is running on port ${PORT_NUM}`);
     });
 
-    // Login to Discord
-    await client.login(DISCORD_TOKEN);
-    discordClientReady = true;
-    logger.info('Discord bot logged in successfully.');
+    // Login to Discord only if enabled
+    if (ENABLE_DISCORD && ENABLE_DISCORD.toLowerCase() === 'true' && DISCORD_TOKEN) {
+      await client.login(DISCORD_TOKEN);
+      discordClientReady = true;
+      logger.info('Discord bot logged in successfully.');
+    } else {
+      logger.info('Discord bot disabled (ENABLE_DISCORD=false or no token provided)');
+      discordClientReady = false;
+    }
 
   } catch (error) {
     logger.error('Error starting bot services:', error);

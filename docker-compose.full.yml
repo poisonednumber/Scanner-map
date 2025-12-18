@@ -1,0 +1,123 @@
+# Docker Compose with all optional services enabled
+# This is an example file showing how to enable all optional services
+# Copy relevant sections to docker-compose.yml if you want to use them
+#
+# IMPORTANT LICENSE NOTICES:
+# - TrunkRecorder: GPL-3.0 (see LICENSE_NOTICE.md)
+# - iCAD Transcribe: Apache-2.0 (see TRUNKRECORDER_ATTRIBUTION.md)
+
+version: '3.8'
+
+services:
+  # Ollama (OPTIONAL) - Local AI Service
+  # Official: https://ollama.com
+  # NOTE: Always pulls from Docker Hub (never builds locally)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ./appdata/ollama:/root/.ollama  # Persistent model storage
+    ports:
+      - "11434:11434"  # Ollama API port
+    networks:
+      - scanner-network
+    # For GPU support, uncomment the deploy section:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # After starting, pull a model: docker exec -it ollama ollama pull llama3.1:8b
+    # Configure OLLAMA_URL=http://ollama:11434 in Scanner Map .env
+
+  scanner-map:
+    # Build locally (for development/testing)
+    # TODO: Once published to Docker Hub, can switch to:
+    # image: poisonednumber/scanner-map:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scanner-map
+    restart: unless-stopped
+    ports:
+      - "${WEBSERVER_PORT:-3001}:3001"  # Web interface
+      - "${BOT_PORT:-3306}:3306"         # API endpoint for TrunkRecorder/SDRTrunk
+    volumes:
+      - ./appdata/scanner-map/data:/app/data                 # Database and API keys
+      - ./appdata/scanner-map/audio:/app/audio               # Audio file storage
+      - ./appdata/scanner-map/logs:/app/logs                 # Log files
+      - ./.env:/app/.env                 # Configuration
+      - ./talkgroups.csv:/app/talkgroups.csv:ro  # Talk groups (read-only)
+      # Mount other service configs for auto-configuration
+      - ./appdata/trunk-recorder/config:/app/appdata/trunk-recorder/config  # For API key auto-config
+      - ./appdata/icad-transcribe:/app/appdata/icad-transcribe  # For API key auto-config
+    environment:
+      - NODE_ENV=production
+    networks:
+      - scanner-network
+    depends_on:
+      - ollama
+      - icad-transcribe
+      - trunk-recorder
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # iCAD Transcribe (OPTIONAL) - Apache-2.0 Licensed
+  # Advanced radio-optimized transcription service
+  # Official Repository: https://github.com/TheGreatCodeholio/icad_transcribe
+  # License: Apache-2.0
+  # NOTE: Always pulls from Docker Hub (never builds locally)
+  icad-transcribe:
+    image: thegreatcodeholio/icad_transcribe:1.0
+    container_name: icad-transcribe
+    restart: unless-stopped
+    user: "9911:9911"  # Non-root user for security
+    ports:
+      - "9912:9912"  # iCAD Transcribe web interface
+    volumes:
+      - ./appdata/icad-transcribe/log:/app/log
+      - ./appdata/icad-transcribe/var:/app/var
+      - ./appdata/icad-transcribe/.env:/app/.env
+    networks:
+      - scanner-network
+    environment:
+      - TZ=${TIMEZONE:-UTC}
+    # Configure ICAD_URL in Scanner Map .env to point to: http://icad-transcribe:9912
+    # Set TRANSCRIPTION_MODE=icad in Scanner Map .env
+
+  # TrunkRecorder (OPTIONAL) - GPL-3.0 Licensed
+  # Records calls from trunked radio systems
+  # Official Repository: https://github.com/TrunkRecorder/trunk-recorder
+  # License: GPL-3.0
+  # NOTE: Always pulls from Docker Hub (never builds locally)
+  trunk-recorder:
+    image: lwcooper/trunk-recorder:latest
+    container_name: trunk-recorder
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb  # USB devices for SDR
+    volumes:
+      - ./appdata/trunk-recorder/config:/config
+      - ./appdata/trunk-recorder/recordings:/recordings
+    environment:
+      - TZ=${TIMEZONE:-UTC}
+    networks:
+      - scanner-network
+    # TrunkRecorder will upload to scanner-map:3306/api/call-upload
+    # Configure this in trunk-recorder/config/config.json
+
+networks:
+  scanner-network:
+    driver: bridge
+
+# All data is stored in ./appdata/ directory for easy management
+# To remove all data: rm -rf ./appdata
+
