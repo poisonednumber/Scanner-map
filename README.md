@@ -92,14 +92,15 @@ Ingests calls from SDRTrunk, TrunkRecorder, or any **rdio-scanner compatible end
 ### Prerequisites
 
 - **Git** - [Download Git](https://git-scm.com/downloads)
-- **Docker Desktop** - [Download Docker](https://docs.docker.com/get-docker/)
+- **Node.js 18+** - [Download Node.js](https://nodejs.org/) (includes npm)
+- **Docker Desktop** (for Docker installation) - [Download Docker](https://docs.docker.com/get-docker/)
   - Windows: Docker Desktop for Windows
   - Linux: Docker Engine + Docker Compose
   - macOS: Docker Desktop for Mac
 
 ### Quick Start (Recommended)
 
-**Easy installer for all platforms:**
+**Unified installer for all platforms with interactive configuration:**
 
 #### Linux / macOS
 ```bash
@@ -112,16 +113,36 @@ install.bat
 ```
 
 The installer will:
-- ✅ Check prerequisites (Git, Docker, Docker Compose)
-- ✅ Clone the repository
-- ✅ Configure optional services (Ollama, iCAD Transcribe, TrunkRecorder)
-- ✅ Configure geocoding (Nominatim, LocationIQ, or Google Maps)
-- ✅ Configure AI provider (OpenAI or Ollama)
-- ✅ Configure Discord bot (optional)
-- ✅ Create `.env` configuration file
-- ✅ Set up Docker Compose
-- ✅ Start all services automatically
+- ✅ Check prerequisites (Git, Node.js, npm)
+- ✅ Clone the repository (if needed)
+- ✅ Install npm dependencies
+- ✅ Guide you through interactive configuration:
+  - Choose installation type (Docker or Local)
+  - Select optional services (Ollama, iCAD Transcribe, TrunkRecorder)
+  - Configure geocoding (Nominatim, LocationIQ, or Google Maps)
+  - Configure AI provider (OpenAI or Ollama)
+  - Configure Discord bot (optional)
+- ✅ Auto-configure service links and API keys
+- ✅ Generate `.env` configuration file
+- ✅ Set up Docker Compose (if using Docker)
+- ✅ Optionally start services automatically
 - ✅ Optionally configure auto-start on boot
+
+### Installation Types
+
+The installer supports two installation types:
+
+1. **Docker Installation (Recommended)**
+   - All services run in Docker containers
+   - Easy to manage and update
+   - Isolated from system dependencies
+   - Requires Docker Desktop/Engine
+
+2. **Local Installation**
+   - Services run directly on your system
+   - More control over configuration
+   - Requires manual installation of optional services
+   - Better for development or custom setups
 
 ### Manual Installation Steps
 
@@ -133,18 +154,26 @@ If you prefer to set up manually:
    cd Scanner-map
    ```
 
-2. **Create `.env` file:**
+2. **Install dependencies:**
    ```bash
-   cp .env.example .env  # If example exists
-   # Or create manually (see Configuration section)
+   npm install
    ```
 
-3. **Start services:**
+3. **Create `.env` file:**
+   - Copy from example or create manually (see Configuration section)
+   - Configure all required settings
+
+4. **For Docker installation:**
    ```bash
    docker-compose up -d
    ```
 
-4. **Access the web interface:**
+5. **For Local installation:**
+   ```bash
+   npm start
+   ```
+
+6. **Access the web interface:**
    - Scanner Map: http://localhost:3001
    - iCAD Transcribe (if enabled): http://localhost:9912
 
@@ -335,6 +364,8 @@ All main settings are in `.env`. Key options:
 ### Talk Groups
 - `MAPPED_TALK_GROUPS` — Comma-separated talkgroup IDs
 - `ENABLE_MAPPED_TALK_GROUPS` — Enable talkgroup filtering (true/false)
+
+**Note:** Talkgroups should be imported via the web UI. CSV import has been deprecated.
 
 Other files to edit:
 - `public/config.js` ← map defaults (center, zoom, icons, etc.)  
@@ -539,6 +570,99 @@ lsof -i :3001                 # Linux/macOS
 - Join [Discord community](https://discord.gg/X7vej75zZy)
 
 ---
+
+## 📚 Additional Documentation
+
+- [SERVICE_SETUP_GUIDES.md](SERVICE_SETUP_GUIDES.md) - Setup guides for optional services
+- [README_DOCKER.md](README_DOCKER.md) - Detailed Docker information
+- [AUTO_API_KEY_SETUP.md](AUTO_API_KEY_SETUP.md) - API key automation details
+- [APPDATA_STRUCTURE.md](APPDATA_STRUCTURE.md) - Data directory structure
+- [LICENSE_NOTICE.md](LICENSE_NOTICE.md) - Third-party license information
+
+---
+
+## 🤝 Contributing
+
+Pull requests and issue reports are welcome.  
+
+## 📬 Support
+- **[Join our Discord community](https://discord.gg/X7vej75zZy)** for help and discussion
+- Open a GitHub Issue  
+- Contact **poisonednumber** on Discord
+
+---
+
+## 📄 License
+
+See [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [TrunkRecorder](https://github.com/TrunkRecorder/trunk-recorder) - GPL-3.0 licensed
+- [iCAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe) - Apache-2.0 licensed
+- [Ollama](https://ollama.com) - Local AI service
+
+## 📚 Additional Documentation
+
+- [SERVICE_SETUP_GUIDES.md](SERVICE_SETUP_GUIDES.md) - Setup guides for optional services
+- [README_DOCKER.md](README_DOCKER.md) - Detailed Docker information
+- [AUTO_API_KEY_SETUP.md](AUTO_API_KEY_SETUP.md) - API key automation details
+- [APPDATA_STRUCTURE.md](APPDATA_STRUCTURE.md) - Data directory structure
+- [LICENSE_NOTICE.md](LICENSE_NOTICE.md) - Third-party license information
+
+---
+
+## 🤝 Contributing
+
+Pull requests and issue reports are welcome.  
+
+## 📬 Support
+- **[Join our Discord community](https://discord.gg/X7vej75zZy)** for help and discussion
+- Open a GitHub Issue  
+- Contact **poisonednumber** on Discord
+
+---
+
+## 📄 License
+
+See [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [TrunkRecorder](https://github.com/TrunkRecorder/trunk-recorder) - GPL-3.0 licensed
+- [iCAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe) - Apache-2.0 licensed
+- [Ollama](https://ollama.com) - Local AI service
+
+## 📚 Additional Documentation
+
+- [SERVICE_SETUP_GUIDES.md](SERVICE_SETUP_GUIDES.md) - Setup guides for optional services
+- [README_DOCKER.md](README_DOCKER.md) - Detailed Docker information
+- [AUTO_API_KEY_SETUP.md](AUTO_API_KEY_SETUP.md) - API key automation details
+- [APPDATA_STRUCTURE.md](APPDATA_STRUCTURE.md) - Data directory structure
+- [LICENSE_NOTICE.md](LICENSE_NOTICE.md) - Third-party license information
+
+---
+
+## 🤝 Contributing
+
+Pull requests and issue reports are welcome.  
+
+## 📬 Support
+- **[Join our Discord community](https://discord.gg/X7vej75zZy)** for help and discussion
+- Open a GitHub Issue  
+- Contact **poisonednumber** on Discord
+
+---
+
+## 📄 License
+
+See [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [TrunkRecorder](https://github.com/TrunkRecorder/trunk-recorder) - GPL-3.0 licensed
+- [iCAD Transcribe](https://github.com/TheGreatCodeholio/icad_transcribe) - Apache-2.0 licensed
+- [Ollama](https://ollama.com) - Local AI service
 
 ## 📚 Additional Documentation
 

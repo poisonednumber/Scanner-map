@@ -22,7 +22,6 @@ services:
       - ./appdata/scanner-map/audio:/app/audio               # Audio file storage
       - ./appdata/scanner-map/logs:/app/logs                 # Log files
       - ./.env:/app/.env                 # Configuration
-      - ./talkgroups.csv:/app/talkgroups.csv:ro  # Talk groups (read-only)
       # Mount TrunkRecorder config for auto-configuration
       - ./appdata/trunk-recorder/config:/app/appdata/trunk-recorder/config  # For API key auto-config
     environment:

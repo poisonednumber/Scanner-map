@@ -846,61 +846,12 @@ function checkTalkGroupsImported() {
 }
 
 // Function to import talkgroups from CSV
+// NOTE: This function is deprecated. Talkgroups should be imported via the web UI.
+// Keeping function for backward compatibility but it will not be called automatically.
 function importTalkGroups() {
-  return new Promise((resolve, reject) => {
-    const talkGroupsFile = path.join(__dirname, 'talkgroups.csv');
-    
-    if (!fs.existsSync(talkGroupsFile)) {
-      logger.warn('talkgroups.csv not found. Skipping talkgroup import.');
-      resolve();
-      return;
-    }
-
-    // Check if it's a directory (shouldn't happen, but handle gracefully)
-    const stats = fs.statSync(talkGroupsFile);
-    if (stats.isDirectory()) {
-      logger.warn('talkgroups.csv is a directory, not a file. Skipping talkgroup import.');
-      resolve();
-      return;
-    }
-
-    logger.info('Importing talkgroups from CSV...');
-    let importCount = 0;
-
-    fs.createReadStream(talkGroupsFile)
-      .pipe(csv({
-        headers: ['DEC', 'HEX', 'Alpha Tag', 'Mode', 'Description', 'Tag', 'County'],
-        skipLines: 0,
-      }))
-      .on('data', (row) => {
-        const id = parseInt(row['DEC'], 10);
-        const hex = row['HEX'];
-        const alphaTag = row['Alpha Tag'];
-        const mode = row['Mode'];
-        const description = row['Description'];
-        const tag = row['Tag'];
-        const county = row['County'];
-
-        db.run(
-          `INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [id, hex, alphaTag, mode, description, tag, county],
-          (err) => {
-            if (err) {
-              logger.error('Error inserting talk group:', err.message);
-            } else {
-              importCount++;
-            }
-          }
-        );
-      })
-      .on('end', () => {
-        logger.info(`Successfully imported ${importCount} talkgroups.`);
-        resolve();
-      })
-      .on('error', (err) => {
-        logger.error('Error importing talkgroups:', err);
-        reject(err);
-      });
+  return new Promise((resolve) => {
+    logger.info('Talkgroup import from CSV is deprecated. Please use the web UI to import talkgroups.');
+    resolve();
   });
 }
 
@@ -1008,6 +959,16 @@ function updateTrunkRecorderApiKey(apiKey, createNew = false) {
     const configData = fs.readFileSync(trunkRecorderConfigPath, 'utf8');
     const config = JSON.parse(configData);
     
+    // Check if API key already exists and is valid (not a placeholder)
+    if (config.uploadServer && 
+        config.uploadServer.apiKey && 
+        config.uploadServer.apiKey !== 'AUTO_GENERATE_ON_STARTUP' &&
+        config.uploadServer.apiKey !== 'YOUR_API_KEY_HERE' &&
+        !createNew) {
+      logger.info('TrunkRecorder API key already configured, skipping update');
+      return; // Key already exists and is valid
+    }
+    
     let keyToUse = apiKey;
     
     // If we need to create a new TrunkRecorder-specific key
@@ -1086,6 +1047,17 @@ function updateICADApiKey(apiKey, createNew = false) {
   
   try {
     let envContent = fs.readFileSync(icadEnvPath, 'utf8');
+    
+    // Check if API key already exists and is valid (not a placeholder)
+    const apiKeyMatch = envContent.match(/API_KEY=(.+)/);
+    if (apiKeyMatch && 
+        apiKeyMatch[1].trim() !== 'AUTO_GENERATE_ON_STARTUP' &&
+        apiKeyMatch[1].trim() !== '' &&
+        !createNew) {
+      logger.info('iCAD Transcribe API key already configured, skipping update');
+      return; // Key already exists and is valid
+    }
+    
     let keyToUse = apiKey;
     
     // Check if API key needs to be generated
@@ -1113,8 +1085,9 @@ function updateICADApiKey(apiKey, createNew = false) {
       const scannerMapEnvPath = path.join(__dirname, '.env');
       if (fs.existsSync(scannerMapEnvPath)) {
         let scannerEnvContent = fs.readFileSync(scannerMapEnvPath, 'utf8');
-        if (scannerEnvContent.includes('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP')) {
-          scannerEnvContent = scannerEnvContent.replace('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP', `ICAD_API_KEY=${keyToUse}`);
+        if (scannerEnvContent.includes('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP') || 
+            scannerEnvContent.includes('ICAD_API_KEY=') && !scannerEnvContent.match(/ICAD_API_KEY=[a-f0-9-]{36}/)) {
+          scannerEnvContent = scannerEnvContent.replace(/ICAD_API_KEY=.*/g, `ICAD_API_KEY=${keyToUse}`);
           fs.writeFileSync(scannerMapEnvPath, scannerEnvContent);
           logger.info(`Auto-updated Scanner Map .env with iCAD API key`);
         }
@@ -1309,12 +1282,13 @@ async function initializeBot() {
       console.log('='.repeat(60));
     }
 
-    // Step 3: Check and import talkgroups if needed
+    // Step 3: Load talkgroups (CSV import is deprecated - use web UI instead)
+    // Note: Talkgroups should be imported via the web UI, not from CSV file
     const talkGroupsExist = await checkTalkGroupsImported();
     if (!talkGroupsExist) {
-      await importTalkGroups();
+      logger.info('No talkgroups found in database. Please import talkgroups via the web UI.');
     } else {
-      logger.info('Talkgroups already imported, skipping CSV import.');
+      logger.info('Talkgroups found in database.');
     }
 
     // Step 4: Load talkgroups for geocoding

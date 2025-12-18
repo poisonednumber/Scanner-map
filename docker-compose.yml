@@ -18,7 +18,6 @@ services:
       - ./appdata/scanner-map/audio:/app/audio               # Audio file storage
       - ./appdata/scanner-map/logs:/app/logs                 # Log files
       - ./.env:/app/.env                 # Configuration
-      - ./talkgroups.csv:/app/talkgroups.csv:ro  # Talk groups (read-only)
       # Mount other service configs for auto-configuration
       - ./appdata/trunk-recorder/config:/app/appdata/trunk-recorder/config  # For API key auto-config
       - ./appdata/icad-transcribe:/app/appdata/icad-transcribe  # For API key auto-config
@@ -64,9 +63,12 @@ services:
   # TrunkRecorder (OPTIONAL) - GPL-3.0 Licensed
   # Uncomment below to enable TrunkRecorder integration
   # See LICENSE_NOTICE.md for license information
-  # NOTE: Always pulls from Docker Hub (never builds locally)
+  # NOTE: TrunkRecorder must be built from source - no official pre-built image exists
+  # Build instructions: https://github.com/TrunkRecorder/trunk-recorder
+  # 1. Clone: git clone https://github.com/TrunkRecorder/trunk-recorder.git
+  # 2. Build: cd trunk-recorder && docker build -t trunk-recorder:latest .
   # trunk-recorder:
-  #   image: lwcooper/trunk-recorder:latest
+  #   image: trunk-recorder:latest
   #   container_name: trunk-recorder
   #   restart: unless-stopped
   #   privileged: true
@@ -91,4 +93,10 @@ networks:
 
 # All data is stored in ./appdata/ directory for easy management
 # To remove all data: rm -rf ./appdata
+
+
+
+
+
+
 
