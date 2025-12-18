@@ -64,6 +64,9 @@ temp/
 # Nested repository (if accidentally cloned)
 Scanner-map/
 
+# Test/development folders
+install-test/
+
 # Backup files
 *.bak
 *.backup
