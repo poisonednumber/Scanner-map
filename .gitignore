@@ -69,3 +69,6 @@ Scanner-map/
 *.backup
 *~
 
+# Auto-start scripts
+start-scanner-map.bat
+

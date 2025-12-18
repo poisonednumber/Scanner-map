@@ -549,6 +549,69 @@ if /i not "!AUTO_START!"=="n" (
     echo [INFO] Skipping auto-start. Start manually with: docker-compose up -d
 )
 echo.
+echo ========================================
+echo   Auto-Start on Boot Configuration
+echo ========================================
+echo.
+echo This will configure Scanner Map to automatically start when your system boots.
+echo Docker containers already have 'restart: unless-stopped' policy.
+echo This setup ensures Docker Compose starts the services on system boot.
+echo.
+set /p SETUP_AUTOSTART="Set up auto-start on boot? (y/N): "
+if /i "!SETUP_AUTOSTART!"=="y" (
+    echo.
+    echo [INFO] Setting up auto-start on boot...
+    echo.
+    
+    REM Get the current directory (should be Scanner-map)
+    set "PROJECT_DIR=!CD!"
+    if not exist "docker-compose.yml" (
+        if exist "..\docker-compose.yml" (
+            set "PROJECT_DIR=!CD!\.."
+        ) else if exist "Scanner-map\docker-compose.yml" (
+            set "PROJECT_DIR=!CD!\Scanner-map"
+        )
+    )
+    
+    REM Create a startup script
+    set "STARTUP_SCRIPT=!PROJECT_DIR!\start-scanner-map.bat"
+    echo @echo off > "!STARTUP_SCRIPT!"
+    echo REM Auto-generated startup script for Scanner Map >> "!STARTUP_SCRIPT!"
+    echo REM Wait for Docker to be ready >> "!STARTUP_SCRIPT!"
+    echo timeout /t 10 /nobreak ^>nul >> "!STARTUP_SCRIPT!"
+    echo :wait_docker >> "!STARTUP_SCRIPT!"
+    echo docker version ^>nul 2^>^&1 >> "!STARTUP_SCRIPT!"
+    echo if errorlevel 1 ^( >> "!STARTUP_SCRIPT!"
+    echo     timeout /t 5 /nobreak ^>nul >> "!STARTUP_SCRIPT!"
+    echo     goto wait_docker >> "!STARTUP_SCRIPT!"
+    echo ^) >> "!STARTUP_SCRIPT!"
+    echo cd /d "!PROJECT_DIR!" >> "!STARTUP_SCRIPT!"
+    echo docker-compose up -d >> "!STARTUP_SCRIPT!"
+    
+    REM Create scheduled task to run on boot
+    echo [INFO] Creating scheduled task...
+    schtasks /create /tn "Scanner Map Auto-Start" /tr "\"!STARTUP_SCRIPT!\"" /sc onstart /ru SYSTEM /f >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        echo [OK] Auto-start task created successfully!
+        echo.
+        echo Scanner Map will start automatically on boot.
+        echo To disable: schtasks /delete /tn "Scanner Map Auto-Start" /f
+        echo To check status: schtasks /query /tn "Scanner Map Auto-Start"
+    ) else (
+        echo [WARNING] Failed to create scheduled task. You may need to run as Administrator.
+        echo.
+        echo You can manually create a scheduled task:
+        echo   1. Open Task Scheduler
+        echo   2. Create Basic Task
+        echo   3. Trigger: When the computer starts
+        echo   4. Action: Start a program
+        echo   5. Program: !STARTUP_SCRIPT!
+    )
+) else (
+    echo.
+    echo [INFO] Skipping auto-start setup. Services will need to be started manually after reboot.
+)
+echo.
 :end
 pause
 

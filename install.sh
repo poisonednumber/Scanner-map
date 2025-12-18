@@ -715,6 +715,127 @@ TRUNKEOF
     print_info "All data will be stored in ./appdata/ directory"
 }
 
+# Setup auto-start on boot
+setup_autostart_on_boot() {
+    print_header "Setting Up Auto-Start on Boot"
+    
+    local project_dir="$PWD"
+    if [[ -d "Scanner-map" ]]; then
+        project_dir="$PWD/Scanner-map"
+    fi
+    
+    OS=$(detect_os)
+    
+    if [[ "$OS" == "linux" ]]; then
+        # Check if systemd is available
+        if command_exists systemctl && [[ -d "/etc/systemd/system" ]]; then
+            print_info "Creating systemd service for auto-start..."
+            
+            local service_file="/etc/systemd/system/scanner-map.service"
+            local docker_compose_cmd="docker-compose"
+            if ! command_exists docker-compose && command_exists docker; then
+                docker_compose_cmd="docker compose"
+            fi
+            
+            # Create systemd service file
+            sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Scanner Map Docker Compose Services
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=$project_dir
+ExecStart=/usr/bin/$docker_compose_cmd up -d
+ExecStop=/usr/bin/$docker_compose_cmd down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            
+            # Reload systemd and enable service
+            sudo systemctl daemon-reload
+            if sudo systemctl enable scanner-map.service 2>/dev/null; then
+                print_success "Auto-start service created and enabled!"
+                print_info "Scanner Map will start automatically on boot"
+                print_info "To disable: sudo systemctl disable scanner-map.service"
+                print_info "To check status: sudo systemctl status scanner-map.service"
+            else
+                print_error "Failed to enable service. You may need to run manually:"
+                echo "  sudo systemctl enable scanner-map.service"
+            fi
+        else
+            print_warning "systemd not found. Cannot set up auto-start service."
+            print_info "You can manually create a systemd service or use cron @reboot"
+        fi
+    elif [[ "$OS" == "macos" ]]; then
+        # Create launchd plist for macOS
+        print_info "Creating launchd service for auto-start..."
+        
+        local plist_file="$HOME/Library/LaunchAgents/com.scanner-map.plist"
+        local docker_compose_cmd="docker-compose"
+        if ! command_exists docker-compose && command_exists docker; then
+            docker_compose_cmd="docker compose"
+        fi
+        
+        # Find docker-compose or docker compose path
+        local docker_compose_path
+        if command_exists docker-compose; then
+            docker_compose_path=$(which docker-compose)
+        elif command_exists docker; then
+            docker_compose_path=$(which docker)
+            docker_compose_cmd="compose"
+        else
+            print_error "Docker Compose not found"
+            return 1
+        fi
+        
+        # Create launchd plist
+        cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.scanner-map</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$docker_compose_path</string>
+        <string>$docker_compose_cmd</string>
+        <string>-f</string>
+        <string>$project_dir/docker-compose.yml</string>
+        <string>up</string>
+        <string>-d</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$project_dir</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+EOF
+        
+        # Load the launchd service
+        if launchctl load "$plist_file" 2>/dev/null; then
+            print_success "Auto-start service created and enabled!"
+            print_info "Scanner Map will start automatically on boot"
+            print_info "To disable: launchctl unload $plist_file"
+        else
+            print_warning "Service created but may need manual loading"
+            print_info "Try: launchctl load $plist_file"
+        fi
+    else
+        print_warning "Auto-start setup not available for this OS"
+        print_info "Docker containers have 'restart: unless-stopped' policy"
+        print_info "They will auto-start when Docker starts (if Docker is set to start on boot)"
+    fi
+}
+
 # Main installation
 main() {
     print_header "Scanner Map Installer"
@@ -856,6 +977,20 @@ main() {
         fi
     else
         print_info "Skipping auto-start. Start manually with: docker-compose up -d"
+    fi
+    echo ""
+    
+    # Ask if user wants to set up auto-start on boot
+    echo ""
+    print_header "Auto-Start on Boot Configuration"
+    echo "This will configure Scanner Map to automatically start when your system boots."
+    echo "Docker containers already have 'restart: unless-stopped' policy."
+    echo "This setup ensures Docker Compose starts the services on system boot."
+    echo ""
+    if prompt_yes_no "Set up auto-start on boot?" "n"; then
+        setup_autostart_on_boot
+    else
+        print_info "Skipping auto-start setup. Services will need to be started manually after reboot."
     fi
     echo ""
     
