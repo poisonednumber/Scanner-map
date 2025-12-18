@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {
+      "type": "rtl_sdr",
+      "device": 0,
+      "center": 850000000,
+      "rate": 2048000
+    }
+  ],
+  "systems": [
+    {
+      "id": 1,
+      "name": "Your System Name",
+      "control_channels": [851.0125, 851.5125],
+      "type": "p25"
+    }
+  ],
+  "uploadServer": {
+    "type": "rdio-scanner",
+    "url": "http://scanner-map:3306/api/call-upload",
+    "apiKey": "YOUR_API_KEY_HERE"
+  }
+}
+

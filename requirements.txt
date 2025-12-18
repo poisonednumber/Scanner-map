@@ -1,0 +1,26 @@
+# Python dependencies for Scanner Map
+# Install with: pip install -r requirements.txt
+
+# Core transcription
+faster-whisper>=0.10.0
+
+# Audio processing
+pydub>=0.25.1
+
+# Tone detection
+icad-tone-detection>=1.0.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# PyTorch (CPU version - for CUDA, install separately)
+# For CPU: pip install torch torchvision torchaudio
+# For CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# For CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# AWS SDK for S3 storage (if using S3)
+boto3>=1.34.0
+

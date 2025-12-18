@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.backup
+test-setup-defaults.env
+
+# Runtime data
+appdata/
+*.log
+logs/
+combined.log
+error.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio files
+audio/
+recordings/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+.dockerignore
+
+# Test files
+test/
+*.test.js
+*.spec.js
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Nested repository (if accidentally cloned)
+Scanner-map/
+
+# Backup files
+*.bak
+*.backup
+*~
+

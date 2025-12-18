@@ -51,9 +51,14 @@ if (missingVars.length > 0) {
   process.exit(1);
 }
 
-// Check for at least one geocoding API key
-if (!GOOGLE_MAPS_API_KEY && !LOCATIONIQ_API_KEY) {
-  console.error('ERROR: At least one geocoding API key is required (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY)');
+// Check for geocoding service (Nominatim doesn't need API key)
+const GEOCODING_PROVIDER = process.env.GEOCODING_PROVIDER || '';
+const hasGeocoding = GEOCODING_PROVIDER.toLowerCase() === 'nominatim' || 
+                    GOOGLE_MAPS_API_KEY || 
+                    LOCATIONIQ_API_KEY;
+
+if (!hasGeocoding) {
+  console.error('ERROR: Geocoding service not configured. Set GEOCODING_PROVIDER=nominatim (free) or provide GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY');
   process.exit(1);
 }
 
