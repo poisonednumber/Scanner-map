@@ -99,6 +99,36 @@ class InstallerCore {
   }
 
   /**
+   * Detect public domain/IP (for Discord links)
+   */
+  detectPublicDomain() {
+    // Default to localhost - most users run locally
+    // For remote access, users can edit .env
+    try {
+      // Try to get local network IP (for LAN access)
+      const os = require('os');
+      const networkInterfaces = os.networkInterfaces();
+      
+      for (const interfaceName of Object.keys(networkInterfaces)) {
+        const addresses = networkInterfaces[interfaceName];
+        for (const addr of addresses) {
+          // Skip internal and IPv6
+          if (addr.family === 'IPv4' && !addr.internal) {
+            // Prefer 192.168.x.x or 10.x.x.x (common LAN ranges)
+            if (addr.address.startsWith('192.168.') || addr.address.startsWith('10.')) {
+              return addr.address;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore errors, fall back to localhost
+    }
+    
+    return 'localhost';
+  }
+
+  /**
    * Main installation flow
    */
   async run() {
@@ -113,7 +143,8 @@ class InstallerCore {
     }
 
     // Step 1: Choose installation type
-    this.printStep(1, 6, 'Choose installation method');
+    // Note: Total steps will be 8 for Docker, 7 for Local (we'll use 8 as placeholder)
+    this.printStep(1, 8, 'Choose installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
@@ -188,7 +219,7 @@ class InstallerCore {
       // Core settings (auto-configured)
       webserverPort: DEFAULTS.WEBSERVER_PORT,
       botPort: DEFAULTS.BOT_PORT,
-      publicDomain: 'localhost',
+      publicDomain: this.detectPublicDomain(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
       
       // Location
@@ -324,20 +355,70 @@ class InstallerCore {
    */
   async configureLocation() {
     console.log(chalk.gray('   Your location helps accurately geocode addresses from radio calls.\n'));
+
+    // Try to detect location from timezone
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    let detectedCity = 'Baltimore';
+    let detectedState = 'MD';
+    let detectedCountry = 'us';
+    
+    // Simple timezone-based detection
+    if (timezone.includes('New_York') || timezone.includes('America/New_York')) {
+      detectedCity = 'New York';
+      detectedState = 'NY';
+    } else if (timezone.includes('Los_Angeles') || timezone.includes('America/Los_Angeles')) {
+      detectedCity = 'Los Angeles';
+      detectedState = 'CA';
+    } else if (timezone.includes('Chicago') || timezone.includes('America/Chicago')) {
+      detectedCity = 'Chicago';
+      detectedState = 'IL';
+    } else if (timezone.includes('Denver') || timezone.includes('America/Denver')) {
+      detectedCity = 'Denver';
+      detectedState = 'CO';
+    } else if (timezone.includes('Phoenix') || timezone.includes('America/Phoenix')) {
+      detectedCity = 'Phoenix';
+      detectedState = 'AZ';
+    } else if (timezone.includes('Toronto') || timezone.includes('America/Toronto')) {
+      detectedCity = 'Toronto';
+      detectedState = 'ON';
+      detectedCountry = 'ca';
+    } else if (timezone.includes('London') || timezone.includes('Europe/London')) {
+      detectedCity = 'London';
+      detectedState = 'England';
+      detectedCountry = 'uk';
+    }
+    
+    // Detect country from timezone
+    if (timezone.startsWith('America/')) {
+      detectedCountry = 'us';
+    } else if (timezone.startsWith('Europe/')) {
+      detectedCountry = 'uk';
+    } else if (timezone.startsWith('Australia/')) {
+      detectedCountry = 'au';
+    } else if (timezone.startsWith('Asia/')) {
+      detectedCountry = 'us'; // Default, user can change
+    }
+
+    console.log(chalk.gray(`   Detected timezone: ${timezone}`));
+    if (detectedCity !== 'Baltimore') {
+      console.log(chalk.gray(`   Suggested location: ${detectedCity}, ${detectedState}\n`));
+    } else {
+      console.log('');
+    }
     
     return await inquirer.prompt([
       {
         type: 'input',
         name: 'geocodingCity',
         message: 'Primary city/area:',
-        default: 'Baltimore',
+        default: detectedCity,
         validate: input => input.trim().length > 0 || 'City is required'
       },
       {
         type: 'input',
         name: 'geocodingState',
         message: 'State/province code (e.g., MD, CA, NY):',
-        default: 'MD',
+        default: detectedState,
         filter: input => input.toUpperCase(),
         validate: input => input.trim().length > 0 || 'State is required'
       },
@@ -345,7 +426,7 @@ class InstallerCore {
         type: 'input',
         name: 'geocodingCountry',
         message: 'Country code (e.g., us, uk, ca):',
-        default: 'us',
+        default: detectedCountry,
         filter: input => input.toLowerCase(),
         validate: input => input.trim().length > 0 || 'Country is required'
       },
@@ -353,7 +434,7 @@ class InstallerCore {
         type: 'input',
         name: 'geocodingTargetCounties',
         message: 'Target counties (comma-separated, for filtering):',
-        default: 'Baltimore,Baltimore City,Anne Arundel'
+        default: detectedCity === 'Baltimore' ? 'Baltimore,Baltimore City,Anne Arundel' : `${detectedCity} County`
       }
     ]);
   }
