@@ -5659,9 +5659,50 @@ app.use((err, req, res, next) => {
 let server;
 let discordClientReady = false;
 
+/**
+ * Check for updates on startup if enabled
+ */
+async function checkForUpdatesOnStartup() {
+  try {
+    const UpdateChecker = require('./scripts/installer/update-checker');
+    const updateChecker = new UpdateChecker(__dirname);
+    
+    // Check if auto-update is enabled
+    const configPath = path.join(__dirname, 'data', 'update-config.json');
+    if (!fs.existsSync(configPath)) {
+      return; // Auto-update not configured
+    }
+    
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (!config.autoUpdateCheck) {
+      return; // Auto-update disabled
+    }
+    
+    // Check for updates (non-blocking)
+    setTimeout(async () => {
+      try {
+        const updateInfo = await updateChecker.checkForUpdates();
+        if (updateInfo.updateAvailable) {
+          logger.info(`\n📦 Update available! Current: ${updateInfo.currentVersion}, Latest: ${updateInfo.latestVersion}`);
+          logger.info(`   Download: ${updateInfo.downloadUrl}\n`);
+        }
+      } catch (err) {
+        // Silently fail - don't interrupt startup
+      }
+    }, 5000); // Wait 5 seconds after startup
+  } catch (err) {
+    // Silently fail - don't interrupt startup
+  }
+}
+
 async function startBotServices() {
   try {
     // Start the Express server for bot API endpoints
+    // Check for updates on startup if enabled
+    checkForUpdatesOnStartup().catch(err => {
+      logger.warn(`Update check failed: ${err.message}`);
+    });
+
     server = app.listen(PORT_NUM, () => {
       logger.info(`Bot server is running on port ${PORT_NUM}`);
     });
