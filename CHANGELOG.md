@@ -2,6 +2,14 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.6] - 2024-12-20
+
+### Testing Release
+
+- Version bump for testing auto-update functionality
+
+---
+
 ## [3.0.5] - 2024-12-20
 
 ### Installer Enhancements & Docker Improvements
