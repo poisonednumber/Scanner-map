@@ -6,11 +6,13 @@
 const fs = require('fs-extra');
 const path = require('path');
 const yaml = require('js-yaml');
+const GPUDetector = require('./gpu-detector');
 
 class DockerComposeBuilder {
   constructor(projectRoot) {
     this.projectRoot = projectRoot;
     this.composePath = path.join(projectRoot, 'docker-compose.yml');
+    this.gpuDetector = new GPUDetector();
   }
 
   /**
@@ -21,8 +23,18 @@ class DockerComposeBuilder {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
-      timezone = 'America/New_York'
+      timezone = 'America/New_York',
+      enableGPU = false
     } = services;
+
+    // Check GPU availability if requested
+    let gpuConfig = null;
+    if (enableGPU) {
+      const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
+      if (gpuInfo.available) {
+        gpuConfig = this.gpuDetector.getDockerComposeGPUConfig();
+      }
+    }
 
     // Start with base scanner-map service
     const compose = {
@@ -92,6 +104,12 @@ class DockerComposeBuilder {
           'scanner-network'
         ]
       };
+      
+      // Add GPU support if available
+      if (gpuConfig) {
+        compose.services.ollama.deploy = gpuConfig.deploy;
+      }
+      
       dependsOn.push('ollama');
     }
 
@@ -183,6 +201,7 @@ class DockerComposeBuilder {
 ${enableOllama ? '# - Ollama (Local AI)' : ''}
 ${enableICAD ? '# - iCAD Transcribe (Advanced Transcription)' : ''}
 ${enableTrunkRecorder ? '# - TrunkRecorder (Radio Recording) - MUST BUILD IMAGE FIRST' : ''}
+${gpuConfig ? '# - GPU acceleration enabled (NVIDIA)' : ''}
 #
 # All data is stored in ./appdata/ directory
 # To remove all data: rm -rf ./appdata

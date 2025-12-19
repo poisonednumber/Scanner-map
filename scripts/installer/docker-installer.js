@@ -88,6 +88,7 @@ class DockerInstaller {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
+      enableGPU = false,
       timezone = 'America/New_York',
       ...envConfig
     } = config;
@@ -116,6 +117,7 @@ class DockerInstaller {
       enableOllama,
       enableICAD,
       enableTrunkRecorder,
+      enableGPU,
       timezone
     });
     

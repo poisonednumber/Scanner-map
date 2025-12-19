@@ -13,6 +13,7 @@ const fs = require('fs-extra');
 const DockerInstaller = require('./docker-installer');
 const LocalInstaller = require('./local-installer');
 const DependencyInstaller = require('./dependency-installer');
+const GPUDetector = require('./gpu-detector');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -59,6 +60,7 @@ class InstallerCore {
     this.dockerInstaller = new DockerInstaller(projectRoot);
     this.localInstaller = new LocalInstaller(projectRoot);
     this.dependencyInstaller = new DependencyInstaller();
+    this.gpuDetector = new GPUDetector();
   }
 
   /**
@@ -134,8 +136,12 @@ class InstallerCore {
     ]);
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
+    // Calculate total steps based on installation type
+    const totalSteps = installationType === 'docker' ? 8 : 7;
+    let currentStep = 2;
+
     // Step 2: Check prerequisites and install missing dependencies
-    this.printStep(2, 7, 'Checking system requirements');
+    this.printStep(currentStep++, totalSteps, 'Checking system requirements');
     const prereqResult = await this.checkPrerequisites(installationType);
     if (!prereqResult.success) {
       process.exit(1);
@@ -143,27 +149,35 @@ class InstallerCore {
     console.log(chalk.green('✓ All prerequisites met\n'));
 
     // Step 3: Location setup (for geocoding)
-    this.printStep(3, 7, 'Configure your location');
+    this.printStep(currentStep++, totalSteps, 'Configure your location');
     const locationConfig = await this.configureLocation();
     console.log('');
 
     // Step 4: Choose services and transcription
-    this.printStep(4, 7, 'Configure transcription and AI');
+    this.printStep(currentStep++, totalSteps, 'Configure transcription and AI');
     const serviceConfig = await this.configureServices(installationType);
     console.log('');
 
-    // Step 5: Optional dependencies (based on selected services)
-    this.printStep(5, 7, 'Optional dependencies');
+    // Step 5: GPU acceleration (Docker only)
+    let gpuConfig = { enableGPU: false };
+    if (installationType === 'docker') {
+      this.printStep(currentStep++, totalSteps, 'GPU acceleration (optional)');
+      gpuConfig = await this.configureGPU(serviceConfig);
+      console.log('');
+    }
+
+    // Step 5/6: Optional dependencies (based on selected services)
+    this.printStep(currentStep++, totalSteps, 'Optional dependencies');
     const optionalDeps = await this.configureOptionalDependencies(installationType, serviceConfig);
     console.log('');
 
-    // Step 6: Optional integrations
-    this.printStep(6, 7, 'Optional integrations');
+    // Step 6/7: Optional integrations
+    this.printStep(currentStep++, totalSteps, 'Optional integrations');
     const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 7: Review and install
-    this.printStep(7, 7, 'Review and install');
+    // Step 7/8: Review and install
+    this.printStep(currentStep++, totalSteps, 'Review and install');
     
     // Build final configuration with auto-configured URLs
     const urls = SERVICE_URLS[installationType];
@@ -207,6 +221,9 @@ class InstallerCore {
       discordToken: integrationConfig.discordToken || '',
       clientId: integrationConfig.clientId || '',
       enableTrunkRecorder: integrationConfig.enableTrunkRecorder,
+      
+      // GPU acceleration (Docker only)
+      enableGPU: gpuConfig.enableGPU,
       
       // Auto-generated API key for TrunkRecorder/SDRTrunk
       trunkRecorderApiKey: this.generateApiKey(),
@@ -509,6 +526,117 @@ class InstallerCore {
     }
 
     return config;
+  }
+
+  /**
+   * Configure GPU acceleration for Docker
+   */
+  async configureGPU(serviceConfig) {
+    console.log(chalk.gray('   GPU acceleration speeds up AI models (Ollama) and transcription.\n'));
+
+    // Detect GPU
+    process.stdout.write(chalk.gray('   Detecting GPU...'));
+    const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+
+    if (!gpuInfo.available) {
+      console.log(chalk.yellow('   ⚠️  No NVIDIA GPU detected'));
+      console.log(chalk.gray('   GPU acceleration will not be available.\n'));
+      return { enableGPU: false };
+    }
+
+    console.log(chalk.green(`   ✓ NVIDIA GPU detected: ${gpuInfo.name}\n`));
+
+    // Check if GPU is useful for selected services
+    const needsGPU = serviceConfig.aiProvider === 'ollama';
+    if (!needsGPU) {
+      console.log(chalk.gray('   GPU acceleration is only useful when using Ollama for AI.\n'));
+      const { enable } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'enable',
+          message: 'Enable GPU acceleration anyway? (For future use)',
+          default: false
+        }
+      ]);
+      return { enableGPU: enable };
+    }
+
+    // Check NVIDIA Container Toolkit (Linux only)
+    if (process.platform === 'linux') {
+      const toolkitCheck = await this.gpuDetector.checkNvidiaContainerToolkit();
+      if (!toolkitCheck.installed) {
+        console.log(chalk.yellow('   ⚠️  NVIDIA Container Toolkit not installed'));
+        console.log(chalk.gray('   Required for Docker GPU acceleration on Linux.\n'));
+
+        const { install } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'install',
+            message: 'Install NVIDIA Container Toolkit automatically?',
+            default: true
+          }
+        ]);
+
+        if (install) {
+          console.log('');
+          const result = await this.gpuDetector.installNvidiaContainerToolkit();
+          if (!result.success) {
+            console.log(chalk.yellow(`   ⚠️  ${result.error}`));
+            console.log(chalk.gray('   You can install it manually later.\n'));
+            const { proceed } = await inquirer.prompt([
+              {
+                type: 'confirm',
+                name: 'proceed',
+                message: 'Continue without GPU acceleration?',
+                default: true
+              }
+            ]);
+            return { enableGPU: !proceed };
+          }
+          console.log(chalk.green('   ✓ NVIDIA Container Toolkit installed\n'));
+        } else {
+          const { proceed } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'proceed',
+              message: 'Continue without GPU acceleration?',
+              default: true
+            }
+          ]);
+          return { enableGPU: !proceed };
+        }
+      } else {
+        console.log(chalk.green(`   ✓ NVIDIA Container Toolkit installed (${toolkitCheck.version})\n`));
+      }
+    } else if (process.platform === 'win32') {
+      console.log(chalk.gray('   Windows: GPU support requires WSL2 backend in Docker Desktop.\n'));
+      console.log(chalk.gray('   Make sure Docker Desktop is using WSL2 backend.\n'));
+    } else if (process.platform === 'darwin') {
+      console.log(chalk.yellow('   ⚠️  macOS: Docker GPU acceleration is not supported.\n'));
+      return { enableGPU: false };
+    }
+
+    // Test Docker GPU access
+    console.log(chalk.gray('   Testing Docker GPU access...'));
+    const gpuTest = await this.gpuDetector.testDockerGPU();
+    if (!gpuTest.working) {
+      console.log(chalk.yellow(`   ⚠️  GPU test failed: ${gpuTest.reason}`));
+      console.log(chalk.gray('   GPU acceleration may not work. Continuing anyway...\n'));
+    } else {
+      console.log(chalk.green('   ✓ Docker GPU access confirmed\n'));
+    }
+
+    const { enable } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enable',
+        message: 'Enable GPU acceleration for Docker services?',
+        default: true
+      }
+    ]);
+
+    return { enableGPU: enable };
   }
 
   /**
@@ -856,6 +984,19 @@ class InstallerCore {
       console.log(chalk.white(`     Model: ${formatValue(config.ollamaModel)}`));
     }
     console.log('');
+
+    // GPU (Docker only)
+    if (config.installationType === 'docker') {
+      console.log(chalk.white.bold('   🎮 GPU Acceleration'));
+      console.log(chalk.white(`     Enabled: ${formatValue(config.enableGPU)}`));
+      if (config.enableGPU) {
+        const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
+        if (gpuInfo.available) {
+          console.log(chalk.white(`     GPU: ${formatValue(gpuInfo.name)}`));
+        }
+      }
+      console.log('');
+    }
 
     // Integrations
     console.log(chalk.white.bold('   🔗 Integrations'));
