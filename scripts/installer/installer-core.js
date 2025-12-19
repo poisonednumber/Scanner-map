@@ -1,6 +1,9 @@
 /**
  * Scanner Map - Interactive Installer
  * Unified setup for both Docker and Local installations
+ * 
+ * Auto-configures all service URLs and ports based on installation type.
+ * No manual port/URL configuration required.
  */
 
 const inquirer = require('inquirer');
@@ -11,13 +14,51 @@ const DockerInstaller = require('./docker-installer');
 const LocalInstaller = require('./local-installer');
 const DependencyInstaller = require('./dependency-installer');
 
+// Default configurations for all services
+const DEFAULTS = {
+  // Scanner Map ports
+  WEBSERVER_PORT: 3001,
+  BOT_PORT: 3306,
+  
+  // Ollama - Local AI service
+  OLLAMA_PORT: 11434,
+  OLLAMA_MODEL: 'llama3.1:8b',
+  
+  // iCAD Transcribe - Advanced transcription
+  ICAD_PORT: 9912,
+  ICAD_PROFILE: 'default',
+  
+  // Faster Whisper Server (remote transcription)
+  WHISPER_SERVER_PORT: 8000,
+  
+  // Default Whisper model for local transcription
+  WHISPER_MODEL: 'small',
+  
+  // OpenAI defaults
+  OPENAI_MODEL: 'gpt-4o-mini',
+  OPENAI_TRANSCRIPTION_MODEL: 'whisper-1'
+};
+
+// Service URLs based on installation type
+const SERVICE_URLS = {
+  docker: {
+    ollama: `http://ollama:${DEFAULTS.OLLAMA_PORT}`,
+    icad: `http://icad-transcribe:${DEFAULTS.ICAD_PORT}`,
+    scannerMap: `http://scanner-map:${DEFAULTS.BOT_PORT}`
+  },
+  local: {
+    ollama: `http://localhost:${DEFAULTS.OLLAMA_PORT}`,
+    icad: `http://localhost:${DEFAULTS.ICAD_PORT}`,
+    scannerMap: `http://localhost:${DEFAULTS.BOT_PORT}`
+  }
+};
+
 class InstallerCore {
   constructor(projectRoot) {
     this.projectRoot = projectRoot;
     this.dockerInstaller = new DockerInstaller(projectRoot);
     this.localInstaller = new LocalInstaller(projectRoot);
     this.dependencyInstaller = new DependencyInstaller();
-    this.totalSteps = 9;
   }
 
   /**
@@ -30,7 +71,7 @@ class InstallerCore {
   /**
    * Print a section header
    */
-  printSectionHeader(title) {
+  printHeader(title) {
     console.log(chalk.blue.bold('\n' + '═'.repeat(50)));
     console.log(chalk.blue.bold(`  ${title}`));
     console.log(chalk.blue.bold('═'.repeat(50) + '\n'));
@@ -39,29 +80,38 @@ class InstallerCore {
   /**
    * Print a step indicator
    */
-  printStep(step, description) {
-    console.log(chalk.cyan(`[${step}/${this.totalSteps}]`) + ' ' + chalk.white(description));
+  printStep(step, total, description) {
+    console.log(chalk.cyan(`[${step}/${total}]`) + ' ' + chalk.white(description));
+  }
+
+  /**
+   * Generate a random API key
+   */
+  generateApiKey() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let key = '';
+    for (let i = 0; i < 32; i++) {
+      key += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return key;
   }
 
   /**
    * Main installation flow
    */
   async run() {
-    // Show welcome
-    this.printSectionHeader('Scanner Map Setup');
+    this.printHeader('Scanner Map Setup');
     console.log(chalk.gray('Welcome! This installer will guide you through setting up Scanner Map.'));
-    console.log(chalk.gray('Press Ctrl+C at any time to cancel.\n'));
+    console.log(chalk.gray('All service URLs and ports are auto-configured for you.\n'));
 
-    // Check if running in interactive mode
     if (!this.isInteractive()) {
       console.log(chalk.red('\n❌ Error: This installer requires an interactive terminal.'));
       console.log(chalk.yellow('   Run this script directly in a terminal window.'));
-      console.log(chalk.yellow('   For non-interactive setup, configure the .env file manually.'));
       process.exit(1);
     }
 
     // Step 1: Choose installation type
-    this.printStep(1, 'Choose installation method');
+    this.printStep(1, 6, 'Choose installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
@@ -69,12 +119,12 @@ class InstallerCore {
         message: 'How would you like to install Scanner Map?',
         choices: [
           { 
-            name: '🐳 Docker (Recommended) - Isolated containers, easier updates', 
+            name: '🐳 Docker (Recommended) - Isolated containers, includes all services', 
             value: 'docker',
             short: 'Docker'
           },
           { 
-            name: '💻 Local - Run directly on your system, more control', 
+            name: '💻 Local - Run directly on your system', 
             value: 'local',
             short: 'Local'
           }
@@ -84,116 +134,90 @@ class InstallerCore {
     ]);
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
-    // Step 2: Check prerequisites and install missing dependencies
-    this.printStep(2, 'Checking system requirements');
-    process.stdout.write(chalk.gray('   Verifying prerequisites...'));
-    
-    let prerequisites;
-    if (installationType === 'docker') {
-      prerequisites = await this.dockerInstaller.checkPrerequisites();
-    } else {
-      prerequisites = await this.localInstaller.checkPrerequisites();
+    // Step 2: Check prerequisites
+    this.printStep(2, 6, 'Checking system requirements');
+    const prereqResult = await this.checkPrerequisites(installationType);
+    if (!prereqResult.success) {
+      process.exit(1);
     }
-
-    // Clear the checking message
-    process.stdout.write('\r' + ' '.repeat(50) + '\r');
-
-    // If prerequisites failed, try to install missing dependencies
-    if (!prerequisites.success) {
-      console.log(chalk.yellow('⚠ Some prerequisites are missing.\n'));
-      
-      // Attempt to install missing dependencies
-      const installResult = await this.dependencyInstaller.checkAndInstall(installationType);
-      
-      if (!installResult.success) {
-        console.log(chalk.red('\n❌ Could not install missing dependencies:'));
-        console.log(chalk.red(`   ${installResult.error}`));
-        if (installResult.installed && installResult.installed.length > 0) {
-          console.log(chalk.green('\n✓ Successfully installed:'));
-          installResult.installed.forEach(item => console.log(chalk.green(`   - ${item}`)));
-        }
-        console.log(chalk.yellow('\n💡 Install the missing dependencies manually and run this installer again.'));
-        process.exit(1);
-      }
-
-      if (installResult.installed && installResult.installed.length > 0) {
-        console.log(chalk.green('✓ Successfully installed:'));
-        installResult.installed.forEach(item => console.log(chalk.green(`   - ${item}`)));
-        console.log('');
-      }
-
-      // Re-check prerequisites after installation
-      process.stdout.write(chalk.gray('   Re-checking prerequisites...'));
-      if (installationType === 'docker') {
-        prerequisites = await this.dockerInstaller.checkPrerequisites();
-      } else {
-        prerequisites = await this.localInstaller.checkPrerequisites();
-      }
-      process.stdout.write('\r' + ' '.repeat(50) + '\r');
-
-      // If still failing after installation attempt, show errors
-      if (!prerequisites.success) {
-        console.log(chalk.red('❌ Prerequisites still missing:\n'));
-        prerequisites.errors.forEach(err => console.log(chalk.red(`   • ${err}`)));
-        if (prerequisites.warnings) {
-          prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   ⚠ ${warn}`)));
-        }
-        console.log(chalk.yellow('\n💡 You may need to restart your terminal after installing dependencies.'));
-        process.exit(1);
-      }
-    }
-
-    if (prerequisites.warnings && prerequisites.warnings.length > 0) {
-      console.log(chalk.yellow('⚠ Warnings:'));
-      prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   • ${warn}`)));
-      console.log('');
-    }
-
     console.log(chalk.green('✓ All prerequisites met\n'));
 
-    // Step 3: Configure core settings
-    this.printStep(3, 'Configure basic settings');
-    const coreConfig = await this.configureCore();
+    // Step 3: Location setup (for geocoding)
+    this.printStep(3, 6, 'Configure your location');
+    const locationConfig = await this.configureLocation();
     console.log('');
 
-    // Step 4: Configure geocoding
-    this.printStep(4, 'Configure geocoding (address to coordinates)');
-    const geocodingConfig = await this.configureGeocoding();
-    console.log('');
-
-    // Step 5: Configure transcription
-    this.printStep(5, 'Configure audio transcription');
-    const transcriptionConfig = await this.configureTranscription(installationType);
-    console.log('');
-
-    // Step 6: Configure AI provider
-    this.printStep(6, 'Configure AI provider (for call analysis)');
-    const aiConfig = await this.configureAI(transcriptionConfig.enableOllama, installationType);
-    console.log('');
-
-    // Step 7: Configure optional services
-    this.printStep(7, 'Configure optional services');
+    // Step 4: Choose services and transcription
+    this.printStep(4, 6, 'Configure transcription and AI');
     const serviceConfig = await this.configureServices(installationType);
     console.log('');
 
-    // Step 8: Configure Discord (optional)
-    this.printStep(8, 'Configure Discord integration (optional)');
-    const discordConfig = await this.configureDiscord();
+    // Step 5: Optional integrations
+    this.printStep(5, 6, 'Optional integrations');
+    const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 9: Summary and confirm
-    this.printStep(9, 'Review and confirm');
+    // Step 6: Review and install
+    this.printStep(6, 6, 'Review and install');
+    
+    // Build final configuration with auto-configured URLs
+    const urls = SERVICE_URLS[installationType];
     const config = {
-      ...coreConfig,
-      ...geocodingConfig,
-      ...transcriptionConfig,
-      ...aiConfig,
-      ...serviceConfig,
-      ...discordConfig,
-      installationType
+      // Installation type
+      installationType,
+      
+      // Core settings (auto-configured)
+      webserverPort: DEFAULTS.WEBSERVER_PORT,
+      botPort: DEFAULTS.BOT_PORT,
+      publicDomain: 'localhost',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+      
+      // Location
+      ...locationConfig,
+      
+      // Transcription (auto-configured URLs)
+      transcriptionMode: serviceConfig.transcriptionMode,
+      transcriptionDevice: serviceConfig.transcriptionDevice || 'cpu',
+      whisperModel: serviceConfig.whisperModel || DEFAULTS.WHISPER_MODEL,
+      fasterWhisperServerUrl: serviceConfig.transcriptionMode === 'remote' 
+        ? (serviceConfig.remoteUrl || `http://localhost:${DEFAULTS.WHISPER_SERVER_PORT}`)
+        : undefined,
+      
+      // iCAD (auto-configured)
+      enableICAD: serviceConfig.transcriptionMode === 'icad',
+      icadUrl: urls.icad,
+      icadProfile: DEFAULTS.ICAD_PROFILE,
+      icadApiKey: this.generateApiKey(),
+      
+      // AI Provider (auto-configured URLs)
+      aiProvider: serviceConfig.aiProvider,
+      openaiApiKey: serviceConfig.openaiApiKey || '',
+      openaiModel: serviceConfig.openaiModel || DEFAULTS.OPENAI_MODEL,
+      ollamaUrl: urls.ollama,
+      ollamaModel: serviceConfig.ollamaModel || DEFAULTS.OLLAMA_MODEL,
+      enableOllama: serviceConfig.aiProvider === 'ollama',
+      
+      // Integrations
+      enableDiscord: integrationConfig.enableDiscord,
+      discordToken: integrationConfig.discordToken || '',
+      clientId: integrationConfig.clientId || '',
+      enableTrunkRecorder: integrationConfig.enableTrunkRecorder,
+      
+      // Auto-generated API key for TrunkRecorder/SDRTrunk
+      trunkRecorderApiKey: this.generateApiKey(),
+      
+      // Geocoding (auto-configured)
+      geocodingProvider: 'nominatim',
+      
+      // Defaults
+      storageMode: 'local',
+      enableAuth: false,
+      enableMappedTalkGroups: true,
+      mappedTalkGroups: ''
     };
 
     await this.showSummary(config);
+    
     const { confirm } = await inquirer.prompt([
       {
         type: 'confirm',
@@ -205,7 +229,6 @@ class InstallerCore {
 
     if (!confirm) {
       console.log(chalk.yellow('\n⚠ Setup cancelled.'));
-      console.log(chalk.gray('   Run this installer again when you\'re ready.\n'));
       process.exit(0);
     }
 
@@ -220,34 +243,424 @@ class InstallerCore {
 
     if (!result.success) {
       console.log(chalk.red(`\n❌ Setup failed: ${result.error}`));
-      if (result.details) {
-        console.log(chalk.red(`   ${result.details}`));
-      }
       process.exit(1);
     }
 
-    // Pull TrunkRecorder image if enabled (Docker only)
-    if (installationType === 'docker' && config.enableTrunkRecorder) {
-      process.stdout.write(chalk.gray('   Pulling TrunkRecorder image...'));
-      const pullResult = await this.dockerInstaller.pullTrunkRecorderImage();
-      process.stdout.write('\r' + ' '.repeat(50) + '\r');
+    // Show success
+    await this.showSuccess(config, installationType, result);
+  }
+
+  /**
+   * Check prerequisites and install missing dependencies
+   */
+  async checkPrerequisites(installationType) {
+    process.stdout.write(chalk.gray('   Verifying prerequisites...'));
+    
+    let prerequisites;
+    if (installationType === 'docker') {
+      prerequisites = await this.dockerInstaller.checkPrerequisites();
+    } else {
+      prerequisites = await this.localInstaller.checkPrerequisites();
+    }
+
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+
+    if (!prerequisites.success) {
+      console.log(chalk.yellow('⚠ Some prerequisites are missing.\n'));
       
-      if (!pullResult.success) {
-        console.log(chalk.yellow(`⚠ Could not pull TrunkRecorder image: ${pullResult.error}`));
-        console.log(chalk.gray('   It will be pulled automatically when starting services.'));
-        console.log(chalk.gray('   Or pull manually: docker pull robotastic/trunk-recorder:latest\n'));
-      } else if (!pullResult.skipped) {
-        console.log(chalk.green('✓ TrunkRecorder image ready\n'));
+      const installResult = await this.dependencyInstaller.checkAndInstall(installationType);
+      
+      if (!installResult.success) {
+        console.log(chalk.red('\n❌ Could not install missing dependencies:'));
+        console.log(chalk.red(`   ${installResult.error}`));
+        console.log(chalk.yellow('\n💡 Install the missing dependencies manually and run this installer again.'));
+        return { success: false };
+      }
+
+      // Re-check
+      process.stdout.write(chalk.gray('   Re-checking prerequisites...'));
+      if (installationType === 'docker') {
+        prerequisites = await this.dockerInstaller.checkPrerequisites();
+      } else {
+        prerequisites = await this.localInstaller.checkPrerequisites();
+      }
+      process.stdout.write('\r' + ' '.repeat(50) + '\r');
+
+      if (!prerequisites.success) {
+        console.log(chalk.red('❌ Prerequisites still missing:\n'));
+        prerequisites.errors.forEach(err => console.log(chalk.red(`   • ${err}`)));
+        console.log(chalk.yellow('\n💡 You may need to restart your terminal after installing dependencies.'));
+        return { success: false };
       }
     }
 
-    // Show success and next steps
-    console.log(chalk.green.bold('✅ Setup completed successfully!\n'));
-    this.printSectionHeader('Next Steps');
-    result.nextSteps.forEach((step, index) => {
-      console.log(chalk.white(`   ${step}`));
+    return { success: true };
+  }
+
+  /**
+   * Configure location for geocoding
+   */
+  async configureLocation() {
+    console.log(chalk.gray('   Your location helps accurately geocode addresses from radio calls.\n'));
+    
+    return await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'geocodingCity',
+        message: 'Primary city/area:',
+        default: 'Baltimore',
+        validate: input => input.trim().length > 0 || 'City is required'
+      },
+      {
+        type: 'input',
+        name: 'geocodingState',
+        message: 'State/province code (e.g., MD, CA, NY):',
+        default: 'MD',
+        filter: input => input.toUpperCase(),
+        validate: input => input.trim().length > 0 || 'State is required'
+      },
+      {
+        type: 'input',
+        name: 'geocodingCountry',
+        message: 'Country code (e.g., us, uk, ca):',
+        default: 'us',
+        filter: input => input.toLowerCase(),
+        validate: input => input.trim().length > 0 || 'Country is required'
+      },
+      {
+        type: 'input',
+        name: 'geocodingTargetCounties',
+        message: 'Target counties (comma-separated, for filtering):',
+        default: 'Baltimore,Baltimore City,Anne Arundel'
+      }
+    ]);
+  }
+
+  /**
+   * Configure transcription and AI services
+   */
+  async configureServices(installationType) {
+    console.log(chalk.gray('   Choose how to transcribe audio and analyze calls.\n'));
+    
+    // Transcription method
+    const transcriptionChoices = [
+      { 
+        name: '🏠 Local Whisper - Free, runs on your machine', 
+        value: 'local',
+        short: 'Local'
+      },
+      { 
+        name: '☁️  OpenAI Whisper - Fast cloud transcription ($0.006/min)', 
+        value: 'openai',
+        short: 'OpenAI'
+      }
+    ];
+
+    // Add Docker-specific options
+    if (installationType === 'docker') {
+      transcriptionChoices.push({ 
+        name: '📡 iCAD Transcribe - Included in Docker, optimized for radio', 
+        value: 'icad',
+        short: 'iCAD'
+      });
+    }
+
+    transcriptionChoices.push({ 
+      name: '🌐 Remote Server - Use external Whisper server', 
+      value: 'remote',
+      short: 'Remote'
     });
+
+    const { transcriptionMode } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'transcriptionMode',
+        message: 'Transcription method:',
+        choices: transcriptionChoices,
+        default: installationType === 'docker' ? 'icad' : 'local'
+      }
+    ]);
+
+    const config = { transcriptionMode };
+
+    // Local transcription options
+    if (transcriptionMode === 'local') {
+      const localAnswers = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'transcriptionDevice',
+          message: 'Hardware:',
+          choices: [
+            { name: '🖥️  CPU - Works everywhere, slower', value: 'cpu' },
+            { name: '🎮 CUDA - Much faster (NVIDIA GPU required)', value: 'cuda' }
+          ],
+          default: 'cpu'
+        },
+        {
+          type: 'list',
+          name: 'whisperModel',
+          message: 'Model size:',
+          choices: [
+            { name: 'tiny - Fastest, basic accuracy', value: 'tiny' },
+            { name: 'base - Good for low-end hardware', value: 'base' },
+            { name: 'small - Recommended (default)', value: 'small' },
+            { name: 'medium - Better accuracy, needs 5GB+ RAM', value: 'medium' },
+            { name: 'large-v3 - Best accuracy, needs 10GB+ RAM', value: 'large-v3' }
+          ],
+          default: 'small'
+        }
+      ]);
+      Object.assign(config, localAnswers);
+    }
+
+    // Remote server URL
+    if (transcriptionMode === 'remote') {
+      const { remoteUrl } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'remoteUrl',
+          message: 'Whisper server URL:',
+          default: `http://localhost:${DEFAULTS.WHISPER_SERVER_PORT}`,
+          validate: input => {
+            try {
+              new URL(input);
+              return true;
+            } catch {
+              return 'Enter a valid URL';
+            }
+          }
+        }
+      ]);
+      config.remoteUrl = remoteUrl;
+    }
+
     console.log('');
+
+    // AI Provider for address extraction
+    console.log(chalk.gray('   AI extracts addresses from transcriptions and categorizes calls.\n'));
+
+    const aiChoices = [
+      { 
+        name: '🤖 OpenAI GPT - Best accuracy, requires API key', 
+        value: 'openai',
+        short: 'OpenAI'
+      },
+      { 
+        name: '🏠 Ollama - Free local AI, needs good hardware', 
+        value: 'ollama',
+        short: 'Ollama'
+      }
+    ];
+
+    const { aiProvider } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'aiProvider',
+        message: 'AI provider for call analysis:',
+        choices: aiChoices,
+        default: 'openai'
+      }
+    ]);
+
+    config.aiProvider = aiProvider;
+
+    if (aiProvider === 'openai') {
+      const openaiAnswers = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'openaiApiKey',
+          message: 'OpenAI API key (from platform.openai.com):',
+          mask: '*'
+        },
+        {
+          type: 'list',
+          name: 'openaiModel',
+          message: 'Model:',
+          choices: [
+            { name: 'gpt-4o-mini - Fast & affordable (recommended)', value: 'gpt-4o-mini' },
+            { name: 'gpt-4o - Best quality, higher cost', value: 'gpt-4o' },
+            { name: 'gpt-3.5-turbo - Cheapest, basic quality', value: 'gpt-3.5-turbo' }
+          ],
+          default: 'gpt-4o-mini'
+        }
+      ]);
+      Object.assign(config, openaiAnswers);
+    } else {
+      const ollamaAnswers = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'ollamaModel',
+          message: 'Ollama model:',
+          default: DEFAULTS.OLLAMA_MODEL
+        }
+      ]);
+      Object.assign(config, ollamaAnswers);
+      
+      console.log(chalk.gray(`\n   📝 Ollama will be available at: ${SERVICE_URLS[installationType].ollama}`));
+      if (installationType === 'docker') {
+        console.log(chalk.gray(`   📝 Ollama container included - pull model after startup:`));
+        console.log(chalk.gray(`      docker exec ollama ollama pull ${ollamaAnswers.ollamaModel}`));
+      }
+    }
+
+    return config;
+  }
+
+  /**
+   * Configure optional integrations
+   */
+  async configureIntegrations(installationType) {
+    console.log(chalk.gray('   Optional features you can enable.\n'));
+
+    const config = {};
+
+    // Discord
+    const { enableDiscord } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableDiscord',
+        message: 'Enable Discord bot? (Posts call notifications)',
+        default: false
+      }
+    ]);
+
+    config.enableDiscord = enableDiscord;
+
+    if (enableDiscord) {
+      const discordAnswers = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'discordToken',
+          message: 'Discord bot token:',
+          mask: '*',
+          validate: input => input.trim().length > 0 || 'Token is required'
+        },
+        {
+          type: 'input',
+          name: 'clientId',
+          message: 'Discord Client ID (for slash commands):',
+          default: ''
+        }
+      ]);
+      Object.assign(config, discordAnswers);
+    }
+
+    // TrunkRecorder (Docker only - needs USB passthrough which only works on Linux)
+    if (installationType === 'docker') {
+      const { enableTrunkRecorder } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'enableTrunkRecorder',
+          message: 'Enable TrunkRecorder? (Requires Linux + SDR hardware)',
+          default: false
+        }
+      ]);
+      config.enableTrunkRecorder = enableTrunkRecorder;
+
+      if (enableTrunkRecorder) {
+        console.log(chalk.yellow('\n   ⚠️  TrunkRecorder notes:'));
+        console.log(chalk.gray('   • USB passthrough only works on Linux'));
+        console.log(chalk.gray('   • Requires building the Docker image first'));
+        console.log(chalk.gray('   • See docs/RADIO-SOFTWARE.md for setup\n'));
+      }
+    } else {
+      config.enableTrunkRecorder = false;
+    }
+
+    return config;
+  }
+
+  /**
+   * Show configuration summary
+   */
+  async showSummary(config) {
+    console.log(chalk.blue.bold('\n📋 Configuration Summary\n'));
+
+    const formatValue = (value, secret = false) => {
+      if (typeof value === 'boolean') return value ? chalk.green('✓ Yes') : chalk.gray('No');
+      if (value === undefined || value === null || value === '') return chalk.gray('Not set');
+      if (secret && value) return chalk.cyan('••••••••');
+      return chalk.cyan(value);
+    };
+
+    // Auto-configured message
+    console.log(chalk.green('   ✨ All service URLs and ports auto-configured!\n'));
+
+    // Core
+    console.log(chalk.white.bold('   📦 Installation'));
+    console.log(chalk.white(`     Type: ${formatValue(config.installationType === 'docker' ? 'Docker' : 'Local')}`));
+    console.log(chalk.white(`     Web UI: ${formatValue(`http://localhost:${config.webserverPort}`)}`));
+    console.log(chalk.white(`     API: ${formatValue(`http://localhost:${config.botPort}`)}`));
+    console.log('');
+
+    // Location
+    console.log(chalk.white.bold('   📍 Location'));
+    console.log(chalk.white(`     Area: ${formatValue(`${config.geocodingCity}, ${config.geocodingState}`)}`));
+    console.log('');
+
+    // Transcription
+    console.log(chalk.white.bold('   🎤 Transcription'));
+    console.log(chalk.white(`     Mode: ${formatValue(config.transcriptionMode)}`));
+    if (config.transcriptionMode === 'local') {
+      console.log(chalk.white(`     Device: ${formatValue(config.transcriptionDevice)}`));
+      console.log(chalk.white(`     Model: ${formatValue(config.whisperModel)}`));
+    } else if (config.transcriptionMode === 'icad') {
+      console.log(chalk.white(`     URL: ${formatValue(config.icadUrl)} (auto)`));
+    }
+    console.log('');
+
+    // AI
+    console.log(chalk.white.bold('   🤖 AI Provider'));
+    console.log(chalk.white(`     Provider: ${formatValue(config.aiProvider)}`));
+    if (config.aiProvider === 'openai') {
+      console.log(chalk.white(`     Model: ${formatValue(config.openaiModel)}`));
+      console.log(chalk.white(`     API Key: ${formatValue(config.openaiApiKey, true)}`));
+    } else {
+      console.log(chalk.white(`     URL: ${formatValue(config.ollamaUrl)} (auto)`));
+      console.log(chalk.white(`     Model: ${formatValue(config.ollamaModel)}`));
+    }
+    console.log('');
+
+    // Integrations
+    console.log(chalk.white.bold('   🔗 Integrations'));
+    console.log(chalk.white(`     Discord: ${formatValue(config.enableDiscord)}`));
+    console.log(chalk.white(`     TrunkRecorder: ${formatValue(config.enableTrunkRecorder)}`));
+    console.log('');
+  }
+
+  /**
+   * Show success message and next steps
+   */
+  async showSuccess(config, installationType, result) {
+    console.log(chalk.green.bold('\n✅ Setup completed successfully!\n'));
+
+    this.printHeader('Quick Start');
+
+    if (installationType === 'docker') {
+      console.log(chalk.white('   Start Scanner Map:'));
+      console.log(chalk.cyan('     docker-compose up -d\n'));
+
+      if (config.aiProvider === 'ollama') {
+        console.log(chalk.white('   Pull Ollama model (first time only):'));
+        console.log(chalk.cyan(`     docker exec ollama ollama pull ${config.ollamaModel}\n`));
+      }
+    } else {
+      console.log(chalk.white('   Start Scanner Map:'));
+      console.log(chalk.cyan('     npm start\n'));
+    }
+
+    console.log(chalk.white('   Web Interface:'));
+    console.log(chalk.cyan(`     http://localhost:${config.webserverPort}\n`));
+
+    this.printHeader('Connect Radio Software');
+
+    console.log(chalk.white('   SDRTrunk / TrunkRecorder endpoint:'));
+    console.log(chalk.cyan(`     http://localhost:${config.botPort}/api/call-upload\n`));
+
+    console.log(chalk.white('   API Key (saved to data/apikeys.json):'));
+    console.log(chalk.cyan(`     ${config.trunkRecorderApiKey}\n`));
+
+    console.log(chalk.gray('   See docs/RADIO-SOFTWARE.md for detailed setup.\n'));
 
     // Ask to start services (Docker)
     if (installationType === 'docker') {
@@ -264,574 +677,16 @@ class InstallerCore {
         console.log(chalk.blue('\n🚀 Starting services...\n'));
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
-          if (startResult.warning) {
-            console.log(chalk.yellow(`⚠ ${startResult.warning}\n`));
-          } else {
-            console.log(chalk.green('✓ Services started!\n'));
-          }
-          const port = config.webserverPort || 3001;
-          console.log(chalk.cyan.bold('🌐 Web interface: ') + chalk.underline(`http://localhost:${port}`));
+          console.log(chalk.green('✓ Services started!\n'));
+          console.log(chalk.cyan.bold('🌐 Open: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
-          console.log(chalk.gray('   Start manually with: docker-compose up -d'));
+          console.log(chalk.gray('   Start manually: docker-compose up -d'));
         }
-      } else {
-        console.log(chalk.gray('\n   Start services later with: docker-compose up -d'));
       }
     }
 
-    // Ask about auto-start on boot (Local)
-    if (installationType === 'local') {
-      const { setupAutostart } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'setupAutostart',
-          message: 'Configure auto-start on system boot?',
-          default: false
-        }
-      ]);
-
-      if (setupAutostart) {
-        console.log(chalk.blue('\nConfiguring auto-start...'));
-        const autostartResult = await this.localInstaller.setupAutostart();
-        if (autostartResult.success) {
-          console.log(chalk.green(`✓ ${autostartResult.message}`));
-        } else {
-          console.log(chalk.yellow(`⚠ Auto-start setup failed: ${autostartResult.error}`));
-        }
-      }
-
-      const port = config.webserverPort || 3001;
-      console.log(chalk.gray(`\n   Start Scanner Map with: node bot.js`));
-      console.log(chalk.cyan.bold('🌐 Web interface: ') + chalk.underline(`http://localhost:${port}`));
-    }
-
-    console.log(chalk.green.bold('\n✨ Setup complete! Happy scanning! ✨\n'));
-    console.log(chalk.gray('   Documentation: https://github.com/poisonednumber/Scanner-map\n'));
-  }
-
-  /**
-   * Configure optional services
-   */
-  async configureServices(installationType) {
-    console.log(chalk.gray('   These are optional add-on services.\n'));
-    
-    const questions = [
-      {
-        type: 'confirm',
-        name: 'enableTrunkRecorder',
-        message: 'Enable TrunkRecorder? (Capture radio calls from SDR hardware)',
-        default: false
-      }
-    ];
-
-    return await inquirer.prompt(questions);
-  }
-
-  /**
-   * Configure transcription settings
-   */
-  async configureTranscription(installationType) {
-    console.log(chalk.gray('   Transcription converts audio to text for display and analysis.\n'));
-    
-    const { mode } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'mode',
-        message: 'Choose transcription method:',
-        choices: [
-          { 
-            name: '🏠 Local (Whisper) - Runs on your machine, requires Python', 
-            value: 'local',
-            short: 'Local'
-          },
-          { 
-            name: '☁️  OpenAI Whisper API - Cloud-based, requires API key', 
-            value: 'openai',
-            short: 'OpenAI'
-          },
-          { 
-            name: '🌐 Remote Faster-Whisper Server - Use an external Whisper server', 
-            value: 'remote',
-            short: 'Remote'
-          },
-          { 
-            name: '📡 iCAD Transcribe - Use iCAD transcription service', 
-            value: 'icad',
-            short: 'iCAD'
-          }
-        ],
-        default: 'local'
-      }
-    ]);
-
-    const config = {
-      transcriptionMode: mode,
-      enableOllama: false
-    };
-
-    if (mode === 'local') {
-      const answers = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'device',
-          message: 'Transcription hardware:',
-          choices: [
-            { name: '🖥️  CPU - Works on any machine, slower', value: 'cpu', short: 'CPU' },
-            { name: '🎮 CUDA (NVIDIA GPU) - Much faster, requires NVIDIA GPU', value: 'cuda', short: 'CUDA' }
-          ],
-          default: 'cpu'
-        },
-        {
-          type: 'list',
-          name: 'model',
-          message: 'Whisper model size:',
-          choices: [
-            { name: 'tiny - Fastest, lowest accuracy', value: 'tiny', short: 'tiny' },
-            { name: 'base - Good balance for low-end hardware', value: 'base', short: 'base' },
-            { name: 'small - Recommended for most users', value: 'small', short: 'small' },
-            { name: 'medium - Better accuracy, more resources', value: 'medium', short: 'medium' },
-            { name: 'large-v3 - Best accuracy, requires powerful hardware', value: 'large-v3', short: 'large-v3' }
-          ],
-          default: 'small'
-        }
-      ]);
-      config.transcriptionDevice = answers.device;
-      config.whisperModel = answers.model;
-    } else if (mode === 'openai') {
-      // OpenAI API key will be collected in the AI provider step
-      const answers = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'model',
-          message: 'OpenAI transcription model:',
-          default: 'whisper-1'
-        }
-      ]);
-      config.openaiTranscriptionModel = answers.model;
-    } else if (mode === 'remote') {
-      const answers = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'url',
-          message: 'Faster-Whisper server URL:',
-          default: 'http://localhost:8000',
-          validate: (input) => {
-            if (!input || input.trim().length === 0) {
-              return 'URL is required';
-            }
-            try {
-              new URL(input);
-              return true;
-            } catch {
-              return 'Please enter a valid URL';
-            }
-          }
-        }
-      ]);
-      config.fasterWhisperServerUrl = answers.url;
-    } else if (mode === 'icad') {
-      const answers = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'url',
-          message: 'iCAD API URL:',
-          validate: (input) => {
-            if (!input || input.trim().length === 0) {
-              return 'URL is required';
-            }
-            try {
-              new URL(input);
-              return true;
-            } catch {
-              return 'Please enter a valid URL';
-            }
-          }
-        },
-        {
-          type: 'input',
-          name: 'profile',
-          message: 'iCAD profile name (optional):',
-          default: ''
-        },
-        {
-          type: 'input',
-          name: 'apiKey',
-          message: 'iCAD API key (optional):',
-          default: ''
-        }
-      ]);
-      config.icadUrl = answers.url;
-      config.icadProfile = answers.profile;
-      config.icadApiKey = answers.apiKey;
-    }
-
-    return config;
-  }
-
-  /**
-   * Configure core settings
-   */
-  async configureCore() {
-    console.log(chalk.gray('   Set up ports, domain, and timezone.\n'));
-    
-    return await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'webserverPort',
-        message: 'Web interface port:',
-        default: 3001,
-        validate: (input) => {
-          const port = parseInt(input);
-          if (isNaN(port) || port <= 0 || port >= 65536) {
-            return 'Enter a valid port number (1-65535)';
-          }
-          return true;
-        },
-        filter: (input) => parseInt(input)
-      },
-      {
-        type: 'input',
-        name: 'botPort',
-        message: 'API port (receives audio uploads):',
-        default: 3306,
-        validate: (input) => {
-          const port = parseInt(input);
-          if (isNaN(port) || port <= 0 || port >= 65536) {
-            return 'Enter a valid port number (1-65535)';
-          }
-          return true;
-        },
-        filter: (input) => parseInt(input)
-      },
-      {
-        type: 'input',
-        name: 'publicDomain',
-        message: 'Public domain or IP (for Discord links):',
-        default: 'localhost',
-        validate: (input) => {
-          if (!input || input.trim().length === 0) {
-            return 'Domain cannot be empty';
-          }
-          return true;
-        }
-      },
-      {
-        type: 'input',
-        name: 'timezone',
-        message: 'Your timezone:',
-        default: 'America/New_York',
-        validate: (input) => {
-          if (!input || input.trim().length === 0) {
-            return 'Timezone is required';
-          }
-          return true;
-        }
-      }
-    ]);
-  }
-
-  /**
-   * Configure geocoding service
-   */
-  async configureGeocoding() {
-    console.log(chalk.gray('   Geocoding converts addresses to map coordinates.\n'));
-    
-    // First, get location info to help with geocoding accuracy
-    const locationAnswers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'city',
-        message: 'Primary city/area name:',
-        default: 'Baltimore',
-        validate: (input) => input.trim().length > 0 || 'City is required'
-      },
-      {
-        type: 'input',
-        name: 'state',
-        message: 'State/province code (e.g., MD, CA, NY):',
-        default: 'MD',
-        validate: (input) => input.trim().length > 0 || 'State is required'
-      },
-      {
-        type: 'input',
-        name: 'country',
-        message: 'Country code (e.g., us, uk, ca):',
-        default: 'us',
-        validate: (input) => input.trim().length > 0 || 'Country is required'
-      },
-      {
-        type: 'input',
-        name: 'counties',
-        message: 'Target counties (comma-separated):',
-        default: 'Baltimore,Baltimore City,Anne Arundel'
-      }
-    ]);
-
-    const { provider } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'provider',
-        message: 'Geocoding provider:',
-        choices: [
-          { 
-            name: '📍 Nominatim (OpenStreetMap) - Free, no API key needed', 
-            value: 'nominatim',
-            short: 'Nominatim'
-          },
-          { 
-            name: '🌍 LocationIQ - Free tier (60k requests/day)', 
-            value: 'locationiq',
-            short: 'LocationIQ'
-          },
-          { 
-            name: '🗺️  Google Maps - Paid, most accurate', 
-            value: 'google',
-            short: 'Google Maps'
-          }
-        ],
-        default: 'nominatim'
-      }
-    ]);
-
-    const config = {
-      geocodingProvider: provider,
-      geocodingCity: locationAnswers.city,
-      geocodingState: locationAnswers.state.toUpperCase(),
-      geocodingCountry: locationAnswers.country.toLowerCase(),
-      geocodingTargetCounties: locationAnswers.counties
-    };
-
-    if (provider === 'locationiq') {
-      const { apiKey } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'apiKey',
-          message: 'LocationIQ API key (get one at locationiq.com):',
-          default: ''
-        }
-      ]);
-      config.locationiqApiKey = apiKey;
-    } else if (provider === 'google') {
-      const { apiKey } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'apiKey',
-          message: 'Google Maps API key (get one at console.cloud.google.com):',
-          default: ''
-        }
-      ]);
-      config.googleMapsApiKey = apiKey;
-    }
-
-    return config;
-  }
-
-  /**
-   * Configure AI provider
-   */
-  async configureAI(ollamaEnabled, installationType = 'docker') {
-    const defaultProvider = ollamaEnabled ? 'ollama' : 'openai';
-    
-    console.log(chalk.gray('   AI analyzes transcribed calls to extract addresses and summaries.\n'));
-    
-    const { provider } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'provider',
-        message: 'AI provider for call analysis:',
-        choices: [
-          { 
-            name: '🤖 OpenAI (GPT) - Cloud-based, requires API key', 
-            value: 'openai',
-            short: 'OpenAI'
-          },
-          { 
-            name: '🏠 Ollama - Run AI locally, free but needs good hardware', 
-            value: 'ollama',
-            short: 'Ollama'
-          }
-        ],
-        default: defaultProvider
-      }
-    ]);
-
-    const config = {
-      aiProvider: provider,
-      enableOllama: provider === 'ollama'
-    };
-
-    if (provider === 'openai') {
-      const answers = await inquirer.prompt([
-        {
-          type: 'password',
-          name: 'apiKey',
-          message: 'OpenAI API key (get one at platform.openai.com):',
-          mask: '*',
-          default: ''
-        },
-        {
-          type: 'list',
-          name: 'model',
-          message: 'OpenAI model:',
-          choices: [
-            { name: 'gpt-4o-mini - Fast, affordable, good quality', value: 'gpt-4o-mini' },
-            { name: 'gpt-4o - Best quality, higher cost', value: 'gpt-4o' },
-            { name: 'gpt-3.5-turbo - Cheapest, lower quality', value: 'gpt-3.5-turbo' }
-          ],
-          default: 'gpt-4o-mini'
-        }
-      ]);
-      config.openaiApiKey = answers.apiKey;
-      config.openaiModel = answers.model;
-    } else {
-      const defaultOllamaUrl = installationType === 'docker' ? 'http://ollama:11434' : 'http://localhost:11434';
-      const answers = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'url',
-          message: 'Ollama server URL:',
-          default: defaultOllamaUrl,
-          validate: (input) => {
-            if (!input || input.trim().length === 0) {
-              return 'URL is required';
-            }
-            try {
-              new URL(input);
-              return true;
-            } catch {
-              return 'Enter a valid URL';
-            }
-          }
-        },
-        {
-          type: 'input',
-          name: 'model',
-          message: 'Ollama model (e.g., llama3.1:8b, mistral):',
-          default: 'llama3.1:8b',
-          validate: (input) => {
-            if (!input || input.trim().length === 0) {
-              return 'Model name is required';
-            }
-            return true;
-          }
-        }
-      ]);
-      config.ollamaUrl = answers.url;
-      config.ollamaModel = answers.model;
-    }
-
-    return config;
-  }
-
-  /**
-   * Configure Discord bot
-   */
-  async configureDiscord() {
-    console.log(chalk.gray('   Discord bot sends call notifications to your server.\n'));
-    
-    const { enable } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'enable',
-        message: 'Enable Discord bot integration?',
-        default: false
-      }
-    ]);
-
-    if (!enable) {
-      return {
-        enableDiscord: false,
-        discordToken: '',
-        clientId: ''
-      };
-    }
-
-    const answers = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'token',
-        message: 'Discord bot token (from discord.com/developers):',
-        mask: '*',
-        validate: (input) => {
-          if (!input || input.trim().length === 0) {
-            return 'Bot token is required';
-          }
-          return true;
-        }
-      },
-      {
-        type: 'input',
-        name: 'clientId',
-        message: 'Discord Client ID (for slash commands, optional):',
-        default: ''
-      }
-    ]);
-
-    return {
-      enableDiscord: true,
-      discordToken: answers.token,
-      clientId: answers.clientId || ''
-    };
-  }
-
-  /**
-   * Show installation summary
-   */
-  async showSummary(config) {
-    console.log(chalk.blue.bold('\n📋 Configuration Summary\n'));
-    console.log(chalk.gray('   Review your settings before proceeding:\n'));
-
-    const formatValue = (value) => {
-      if (typeof value === 'boolean') {
-        return value ? chalk.green('✓ Yes') : chalk.gray('No');
-      }
-      if (value === undefined || value === null || value === '') {
-        return chalk.gray('Not set');
-      }
-      return chalk.cyan(value);
-    };
-
-    // Installation
-    console.log(chalk.white.bold('   Installation'));
-    console.log(chalk.white('     Type: ') + formatValue(config.installationType === 'docker' ? 'Docker' : 'Local'));
-    console.log(chalk.white('     Web Port: ') + formatValue(config.webserverPort));
-    console.log(chalk.white('     API Port: ') + formatValue(config.botPort));
-    console.log(chalk.white('     Timezone: ') + formatValue(config.timezone));
-    console.log('');
-
-    // Location & Geocoding
-    console.log(chalk.white.bold('   Location'));
-    console.log(chalk.white('     City: ') + formatValue(config.geocodingCity));
-    console.log(chalk.white('     State: ') + formatValue(config.geocodingState));
-    console.log(chalk.white('     Provider: ') + formatValue(config.geocodingProvider));
-    console.log('');
-
-    // Transcription
-    console.log(chalk.white.bold('   Transcription'));
-    console.log(chalk.white('     Mode: ') + formatValue(config.transcriptionMode));
-    if (config.transcriptionMode === 'local') {
-      console.log(chalk.white('     Device: ') + formatValue(config.transcriptionDevice));
-      console.log(chalk.white('     Model: ') + formatValue(config.whisperModel));
-    }
-    console.log('');
-
-    // AI
-    console.log(chalk.white.bold('   AI Provider'));
-    console.log(chalk.white('     Provider: ') + formatValue(config.aiProvider));
-    if (config.aiProvider === 'openai') {
-      console.log(chalk.white('     Model: ') + formatValue(config.openaiModel));
-      console.log(chalk.white('     API Key: ') + formatValue(config.openaiApiKey ? '••••••••' : 'Not set'));
-    } else {
-      console.log(chalk.white('     Model: ') + formatValue(config.ollamaModel));
-    }
-    console.log('');
-
-    // Integrations
-    console.log(chalk.white.bold('   Integrations'));
-    console.log(chalk.white('     Discord Bot: ') + formatValue(config.enableDiscord));
-    console.log(chalk.white('     TrunkRecorder: ') + formatValue(config.enableTrunkRecorder));
-    console.log('');
+    console.log(chalk.green.bold('\n✨ Happy scanning! ✨\n'));
   }
 }
 
@@ -840,10 +695,8 @@ if (require.main === module) {
   const projectRoot = process.cwd();
   const installer = new InstallerCore(projectRoot);
   installer.run().catch(err => {
-    // Handle inquirer errors gracefully
     if (err.code === 'ERR_USE_AFTER_CLOSE' || err.message?.includes('readline')) {
       console.error(chalk.red('\n❌ This installer requires an interactive terminal.'));
-      console.error(chalk.yellow('   Run this script directly in a terminal window.'));
     } else {
       console.error(chalk.red('\n❌ Setup error:'), err.message || err);
     }
