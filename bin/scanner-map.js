@@ -2,27 +2,29 @@
 
 /**
  * Scanner Map CLI
- * Entry point for global installation
+ * Entry point for global npm installation (npx scanner-map)
  */
 
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
-// Get the installer path
-const installerPath = path.join(__dirname, '../scripts/installer/installer-core.js');
+const projectRoot = path.join(__dirname, '..');
+const installerPath = path.join(projectRoot, 'scripts/installer/installer-core.js');
 
-// Check if installer exists
-const fs = require('fs');
+// Verify installer exists
 if (!fs.existsSync(installerPath)) {
-  console.error('Error: Installer not found. Please run this from the Scanner Map directory.');
+  console.error('Error: Installer not found at', installerPath);
+  console.error('Please run this from within the Scanner Map directory.');
   process.exit(1);
 }
 
-// Run the installer
-const installer = spawn('node', [installerPath], {
+// Pass through any command-line arguments
+const args = [installerPath, ...process.argv.slice(2)];
+
+const installer = spawn('node', args, {
   stdio: 'inherit',
-  shell: true,
-  cwd: path.join(__dirname, '..')
+  cwd: projectRoot
 });
 
 installer.on('close', (code) => {
@@ -30,7 +32,7 @@ installer.on('close', (code) => {
 });
 
 installer.on('error', (err) => {
-  console.error('Error running installer:', err.message);
+  console.error('Failed to start installer:', err.message);
   process.exit(1);
 });
 

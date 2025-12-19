@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# Scanner Map - Unified Installer Script
-# Works on Linux, macOS, and Windows (via Git Bash/WSL)
-# Uses Node.js-based installer for cross-platform compatibility
+# Scanner Map - Linux/macOS Installer
+# Run this script from the repository root or from a parent directory
 
 set -e  # Exit on error
 
@@ -11,9 +10,10 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Print colored messages
+# Print helpers
 print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
 }
@@ -43,25 +43,58 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Check prerequisites
+# Detect operating system
+detect_os() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "linux"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        echo "windows"
+    else
+        echo "unknown"
+    fi
+}
+
+# Check all prerequisites
 check_prerequisites() {
     print_header "Checking Prerequisites"
     
     local missing=()
     
-    if ! command_exists git; then
+    # Check Git
+    if command_exists git; then
+        print_success "Git found"
+    else
         missing+=("git")
+        print_error "Git not found"
     fi
     
-    if ! command_exists node; then
+    # Check Node.js
+    if command_exists node; then
+        local node_version=$(node --version | sed 's/v//' | cut -d. -f1)
+        if [[ $node_version -ge 18 ]]; then
+            print_success "Node.js $(node --version)"
+        else
+            print_error "Node.js version 18+ required (found $(node --version))"
+            missing+=("node")
+        fi
+    else
         missing+=("node")
+        print_error "Node.js not found"
     fi
     
-    if ! command_exists npm; then
+    # Check npm
+    if command_exists npm; then
+        print_success "npm found"
+    else
         missing+=("npm")
+        print_error "npm not found"
     fi
     
+    # Report missing tools
     if [[ ${#missing[@]} -gt 0 ]]; then
+        echo ""
         print_error "Missing required tools: ${missing[*]}"
         echo ""
         echo "Please install the missing tools:"
@@ -71,104 +104,100 @@ check_prerequisites() {
                     echo "  - Git: https://git-scm.com/downloads"
                     ;;
                 node|npm)
-                    echo "  - Node.js: https://nodejs.org/ (includes npm)"
+                    echo "  - Node.js (includes npm): https://nodejs.org/"
                     ;;
             esac
         done
         exit 1
     fi
     
-    # Check Node.js version
-    local node_version=$(node --version | sed 's/v//' | cut -d. -f1)
-    if [[ $node_version -lt 18 ]]; then
-        print_error "Node.js version 18 or higher is required. Current version: $(node --version)"
+    print_success "All prerequisites met"
+}
+
+# Navigate to repository directory
+find_repository() {
+    # Already in the repository?
+    if [[ -f "package.json" && -f "scripts/installer/installer-core.js" ]]; then
+        print_success "Running from Scanner Map repository"
+        return 0
+    fi
+    
+    # Check for Scanner-map subdirectory
+    if [[ -d "Scanner-map" && -f "Scanner-map/package.json" ]]; then
+        print_success "Found Scanner-map directory"
+        cd Scanner-map
+        return 0
+    fi
+    
+    # Repository not found - offer to clone
+    print_warning "Scanner Map repository not found"
+    echo ""
+    read -p "Would you like to clone it now? [Y/n]: " response
+    response=${response:-Y}
+    
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        print_info "Cloning Scanner Map repository..."
+        git clone https://github.com/poisonednumber/Scanner-map.git
+        cd Scanner-map
+        print_success "Repository cloned successfully"
+        return 0
+    else
+        echo ""
+        echo "To install manually:"
+        echo "  git clone https://github.com/poisonednumber/Scanner-map.git"
+        echo "  cd Scanner-map"
+        echo "  ./install.sh"
         exit 1
     fi
-    
-    print_success "All prerequisites found"
 }
 
-# Clone repository
-clone_repo() {
-    print_header "Cloning Repository"
+# Install npm dependencies
+install_dependencies() {
+    print_header "Installing Dependencies"
     
-    if [[ -d "Scanner-map" ]]; then
-        print_warning "Scanner-map directory already exists"
-        read -p "Do you want to remove it and clone fresh? [y/N]: " response
-        if [[ "$response" =~ ^[Yy]$ ]]; then
-            rm -rf Scanner-map
-        else
-            cd Scanner-map
-            return
-        fi
+    if [[ -d "node_modules" ]]; then
+        print_success "Dependencies already installed"
+    else
+        print_info "Installing npm dependencies..."
+        npm install --no-audit --no-fund
+        print_success "Dependencies installed successfully"
     fi
-    
-    print_info "Cloning Scanner Map repository..."
-    git clone https://github.com/poisonednumber/Scanner-map.git
-    cd Scanner-map
-    print_success "Repository cloned"
 }
 
-# Install npm dependencies for installer
-install_installer_deps() {
-    print_header "Installing Installer Dependencies"
-    
-    print_info "Installing npm dependencies..."
-    npm install --no-audit --no-fund
-    print_success "Dependencies installed"
-}
-
-# Main installation
+# Main function
 main() {
     print_header "Scanner Map Installer"
     
+    local os=$(detect_os)
+    print_info "Detected OS: $os"
+    
+    echo ""
     echo "This installer will:"
     echo "  1. Check prerequisites (Git, Node.js, npm)"
-    echo "  2. Clone the Scanner Map repository (if needed)"
+    echo "  2. Clone the repository if needed"
     echo "  3. Install npm dependencies"
-    echo "  4. Run interactive installer to configure services"
+    echo "  4. Run interactive setup"
     echo ""
     
-    # Detect OS
-    OS="unknown"
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        OS="linux"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        OS="macos"
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        OS="windows"
-    fi
-    print_info "Detected OS: $OS"
-    
-    # Check prerequisites
+    # Step 1: Check prerequisites
     check_prerequisites
     
-    # Clone repository if needed
-    if [[ ! -d "Scanner-map" ]] || [[ ! -f "Scanner-map/package.json" ]]; then
-        clone_repo
-    else
-        if [[ -f "Scanner-map/package.json" ]]; then
-            cd Scanner-map 2>/dev/null || {
-                print_error "Scanner-map directory not found"
-                exit 1
-            }
-        else
-            clone_repo
-        fi
-    fi
+    # Step 2: Find or clone repository
+    find_repository
     
-    # Install npm dependencies
-    install_installer_deps
+    # Step 3: Install dependencies
+    install_dependencies
     
-    # Run Node.js installer
-    print_header "Starting Interactive Installer"
+    # Step 4: Run interactive installer
+    print_header "Starting Interactive Setup"
     print_info "The installer will guide you through configuration..."
     echo ""
     
     node scripts/installer/installer-core.js
     
-    print_success "Installation complete!"
+    print_success "Setup complete!"
 }
 
 # Run main function
 main "$@"
+
