@@ -120,7 +120,7 @@ if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const busboy = require('busboy');
 const sqlite3 = require('sqlite3').verbose();

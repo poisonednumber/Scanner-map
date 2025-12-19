@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 // Configuration
 const API_KEY_FILE = process.env.API_KEY_FILE || './appdata/scanner-map/data/apikeys.json';

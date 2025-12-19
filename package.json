@@ -9,8 +9,7 @@
   "scripts": {
     "start": "node bot.js",
     "dev": "nodemon bot.js",
-    "install": "node scripts/installer/installer-core.js",
-    "setup": "node scripts/setup-wizard.js",
+    "setup": "node scripts/installer/installer-core.js",
     "generate-trunkrecorder-key": "node scripts/generate-trunkrecorder-api-key.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -24,11 +23,10 @@
   "author": "poisonednumber",
   "license": "MIT",
   "dependencies": {
-    "@discordjs/opus": "^0.9.0",
     "@discordjs/voice": "^0.16.0",
     "@snazzah/davey": "^0.1.8",
     "aws-sdk": "^2.1691.0",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "busboy": "^1.6.0",
     "chalk": "^4.1.2",
     "csv-parser": "^3.0.0",
@@ -48,15 +46,18 @@
     "prism-media": "^1.3.5",
     "public-ip": "^5.0.0",
     "socket.io": "^4.7.2",
-    "sqlite3": "^5.1.6",
+    "sqlite3": "^5.1.7",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.9.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=18.0.0 <24.0.0",
     "npm": ">=9.0.0"
   }
 }

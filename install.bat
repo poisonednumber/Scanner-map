@@ -25,27 +25,34 @@ REM Check for Node.js
 where node >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Node.js is not installed or not in PATH.
-    echo         Please install Node.js from: https://nodejs.org/
+    echo         Please install Node.js LTS from: https://nodejs.org/
     echo.
     pause
     exit /b 1
 )
 
-REM Check Node.js version (require v18+)
+REM Get Node.js version
 for /f "tokens=1 delims=." %%i in ('node --version') do set NODE_MAJOR=%%i
-REM Remove the 'v' prefix
 set NODE_MAJOR=%NODE_MAJOR:v=%
-
-REM Convert to number and compare
 set /a NODE_MAJOR_NUM=%NODE_MAJOR%
+
+REM Check minimum version
 if %NODE_MAJOR_NUM% LSS 18 (
     echo [ERROR] Node.js version 18 or higher is required.
     echo         Current version: 
     node --version
-    echo         Please update Node.js from: https://nodejs.org/
+    echo         Please install Node.js LTS from: https://nodejs.org/
     echo.
     pause
     exit /b 1
+)
+
+REM Warn about very new Node.js versions
+if %NODE_MAJOR_NUM% GEQ 23 (
+    echo [WARN] Node.js v%NODE_MAJOR_NUM% detected. This is a very new version.
+    echo        Some native modules may not have prebuilt binaries yet.
+    echo        If you encounter build errors, consider using Node.js LTS ^(v22 or v20^).
+    echo.
 )
 
 for /f "tokens=*" %%i in ('node --version') do set NODE_VERSION=%%i
@@ -101,17 +108,31 @@ echo ========================================
 echo.
 
 REM Install npm dependencies if needed
-if not exist "node_modules" (
+if not exist "node_modules\inquirer" (
     echo [INFO] Installing npm dependencies...
-    call npm install --no-audit --no-fund
-    if %ERRORLEVEL% NEQ 0 (
+    echo        This may take a few minutes...
+    echo.
+    
+    REM Use --ignore-optional to skip native modules that fail to build
+    REM Use --no-audit --no-fund to speed up installation
+    npm install --ignore-optional --no-audit --no-fund 2>&1
+    
+    REM Check if critical modules are installed
+    if not exist "node_modules\inquirer" (
         echo.
         echo [ERROR] Failed to install npm dependencies.
-        echo         Check your internet connection and try again.
+        echo.
+        echo Common fixes:
+        echo   1. Delete node_modules folder and try again
+        echo   2. Run: npm cache clean --force
+        echo   3. Check your internet connection
+        echo   4. If using Node.js v23+, try Node.js v22 LTS instead
         echo.
         pause
         exit /b 1
     )
+    
+    echo.
     echo [OK] Dependencies installed successfully
 ) else (
     echo [OK] Dependencies already installed
@@ -141,4 +162,3 @@ echo   Setup Complete!
 echo ========================================
 echo.
 pause
-
