@@ -22,8 +22,16 @@ ENV PATH="/build/.venv/bin:$PATH"
 
 # Copy and install Python requirements
 COPY requirements.txt /build/
+
+# Install PyTorch first (CPU version for Alpine - PyTorch doesn't have official Alpine builds)
+# For Alpine, we use the CPU-only version from PyPI
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install other requirements (excluding torch packages)
+RUN pip install --no-cache-dir -r requirements.txt || \
+    (pip install --no-cache-dir faster-whisper>=0.10.0 pydub>=0.25.1 icad-tone-detection>=1.0.0 python-dotenv>=1.0.0 boto3>=1.34.0 && \
+     echo "Installed packages individually (torch already installed)")
 
 # Stage 2: Node.js build environment (Alpine)
 FROM node:18-alpine as node-build
@@ -72,21 +80,6 @@ EXPOSE 3001 3306
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-# Start the application
-CMD ["node", "bot.js"]
-
-    CMD node -e "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-# Start the application
-CMD ["node", "bot.js"]
-
-    CMD node -e "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-# Start the application
-CMD ["node", "bot.js"]
-
     CMD node -e "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Start the application

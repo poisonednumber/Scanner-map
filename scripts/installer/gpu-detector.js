@@ -128,11 +128,27 @@ class GPUDetector {
    * Check if Docker can use GPU (test with nvidia-docker or --gpus flag)
    */
   async testDockerGPU() {
+    // On Windows, GPU support requires WSL2 and is more complex
+    // Skip the test on Windows and just report GPU availability
+    if (this.isWindows) {
+      const gpuInfo = await this.detectNvidiaGPU();
+      if (gpuInfo.available) {
+        return {
+          working: true,
+          method: 'windows-wsl2',
+          note: 'Windows GPU support requires WSL2 backend. Test skipped - GPU may work if WSL2 is configured.'
+        };
+      } else {
+        return {
+          working: false,
+          reason: 'No NVIDIA GPU detected on Windows'
+        };
+      }
+    }
+
     try {
-      // Try to run a simple GPU test container
-      const testCmd = this.isLinux 
-        ? 'docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi'
-        : 'docker run --rm nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi';
+      // On Linux, test with --gpus flag
+      const testCmd = 'docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi';
       
       execSync(testCmd, { 
         stdio: 'ignore',
@@ -141,9 +157,19 @@ class GPUDetector {
       
       return {
         working: true,
-        method: this.isLinux ? '--gpus all' : 'automatic'
+        method: '--gpus all'
       };
     } catch (err) {
+      // If test fails, check if GPU is available anyway
+      const gpuInfo = await this.detectNvidiaGPU();
+      if (gpuInfo.available) {
+        return {
+          working: false,
+          reason: `GPU detected but Docker test failed: ${err.message}. You may need to install NVIDIA Container Toolkit.`,
+          gpuAvailable: true
+        };
+      }
+      
       return {
         working: false,
         reason: err.message || 'GPU test failed'
