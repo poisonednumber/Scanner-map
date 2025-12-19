@@ -1,6 +1,6 @@
 {
   "name": "scanner-map",
-  "version": "3.0.11",
+  "version": "3.1.0",
   "description": "Real-time mapping system for radio calls with AI transcription and geocoding",
   "main": "bot.js",
   "bin": {
@@ -25,7 +25,7 @@
   "author": "poisonednumber",
   "license": "MIT",
   "dependencies": {
-    "@discordjs/voice": "^0.16.0",
+    "@discordjs/voice": "^0.18.0",
     "@snazzah/davey": "^0.1.8",
     "aws-sdk": "^2.1691.0",
     "bcryptjs": "^2.4.3",
@@ -36,11 +36,11 @@
     "dotenv": "^16.4.1",
     "express": "^4.18.2",
     "form-data": "^4.0.0",
-    "fs-extra": "^11.2.0",
+    "fs-extra": "^11.3.3",
     "inquirer": "^8.2.6",
     "js-yaml": "^4.1.0",
     "libsodium-wrappers": "^0.7.13",
-    "moment-timezone": "^0.5.45",
+    "moment-timezone": "^0.6.0",
     "node-cache": "^5.1.2",
     "node-fetch": "^2.7.0",
     "openai": "^4.28.0",
@@ -53,13 +53,17 @@
     "winston": "^3.11.0"
   },
   "optionalDependencies": {
-    "@discordjs/opus": "^0.9.0"
+    "@discordjs/opus": "^0.10.0"
+  },
+  "overrides": {
+    "rimraf": "^5.0.0",
+    "glob": "^10.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.0.0 <24.0.0",
+    "node": ">=18.0.0 <25.0.0",
     "npm": ">=9.0.0"
   }
 }

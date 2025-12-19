@@ -138,6 +138,7 @@ See [Radio Software Guide](docs/RADIO-SOFTWARE.md) for detailed setup.
 | Guide | Description |
 |-------|-------------|
 | [Installation](docs/INSTALLATION.md) | Detailed setup for Windows, Linux, macOS |
+| [Web UI Configuration](docs/WEB-UI-CONFIGURATION.md) | ⭐ **NEW** Configure via web interface |
 | [Configuration](docs/CONFIGURATION.md) | All `.env` settings explained |
 | [Docker](docs/DOCKER.md) | Docker-specific configuration |
 | [Transcription](docs/TRANSCRIPTION.md) | Local, remote, OpenAI, iCAD modes |

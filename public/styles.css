@@ -18,6 +18,19 @@ body, html {
     overflow: hidden; /* Prevent page scrolling */
 }
 
+/* Screen reader only - visually hidden but accessible */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
 #map {
     height: 100vh;
     width: 100%;
@@ -445,6 +458,214 @@ body, html {
     min-width: 120px;
     padding: 10px 20px;
     font-size: 14px;
+}
+
+/* Quick Start Modal Styles */
+.quick-start-modal-content {
+    max-width: 900px;
+    width: 90%;
+}
+
+.quick-start-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.quick-start-tab {
+    padding: 10px 20px;
+    background-color: transparent;
+    color: var(--text-color);
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.quick-start-tab:hover {
+    background-color: var(--hover-color);
+    color: var(--primary-color);
+}
+
+.quick-start-tab.active {
+    border-bottom-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.quick-start-tab-content {
+    display: none;
+}
+
+.quick-start-tab-content.active {
+    display: block;
+}
+
+.quick-start-tab-content h3 {
+    margin-top: 0;
+    color: var(--primary-color);
+}
+
+.config-description {
+    color: rgba(0, 255, 0, 0.7);
+    margin-bottom: 20px;
+    font-size: 13px;
+}
+
+/* System Status Styles */
+.system-status-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.system-status-name {
+    flex: 1;
+    font-weight: bold;
+}
+
+.system-status-icon {
+    min-width: 150px;
+    text-align: right;
+}
+
+.install-btn {
+    padding: 5px 15px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+}
+
+.install-btn:hover:not(:disabled) {
+    background-color: var(--primary-color);
+    color: var(--background-color);
+}
+
+.install-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#system-info-content {
+    padding: 15px;
+    background-color: rgba(0, 255, 0, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+/* Update Status Styles */
+.update-info-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* Radio Config Sub-tabs */
+.quick-start-radio-subtabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.quick-start-subtab {
+    padding: 8px 16px;
+    background-color: transparent;
+    color: var(--text-color);
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    transition: all 0.3s;
+}
+
+.quick-start-subtab:hover {
+    background-color: var(--hover-color);
+    color: var(--primary-color);
+}
+
+.quick-start-subtab.active {
+    border-bottom-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.quick-start-subtab-content {
+    display: none;
+}
+
+.quick-start-subtab-content.active {
+    display: block;
+}
+
+/* CSV Import Styles */
+#talkgroups-csv-drop-zone, #frequencies-csv-drop-zone {
+    transition: background-color 0.3s;
+}
+
+#talkgroups-csv-drop-zone:hover, #frequencies-csv-drop-zone:hover {
+    background-color: rgba(0, 255, 0, 0.05);
+}
+
+#talkgroups-csv-preview-content table,
+#frequencies-csv-preview-content table {
+    width: 100%;
+    font-size: 12px;
+    border-collapse: collapse;
+}
+
+#talkgroups-csv-preview-content table th,
+#talkgroups-csv-preview-content table td,
+#frequencies-csv-preview-content table th,
+#frequencies-csv-preview-content table td {
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+#talkgroups-csv-preview-content table th,
+#frequencies-csv-preview-content table th {
+    background-color: rgba(0, 255, 0, 0.1);
+    font-weight: bold;
+}
+
+/* Table Styles for Radio Config */
+#talkgroups-table, #frequencies-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+#talkgroups-table th, #talkgroups-table td,
+#frequencies-table th, #frequencies-table td {
+    padding: 8px;
+    text-align: left;
+    border: 1px solid var(--border-color);
+    font-size: 12px;
+}
+
+#talkgroups-table th, #frequencies-table th {
+    background-color: rgba(0, 255, 0, 0.1);
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+#talkgroups-table tbody tr:hover, #frequencies-table tbody tr:hover {
+    background-color: rgba(0, 255, 0, 0.05);
 }
 
 .heatmap-controls label {
@@ -1126,6 +1347,193 @@ input[type="time"] {
     outline: 2px solid var(--primary-color);
     outline-offset: 2px;
 }
+
+/* Error message styles */
+.error-message {
+    background-color: rgba(255, 0, 0, 0.1);
+    border: 1px solid #ff0000;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 15px 0;
+    color: #ff6666;
+}
+
+.error-message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.error-message-header strong {
+    color: #ff0000;
+    font-size: 16px;
+}
+
+.error-details-toggle {
+    background: transparent;
+    border: 1px solid #ff0000;
+    color: #ff6666;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'Share Tech Mono', monospace;
+    transition: all 0.2s;
+}
+
+.error-details-toggle:hover {
+    background-color: rgba(255, 0, 0, 0.2);
+}
+
+.error-details {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #ff9999;
+}
+
+.error-steps {
+    margin-top: 15px;
+}
+
+.error-steps strong {
+    color: #ff6666;
+    display: block;
+    margin-bottom: 8px;
+}
+
+.error-steps ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.error-steps li {
+    margin: 5px 0;
+    color: var(--text-color);
+}
+
+/* Toast notification styles */
+#toast-container {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 400px;
+    pointer-events: none;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transform: translateX(400px);
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+    pointer-events: auto;
+    min-width: 250px;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.toast-icon {
+    font-size: 20px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.toast-message {
+    flex: 1;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.toast-close {
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+
+.toast-close:hover {
+    opacity: 1;
+}
+
+.toast-success {
+    border-color: #00ff00;
+    background-color: rgba(0, 255, 0, 0.1);
+}
+
+.toast-success .toast-icon {
+    color: #00ff00;
+}
+
+.toast-error {
+    border-color: #ff0000;
+    background-color: rgba(255, 0, 0, 0.1);
+}
+
+.toast-error .toast-icon {
+    color: #ff0000;
+}
+
+.toast-warning {
+    border-color: #ffaa00;
+    background-color: rgba(255, 170, 0, 0.1);
+}
+
+.toast-warning .toast-icon {
+    color: #ffaa00;
+}
+
+.toast-info {
+    border-color: #00aaff;
+    background-color: rgba(0, 170, 255, 0.1);
+}
+
+.toast-info .toast-icon {
+    color: #00aaff;
+}
+
+/* Mobile toast adjustments */
+@media screen and (max-width: 768px) {
+    #toast-container {
+        top: 60px;
+        right: 10px;
+        left: 10px;
+        max-width: calc(100% - 20px);
+    }
+
+    .toast {
+        min-width: auto;
+        width: 100%;
+    }
+}
 #live-stream-button {
     margin-left: 10px;
     padding: 8px 12px;
@@ -1212,6 +1620,108 @@ input[type="time"] {
     100% {
         box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
     }
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spinner {
+    border: 3px solid rgba(0, 255, 0, 0.1);
+    border-top: 3px solid var(--primary-color);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 20px auto;
+}
+
+.spinner-small {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+}
+
+/* Skeleton loader animation */
+@keyframes skeleton-loading {
+    0% {
+        background-position: -200px 0;
+    }
+    100% {
+        background-position: calc(200px + 100%) 0;
+    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg, rgba(0, 255, 0, 0.1) 25%, rgba(0, 255, 0, 0.2) 50%, rgba(0, 255, 0, 0.1) 75%);
+    background-size: 200px 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-text {
+    height: 16px;
+    margin: 8px 0;
+}
+
+.skeleton-title {
+    height: 24px;
+    width: 60%;
+    margin-bottom: 12px;
+}
+
+.skeleton-button {
+    height: 36px;
+    width: 100px;
+    margin: 8px 0;
+}
+
+/* Marker animation */
+@keyframes marker-bounce {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.leaflet-marker-icon.new-marker {
+    animation: marker-bounce 0.6s ease-out;
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Slide in from right */
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.slide-in-right {
+    animation: slideInRight 0.3s ease-out;
 }
 
 /* Mobile responsiveness for live stream button */

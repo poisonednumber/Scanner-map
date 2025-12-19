@@ -2,7 +2,7 @@
 # Target size: <2GB (down from ~14GB)
 
 # Stage 1: Python build environment (Debian slim for better package compatibility)
-FROM python:3.11-slim as python-build
+FROM python:3.11-slim AS python-build
 
 # Build argument for transcription mode
 ARG TRANSCRIPTION_MODE=local
@@ -64,7 +64,7 @@ RUN if [ "$TRANSCRIPTION_MODE" = "local" ]; then \
     fi
 
 # Stage 2: Node.js build environment (Debian slim for compatibility)
-FROM node:18-slim as node-build
+FROM node:18-slim AS node-build
 
 WORKDIR /build
 

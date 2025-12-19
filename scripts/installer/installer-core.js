@@ -4,6 +4,10 @@
  * 
  * Auto-configures all service URLs and ports based on installation type.
  * No manual port/URL configuration required.
+ * 
+ * Note: Many configuration options (location, GPU, dependencies, auto-start, etc.)
+ * have been moved to the web UI for easier management after installation.
+ * This installer focuses on initial setup only.
  */
 
 const inquirer = require('inquirer');
@@ -19,7 +23,6 @@ const WhisperDownloader = require('./whisper-downloader');
 const AutoStart = require('./auto-start');
 const UpdateChecker = require('./update-checker');
 const PathSelector = require('./path-selector');
-const InstallerLogger = require('./installer-logger');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -72,7 +75,6 @@ class InstallerCore {
     this.whisperDownloader = new WhisperDownloader(projectRoot);
     this.autoStart = new AutoStart(projectRoot);
     this.updateChecker = new UpdateChecker(projectRoot);
-    this.logger = new InstallerLogger(projectRoot);
   }
 
   /**
@@ -85,7 +87,6 @@ class InstallerCore {
     this.whisperDownloader = new WhisperDownloader(newRoot);
     this.autoStart = new AutoStart(newRoot);
     this.updateChecker = new UpdateChecker(newRoot);
-    this.logger = new InstallerLogger(newRoot);
   }
 
   /**
@@ -109,7 +110,6 @@ class InstallerCore {
    */
   printStep(step, total, description) {
     console.log(chalk.cyan(`[${step}/${total}]`) + ' ' + chalk.white(description));
-    this.logger.logStep(step, total, description);
   }
 
   /**
@@ -158,21 +158,10 @@ class InstallerCore {
    * Main installation flow
    */
   async run() {
-    // Initialize logging
-    this.logger.log('info', 'Installer started', {
-      projectRoot: this.projectRoot,
-      nodeVersion: process.version,
-      platform: process.platform
-    });
-
-    // Check for installer updates first (non-blocking, don't await)
-    this.checkInstallerUpdates().catch(() => {
-      // Silently fail - don't block installer
-    });
-
     this.printHeader('Scanner Map Setup');
-    console.log(chalk.gray('Welcome! This installer will guide you through setting up Scanner Map.'));
-    console.log(chalk.gray('All service URLs and ports are auto-configured for you.\n'));
+    console.log(chalk.gray('Welcome! This installer will guide you through initial setup.'));
+    console.log(chalk.gray('Service URLs and ports are auto-configured.'));
+    console.log(chalk.blue('💡 After installation, use the web UI to configure location, GPU, dependencies, and more.\n'));
 
     if (!this.isInteractive()) {
       console.log(chalk.red('\n❌ Error: This installer requires an interactive terminal.'));
@@ -181,7 +170,7 @@ class InstallerCore {
     }
 
     // Step 1: Choose installation location
-    this.printStep(1, 9, 'Choose installation location');
+    this.printStep(1, 6, 'Choose installation location');
     const locationResult = await this.configureInstallLocation();
     if (!locationResult.success) {
       console.log(chalk.red(`\n❌ ${locationResult.error}\n`));
@@ -198,7 +187,7 @@ class InstallerCore {
     console.log('');
 
     // Step 2: Choose installation mode
-    this.printStep(2, 10, 'Choose installation mode');
+    this.printStep(2, 6, 'Choose installation mode');
     const { installMode } = await inquirer.prompt([
       {
         type: 'list',
@@ -222,8 +211,11 @@ class InstallerCore {
     const isAdvancedMode = installMode === 'advanced';
     console.log(chalk.green(`✓ ${isAdvancedMode ? 'Advanced' : 'Quick'} mode selected\n`));
 
+    // Calculate total steps based on mode (reduced from 9-11 to 5-6)
+    const totalSteps = isAdvancedMode ? 6 : 5;
+
     // Step 3: Choose installation type
-    this.printStep(3, isAdvancedMode ? 11 : 9, 'Choose installation method');
+    this.printStep(3, totalSteps, 'Choose installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
@@ -246,54 +238,35 @@ class InstallerCore {
     ]);
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
-    // Calculate total steps based on installation type and mode
-    const totalSteps = isAdvancedMode 
-      ? (installationType === 'docker' ? 11 : 10)
-      : (installationType === 'docker' ? 9 : 8);
     let currentStep = 4;
 
-    // Step 3: Check prerequisites and install missing dependencies
+    // Step 4: Check prerequisites (warn only - installation via web UI)
     this.printStep(currentStep++, totalSteps, 'Checking system requirements');
     const prereqResult = await this.checkPrerequisites(installationType);
     if (!prereqResult.success) {
-      process.exit(1);
+      // Don't exit - just warn, dependencies can be installed via web UI
     }
-    console.log(chalk.green('✓ All prerequisites met\n'));
+    console.log(chalk.green('✓ Prerequisites checked\n'));
+    console.log(chalk.gray('💡 Missing dependencies can be installed via the web UI after installation.\n'));
 
-    // Step 4: Location setup (for geocoding)
-    this.printStep(currentStep++, totalSteps, 'Configure your location');
-    const locationConfig = await this.configureLocation();
-    console.log('');
+    // Step 5: Skip transcription and AI configuration (configured via web UI)
+    // Transcription and AI services are configured via the web UI after installation
+    // Use safe defaults that can be changed later
+    const serviceConfig = {
+      transcriptionMode: 'local', // Default, can be changed in web UI
+      transcriptionDevice: 'cpu', // Default, can be changed in web UI
+      whisperModel: 'small', // Default, can be changed in web UI
+      aiProvider: 'openai' // Default, can be changed in web UI (requires API key via web UI)
+    };
+    console.log(chalk.gray('💡 Transcription and AI services will be configured via the web UI after installation.\n'));
 
-    // Step 5: Choose services and transcription
-    this.printStep(currentStep++, totalSteps, 'Configure transcription and AI');
-    const serviceConfig = await this.configureServices(installationType);
-    console.log('');
-
-    // Step 6: GPU acceleration (Docker only)
-    let gpuConfig = { enableGPU: false };
-    if (installationType === 'docker') {
-      this.printStep(currentStep++, totalSteps, 'GPU acceleration (optional)');
-      gpuConfig = await this.configureGPU(serviceConfig);
-      console.log('');
-    }
-
-    // Step 7: Optional dependencies (based on selected services)
-    this.printStep(currentStep++, totalSteps, 'Optional dependencies');
-    const optionalDeps = await this.configureOptionalDependencies(installationType, serviceConfig);
-    console.log('');
-
-    // Step 8: Optional integrations
+    // Step 6: Optional integrations (Discord, radio software)
     this.printStep(currentStep++, totalSteps, 'Optional integrations');
     const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 9: Post-installation options
-    this.printStep(currentStep++, totalSteps, 'Post-installation options');
-    const postInstallConfig = await this.configurePostInstall(installationType, {});
-    console.log('');
-
-    // Step 10: Advanced configuration (only in advanced mode)
+    // Step 7: Advanced configuration (only in advanced mode)
+    // Note: Location, GPU, and other settings are configured via web UI
     let advancedConfig = {};
     if (isAdvancedMode) {
       this.printStep(currentStep++, totalSteps, 'Advanced configuration');
@@ -301,7 +274,7 @@ class InstallerCore {
       console.log('');
     }
 
-    // Step 11: Review and install
+    // Final step: Review and install
     this.printStep(currentStep++, totalSteps, 'Review and install');
     
     // Build final configuration with auto-configured URLs
@@ -316,30 +289,25 @@ class InstallerCore {
       publicDomain: advancedConfig.publicDomain || this.detectPublicDomain(),
       timezone: advancedConfig.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
       
-      // Location
-      ...locationConfig,
-      
-      // Transcription (auto-configured URLs)
-      transcriptionMode: serviceConfig.transcriptionMode === 'icad-remote' ? 'icad' : serviceConfig.transcriptionMode,
+      // Transcription (defaults - configured via web UI)
+      transcriptionMode: serviceConfig.transcriptionMode || 'local',
       transcriptionDevice: serviceConfig.transcriptionDevice || 'cpu',
       whisperModel: serviceConfig.whisperModel || DEFAULTS.WHISPER_MODEL,
-      fasterWhisperServerUrl: serviceConfig.transcriptionMode === 'remote' 
-        ? (serviceConfig.remoteUrl || `http://localhost:${DEFAULTS.WHISPER_SERVER_PORT}`)
-        : undefined,
+      fasterWhisperServerUrl: undefined, // Configured via web UI
       
-      // iCAD (auto-configured or remote)
-      enableICAD: serviceConfig.transcriptionMode === 'icad' && serviceConfig.transcriptionMode !== 'icad-remote',
-      icadUrl: serviceConfig.icadUrl || (serviceConfig.transcriptionMode === 'icad-remote' ? serviceConfig.remoteICADUrl : (serviceConfig.transcriptionMode === 'icad' ? urls.icad : undefined)),
+      // iCAD (not enabled by default - configure via web UI)
+      enableICAD: false, // User enables via web UI if needed
+      icadUrl: installationType === 'docker' ? urls.icad : undefined,
       icadProfile: DEFAULTS.ICAD_PROFILE,
-      icadApiKey: this.generateApiKey(),
+      icadApiKey: this.generateApiKey(), // Generated for when user enables iCAD via web UI
       
-      // AI Provider (auto-configured URLs)
-      aiProvider: serviceConfig.aiProvider === 'ollama-remote' ? 'ollama' : serviceConfig.aiProvider,
-      openaiApiKey: serviceConfig.openaiApiKey || '',
-      openaiModel: serviceConfig.openaiModel || DEFAULTS.OPENAI_MODEL,
-      ollamaUrl: serviceConfig.ollamaUrl || (serviceConfig.aiProvider === 'ollama-remote' && serviceConfig.remoteOllamaUrl ? serviceConfig.remoteOllamaUrl : (serviceConfig.aiProvider === 'ollama' ? urls.ollama : undefined)),
-      ollamaModel: serviceConfig.ollamaModel || DEFAULTS.OLLAMA_MODEL,
-      enableOllama: serviceConfig.aiProvider === 'ollama' && serviceConfig.aiProvider !== 'ollama-remote',
+      // AI Provider (defaults - API keys configured via web UI)
+      aiProvider: serviceConfig.aiProvider || 'openai', // Default to OpenAI, user configures API key via web UI
+      openaiApiKey: undefined, // User configures via web UI
+      openaiModel: DEFAULTS.OPENAI_MODEL,
+      ollamaUrl: installationType === 'docker' ? urls.ollama : undefined,
+      ollamaModel: DEFAULTS.OLLAMA_MODEL,
+      enableOllama: false, // User enables via web UI if needed
       
       // Integrations
       enableDiscord: integrationConfig.enableDiscord,
@@ -351,13 +319,14 @@ class InstallerCore {
       enableRdioScanner: integrationConfig.enableRdioScanner || false,
       enableOP25: integrationConfig.enableOP25 || false,
       
-      // GPU acceleration (Docker only)
-      enableGPU: gpuConfig.enableGPU,
+      // GPU acceleration (Docker only) - configured via web UI after installation
+      enableGPU: false,
       
       // Auto-generated API key for TrunkRecorder/SDRTrunk
       trunkRecorderApiKey: this.generateApiKey(),
       
       // Geocoding (auto-configured or manual in advanced mode)
+      // Note: Location configuration is done via web UI after installation
       geocodingProvider: advancedConfig.geocodingProvider || 'nominatim',
       googleMapsApiKey: advancedConfig.googleMapsApiKey || '',
       locationiqApiKey: advancedConfig.locationiqApiKey || '',
@@ -388,16 +357,13 @@ class InstallerCore {
       openaiTranscriptionModel: advancedConfig.openaiTranscriptionModel || 'whisper-1',
       openaiTranscriptionTemperature: advancedConfig.openaiTranscriptionTemperature || 0,
       
-      // Post-installation options
-      openWebUI: postInstallConfig.openWebUI,
-      enableAutoStart: postInstallConfig.enableAutoStart,
-      enableAutoUpdate: postInstallConfig.enableAutoUpdate
+      // Post-installation options (always open web UI, auto-start/auto-update configured via web UI)
+      openWebUI: true,
+      enableAutoStart: false,
+      enableAutoUpdate: false
     };
 
     await this.showSummary(config);
-    
-    // Log configuration (sanitized)
-    this.logger.logConfig(config);
     
     const { confirm } = await inquirer.prompt([
       {
@@ -437,7 +403,6 @@ class InstallerCore {
 
     if (!result.success) {
       console.log(chalk.red(`\n❌ Setup failed: ${result.error}`));
-      this.logger.logError(new Error(result.error), 'Installation');
       
       // If npm install failed due to PATH issue, offer to restart
       if (result.needsRestart || (result.details && result.details.includes('restart'))) {
@@ -534,23 +499,12 @@ class InstallerCore {
       process.exit(1);
     }
 
-    // Log installation result
-    this.logger.logInstallationResult(result);
-    
     // Show success
     await this.showSuccess(config, installationType, result);
-    
-    // Finalize log
-    const logPath = this.logger.finalize();
-    if (logPath) {
-      // Show relative path for better readability
-      const relativePath = path.relative(this.projectRoot, logPath);
-      console.log(chalk.gray(`\n📝 Installer log saved to: ${relativePath}`));
-    }
   }
 
   /**
-   * Check prerequisites and install missing dependencies
+   * Check prerequisites (warn only, no installation)
    */
   async checkPrerequisites(installationType) {
     process.stdout.write(chalk.gray('   Verifying prerequisites...'));
@@ -565,130 +519,13 @@ class InstallerCore {
     process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
     if (!prerequisites.success) {
-      console.log(chalk.yellow('⚠ Some prerequisites are missing.\n'));
-      
-      const installResult = await this.dependencyInstaller.checkAndInstall(installationType);
-      
-      if (!installResult.success) {
-        console.log(chalk.red('\n❌ Could not install missing dependencies:'));
-        console.log(chalk.red(`   ${installResult.error}`));
-        console.log(chalk.yellow('\n💡 Install the missing dependencies manually and run this installer again.'));
-        return { success: false };
+      console.log(chalk.yellow('⚠ Some prerequisites are missing:\n'));
+      prerequisites.errors.forEach(err => console.log(chalk.yellow(`   • ${err}`)));
+      if (prerequisites.warnings && prerequisites.warnings.length > 0) {
+        prerequisites.warnings.forEach(warn => console.log(chalk.yellow(`   • ${warn}`)));
       }
-
-      // Re-check
-      process.stdout.write(chalk.gray('   Re-checking prerequisites...'));
-      if (installationType === 'docker') {
-        prerequisites = await this.dockerInstaller.checkPrerequisites();
-      } else {
-        prerequisites = await this.localInstaller.checkPrerequisites();
-      }
-      process.stdout.write('\r' + ' '.repeat(50) + '\r');
-
-      if (!prerequisites.success) {
-        console.log(chalk.red('❌ Prerequisites still missing:\n'));
-        prerequisites.errors.forEach(err => console.log(chalk.red(`   • ${err}`)));
-        console.log(chalk.yellow('\n💡 You may need to restart your terminal after installing dependencies.'));
-        
-        // Check if Node.js/npm was just installed
-        const nodeJustInstalled = installResult.installed && installResult.installed.some(item => 
-          item.includes('Node.js') || item.includes('npm')
-        );
-        
-        if (nodeJustInstalled) {
-          console.log(chalk.blue.bold('\n🔄 Node.js/npm was just installed.'));
-          console.log(chalk.blue('   The installer needs to be restarted for the new PATH to take effect.\n'));
-          
-          const { restart } = await inquirer.prompt([{
-            type: 'confirm',
-            name: 'restart',
-            message: chalk.bold('Would you like to restart the installer now?'),
-            default: true
-          }]);
-          
-          if (restart) {
-            // Ask if user wants to update installer from repo before restarting
-            const { updateInstaller } = await inquirer.prompt([{
-              type: 'confirm',
-              name: 'updateInstaller',
-              message: chalk.bold('Update installer from repository before restarting?'),
-              default: true
-            }]);
-            
-            if (updateInstaller) {
-              console.log(chalk.blue('\n📥 Updating installer from repository...\n'));
-              try {
-                const { execSync } = require('child_process');
-                // Check if we're in a git repository
-                try {
-                  execSync('git rev-parse --git-dir', { 
-                    cwd: this.projectRoot, 
-                    stdio: 'ignore' 
-                  });
-                  
-                  // Pull latest changes
-                  console.log(chalk.gray('   Pulling latest changes...'));
-                  execSync('git pull', {
-                    cwd: this.projectRoot,
-                    stdio: 'inherit'
-                  });
-                  console.log(chalk.green('   ✓ Installer updated successfully\n'));
-                } catch (gitErr) {
-                  console.log(chalk.yellow('   ⚠ Not a git repository or git pull failed'));
-                  console.log(chalk.gray('   Continuing with restart...\n'));
-                }
-              } catch (err) {
-                console.log(chalk.yellow(`   ⚠ Update failed: ${err.message}`));
-                console.log(chalk.gray('   Continuing with restart...\n'));
-              }
-            }
-            
-            console.log(chalk.blue('🔄 Restarting installer...\n'));
-            console.log(chalk.gray('   Please wait a moment for Node.js to be available in PATH...\n'));
-            
-            // Wait a bit for PATH to update (especially on Windows)
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            // Try to restart the installer
-            const path = require('path');
-            const { spawn } = require('child_process');
-            
-            // On Windows, try to use cmd.exe to get fresh PATH
-            if (process.platform === 'win32') {
-              const installerScript = path.join(__dirname, 'installer-core.js');
-              const child = spawn('cmd.exe', ['/c', 'node', installerScript], {
-                cwd: this.projectRoot,
-                stdio: 'inherit',
-                detached: true,
-                shell: true
-              });
-              child.unref();
-            } else {
-              // On Unix-like systems, try to refresh PATH
-              const installerScript = path.join(__dirname, 'installer-core.js');
-              const child = spawn('bash', ['-c', `source ~/.bashrc 2>/dev/null || true; node "${installerScript}"`], {
-                cwd: this.projectRoot,
-                stdio: 'inherit',
-                detached: true
-              });
-              child.unref();
-            }
-            
-            process.exit(0);
-          } else {
-            console.log(chalk.yellow('\n⚠️  Please restart the installer manually after Node.js is available in your PATH.'));
-            console.log(chalk.cyan('   Run the installer again:'));
-            if (process.platform === 'win32') {
-              console.log(chalk.cyan('      install.bat'));
-            } else {
-              console.log(chalk.cyan('      bash install.sh'));
-            }
-            return { success: false };
-          }
-        }
-        
-        return { success: false };
-      }
+      console.log(chalk.gray('\n💡 You can install missing dependencies via the web UI after installation.'));
+      console.log(chalk.gray('   The installer will continue, but some features may not work until dependencies are installed.\n'));
     }
 
     return { success: true };
@@ -773,6 +610,7 @@ class InstallerCore {
 
   /**
    * Configure location for geocoding
+   * @deprecated This method is kept for web UI use. Location configuration is now done via web UI.
    */
   async configureLocation() {
     console.log(chalk.gray('   Your location helps accurately geocode addresses from radio calls.\n'));
@@ -1200,6 +1038,7 @@ class InstallerCore {
 
   /**
    * Configure GPU acceleration for Docker
+   * @deprecated This method is kept for web UI use. GPU configuration is now done via web UI.
    */
   async configureGPU(serviceConfig) {
     console.log(chalk.gray('   GPU acceleration speeds up AI models (Ollama) and transcription.\n'));
@@ -1218,7 +1057,7 @@ class InstallerCore {
     console.log(chalk.green(`   ✓ NVIDIA GPU detected: ${gpuInfo.name}\n`));
 
     // Check if GPU is useful for selected services
-    const needsGPU = serviceConfig.aiProvider === 'ollama';
+    const needsGPU = false; // GPU configuration moved to web UI
     if (!needsGPU) {
       console.log(chalk.gray('   GPU acceleration is only useful when using Ollama for AI.\n'));
       const { enable } = await inquirer.prompt([
@@ -1311,6 +1150,7 @@ class InstallerCore {
 
   /**
    * Configure optional dependencies based on selected services
+   * @deprecated This method is kept for web UI use. Optional dependencies are now installed via web UI.
    */
   async configureOptionalDependencies(installationType, serviceConfig) {
     console.log(chalk.gray('   Install optional dependencies to improve compatibility.\n'));
@@ -1660,6 +1500,7 @@ class InstallerCore {
 
   /**
    * Configure post-installation options
+   * @deprecated This method is kept for web UI use. Post-installation options are now configured via web UI.
    */
   async configurePostInstall(installationType, config) {
     console.log(chalk.gray('   Configure what happens after installation.\n'));
@@ -1704,9 +1545,11 @@ class InstallerCore {
 
   /**
    * Configure advanced options (ports, authentication, storage, etc.)
+   * Note: Location, GPU, and dependency installation are handled via web UI
    */
   async configureAdvanced(installationType, serviceConfig) {
-    console.log(chalk.gray('   Configure advanced settings manually.\n'));
+    console.log(chalk.gray('   Configure advanced network and system settings.\n'));
+    console.log(chalk.blue('   💡 Note: Location, GPU, and dependencies are configured via web UI.\n'));
 
     const advanced = {};
 
@@ -1994,42 +1837,16 @@ class InstallerCore {
     console.log(chalk.white(`     API: ${formatValue(`http://localhost:${config.botPort}`)}`));
     console.log('');
 
-    // Location
-    console.log(chalk.white.bold('   📍 Location'));
-    console.log(chalk.white(`     Area: ${formatValue(`${config.geocodingCity}, ${config.geocodingState}`)}`));
-    console.log('');
-
-    // Transcription
+    // Transcription (configured via web UI)
     console.log(chalk.white.bold('   🎤 Transcription'));
-    console.log(chalk.white(`     Mode: ${formatValue(config.transcriptionMode)}`));
-    if (config.transcriptionMode === 'local') {
-      console.log(chalk.white(`     Device: ${formatValue(config.transcriptionDevice)}`));
-      console.log(chalk.white(`     Model: ${formatValue(config.whisperModel)}`));
-    } else if (config.transcriptionMode === 'icad') {
-      const icadDisplayUrl = config.icadUrl || (config.enableICAD ? 'http://icad-transcribe:9912' : 'Not configured');
-      // Determine if it's remote: has URL but doesn't contain service name or localhost, and enableICAD is false
-      const isRemoteICAD = config.icadUrl && !config.icadUrl.includes('icad-transcribe:') && !config.icadUrl.includes('localhost:9912') && !config.enableICAD;
-      const icadType = isRemoteICAD ? ' (remote)' : (config.enableICAD ? ' (auto)' : '');
-      console.log(chalk.white(`     URL: ${formatValue(icadDisplayUrl)}${icadType}`));
-    } else if (config.transcriptionMode === 'remote') {
-      console.log(chalk.white(`     URL: ${formatValue(config.fasterWhisperServerUrl)} (remote)`));
-    }
+    console.log(chalk.white(`     Mode: ${formatValue(config.transcriptionMode)} (default, configure via web UI)`));
+    console.log(chalk.gray(`     💡 Configure transcription service via web UI after installation`));
     console.log('');
 
-    // AI
+    // AI (configured via web UI)
     console.log(chalk.white.bold('   🤖 AI Provider'));
-    console.log(chalk.white(`     Provider: ${formatValue(config.aiProvider)}`));
-    if (config.aiProvider === 'openai') {
-      console.log(chalk.white(`     Model: ${formatValue(config.openaiModel)}`));
-      console.log(chalk.white(`     API Key: ${formatValue(config.openaiApiKey, true)}`));
-    } else {
-      const ollamaDisplayUrl = config.ollamaUrl || (config.enableOllama ? 'http://ollama:11434' : 'Not configured');
-      // Determine if it's remote: has URL but doesn't contain service name or localhost, and enableOllama is false
-      const isRemoteOllama = config.ollamaUrl && !config.ollamaUrl.includes('ollama:') && !config.ollamaUrl.includes('localhost:11434') && !config.enableOllama;
-      const ollamaType = isRemoteOllama ? ' (remote)' : (config.enableOllama ? ' (auto)' : '');
-      console.log(chalk.white(`     URL: ${formatValue(ollamaDisplayUrl)}${ollamaType}`));
-      console.log(chalk.white(`     Model: ${formatValue(config.ollamaModel)}`));
-    }
+    console.log(chalk.white(`     Provider: ${formatValue(config.aiProvider)} (default, configure via web UI)`));
+    console.log(chalk.gray(`     💡 Configure AI provider and API keys via web UI after installation`));
     console.log('');
 
     // GPU (Docker only)
@@ -2095,6 +1912,15 @@ class InstallerCore {
    */
   async showSuccess(config, installationType, result) {
     console.log(chalk.green.bold('\n✅ Setup completed successfully!\n'));
+    console.log(chalk.blue.bold('📱 Next Steps: Configure via Web UI\n'));
+    console.log(chalk.white('   The web UI provides easy configuration for:'));
+    console.log(chalk.gray('   • Location settings (geocoding city/state/country)'));
+    console.log(chalk.gray('   • GPU acceleration (if available)'));
+    console.log(chalk.gray('   • Installing missing dependencies'));
+    console.log(chalk.gray('   • Auto-start and auto-update settings'));
+    console.log(chalk.gray('   • Radio configuration (frequencies, talkgroups)'));
+    console.log(chalk.gray('   • System status and monitoring'));
+    console.log('');
 
     this.printHeader('Quick Start');
 
@@ -2118,16 +1944,8 @@ class InstallerCore {
     console.log(chalk.white('   📍 Scanner Map (Main Interface):'));
     console.log(chalk.cyan(`      http://localhost:${config.webserverPort}\n`));
 
-    if (config.transcriptionMode === 'icad' || config.enableICAD) {
-      console.log(chalk.white('   🎤 iCAD Transcribe (Transcription Manager):'));
-      console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}`));
-      console.log(chalk.gray('      Default login: admin / changeme123\n'));
-    }
-
-    if (config.aiProvider === 'ollama' || config.enableOllama) {
-      console.log(chalk.white('   🤖 Ollama (Local AI - API only):'));
-      console.log(chalk.cyan(`      http://localhost:${DEFAULTS.OLLAMA_PORT}\n`));
-    }
+    console.log(chalk.gray('   💡 Optional services (iCAD, Ollama) are configured via web UI'));
+    console.log(chalk.gray(`      After configuration, access them via the web UI or directly:\n`));
 
     // API endpoints
     this.printHeader('API Endpoints');
@@ -2193,21 +2011,22 @@ class InstallerCore {
     }
     console.log(chalk.gray('   └─────────────────────────────────────────────────┘\n'));
 
-    // Ask to start services (Docker)
+    // Ask to start services (Docker) - default to false since web UI can handle this
     if (installationType === 'docker') {
       const { startNow } = await inquirer.prompt([
         {
           type: 'confirm',
           name: 'startNow',
-          message: 'Start services now?',
-          default: true
+          message: 'Start services now? (You can also start via web UI or manually)',
+          default: false
         }
       ]);
 
       if (startNow) {
         console.log(chalk.blue('\n🚀 Starting services...\n'));
         console.log(chalk.gray('   Note: scanner-map image will be built if needed (contains app code)'));
-        console.log(chalk.gray('   Optional services (Ollama, iCAD) use pre-built images\n'));
+        console.log(chalk.gray('   Optional services (Ollama, iCAD) use pre-built images'));
+        console.log(chalk.gray('   This may take a few minutes on first run...\n'));
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
           console.log(chalk.green('✓ Services started!\n'));
@@ -2239,9 +2058,11 @@ class InstallerCore {
             await this.openWebUI(config.webserverPort);
           }
           
+          console.log(chalk.green('\n✓ Installation complete!\n'));
           console.log(chalk.cyan.bold('🌐 Open Scanner Map: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
+          console.log(chalk.gray('   Use the "Quick Start" menu in the web UI to configure location, GPU, and more.\n'));
           if (config.transcriptionMode === 'icad' || config.enableICAD) {
-            console.log(chalk.cyan.bold('🎤 Open iCAD:        ') + chalk.underline(`http://localhost:${DEFAULTS.ICAD_PORT}`));
+            console.log(chalk.cyan.bold('🎤 Open iCAD:        ') + chalk.underline(`http://localhost:${DEFAULTS.ICAD_PORT}\n`));
           }
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
@@ -2271,10 +2092,11 @@ class InstallerCore {
           console.log('');
         }
       } else {
-        // Still show next steps if not starting now
+        // Still show next steps if not starting now - simplified since web UI handles most config
         console.log(chalk.blue('\n📋 Next Steps:\n'));
         console.log(chalk.white('   1. Start services:'));
-        console.log(chalk.cyan('      docker-compose up -d\n'));
+        console.log(chalk.cyan('      docker-compose up -d'));
+        console.log(chalk.gray('      (Or use the web UI "Quick Start" menu after starting)\n'));
         
         if (config.enableTrunkRecorder || config.radioSoftware === 'trunk-recorder') {
           console.log(chalk.white('   2. Pull TrunkRecorder image (if not already pulled):'));
@@ -2306,48 +2128,18 @@ class InstallerCore {
         }
       }
     } else {
-      // Local installation - open web UI if requested
-      if (config.openWebUI) {
-        await this.openWebUI(config.webserverPort);
-      }
+      // Local installation - always open web UI
+      await this.openWebUI(config.webserverPort);
     }
 
-    // Configure auto-start
-    if (config.enableAutoStart) {
-      console.log(chalk.blue('\n⚙️  Configuring auto-start...\n'));
-      const autoStartResult = await this.autoStart.configure(installationType, config);
-      if (autoStartResult.success) {
-        if (autoStartResult.requiresSudo) {
-          console.log(chalk.yellow('   ⚠️  Auto-start requires sudo. Run these commands:'));
-          autoStartResult.commands.forEach(cmd => console.log(chalk.cyan(`     ${cmd}`)));
-          console.log('');
-        } else {
-          console.log(chalk.green('   ✓ Auto-start configured!\n'));
-        }
-      } else {
-        console.log(chalk.yellow(`   ⚠ Could not configure auto-start: ${autoStartResult.error}\n`));
-      }
-    }
-
-    // Configure auto-update check
-    if (config.enableAutoUpdate) {
-      console.log(chalk.blue('⚙️  Configuring auto-update check...\n'));
-      const updateConfigResult = await this.updateChecker.configureAutoUpdate(true);
-      if (updateConfigResult.success) {
-        console.log(chalk.green('   ✓ Auto-update check enabled!\n'));
-      } else {
-        console.log(chalk.yellow(`   ⚠ Could not configure auto-update: ${updateConfigResult.error}\n`));
-      }
-    }
-
-    // Final verification for Docker installations (even if services weren't started)
+    // Final verification for Docker installations (optional, default to false for faster flow)
     if (installationType === 'docker') {
       const { verifyNow } = await inquirer.prompt([
         {
           type: 'confirm',
           name: 'verifyNow',
-          message: 'Run installation verification now?',
-          default: true
+          message: 'Run installation verification now? (Optional - can be done later)',
+          default: false
         }
       ]);
 
@@ -2356,23 +2148,10 @@ class InstallerCore {
       }
     }
 
-    console.log(chalk.green.bold('\n✨ Happy scanning! ✨\n'));
+    console.log(chalk.green.bold('\n✨ Installation complete! ✨\n'));
+    console.log(chalk.blue('💡 Tip: Use the web UI "Quick Start" menu to configure location, GPU, and more.\n'));
   }
 
-  /**
-   * Check for installer updates (non-blocking, runs in background)
-   */
-  async checkInstallerUpdates() {
-    try {
-      const updateResult = await this.updateChecker.checkForUpdates();
-      if (updateResult.updateAvailable) {
-        console.log(chalk.yellow(`\n⚠️  Installer update available: v${updateResult.currentVersion} → v${updateResult.latestVersion}`));
-        console.log(chalk.gray(`   Download: ${updateResult.downloadUrl}\n`));
-      }
-    } catch (err) {
-      // Silently fail - don't block installer if update check fails
-    }
-  }
 }
 
 // Run if called directly
@@ -2380,21 +2159,11 @@ if (require.main === module) {
   const projectRoot = process.cwd();
   const installer = new InstallerCore(projectRoot);
   installer.run().catch(err => {
-    // Log error before exiting
-    installer.logger.logError(err, 'Installer run');
-    const logPath = installer.logger.finalize();
-    
     if (err.code === 'ERR_USE_AFTER_CLOSE' || err.message?.includes('readline')) {
       console.error(chalk.red('\n❌ This installer requires an interactive terminal.'));
     } else {
       console.error(chalk.red('\n❌ Setup error:'), err.message || err);
     }
-    
-    if (logPath) {
-      const relativePath = path.relative(projectRoot, logPath);
-      console.error(chalk.gray(`\n📝 Error details logged to: ${relativePath}`));
-    }
-    
     process.exit(1);
   });
 }

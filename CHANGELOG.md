@@ -2,6 +2,259 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.1.0] - 2024-12-19
+
+### Major Release: Quick Start Web UI & Complete Refactor
+
+This release represents a major overhaul, moving configuration from the command-line installer to a comprehensive web-based Quick Start interface, along with significant performance improvements, code modularization, and mobile optimization.
+
+### Added
+
+#### Quick Start Web UI - Core Features
+- **Quick Start Modal** - Centralized configuration hub accessible from Settings menu
+- **Location Configuration**
+  - Interactive map with 50-mile radius visualization
+  - Browser geolocation API integration
+  - Location search with autocomplete suggestions
+  - Manual entry with city/state/country/counties
+  - Real-time map updates
+- **System Status Dashboard**
+  - Docker, Node.js, and Python installation status
+  - System information (OS, versions, architecture)
+  - One-click dependency installation with progress tracking
+  - Real-time installation logs
+- **Update Management**
+  - Check for updates from web UI
+  - Install updates with progress tracking
+  - Auto-update configuration toggle
+  - Version comparison display
+- **GPU Configuration**
+  - GPU detection and status display
+  - Enable/disable Docker GPU support
+  - NVIDIA Container Toolkit installation (Linux)
+  - GPU test functionality
+- **Auto-Start Configuration**
+  - Platform-specific auto-start setup (Windows/Linux/macOS)
+  - Enable/disable system service
+  - Installation instructions per platform
+
+#### Quick Start Web UI - Advanced Features
+- **Radio Configuration**
+  - Talkgroup management (add/edit/delete)
+  - Frequency management (add/edit/delete)
+  - Table-based display with search and filtering
+  - Form validation and error handling
+- **CSV Import System**
+  - RadioReference CSV import for talkgroups and frequencies
+  - Drag-and-drop file upload
+  - CSV preview with validation
+  - Merge/update options
+  - Import progress tracking
+  - Error reporting for invalid rows
+- **Radio Software Auto-Configuration**
+  - Automatic detection of TrunkRecorder, SDRTrunk, OP25, rdio-scanner
+  - TrunkRecorder config.json auto-generation from database
+  - Config preview before saving
+  - Support for Docker and local installations
+  - v2 format compatibility
+- **Natural Language Configuration (NLP)**
+  - AI-powered command parsing using configured provider (Ollama/OpenAI)
+  - Text and voice input support
+  - Command history and examples
+  - Intent extraction and parameter parsing
+  - Structured JSON response format
+  - Voice input using Web Speech API
+
+#### Web UI Performance & Modularization
+- **Modular Code Architecture**
+  - Extracted `public/map.js` - Map initialization and marker management
+  - Extracted `public/audio.js` - WaveSurfer and audio playback
+  - Extracted `public/modals.js` - Modal management
+  - Extracted `public/api.js` - Centralized API calls with caching
+  - Extracted `public/ui.js` - UI rendering and updates
+  - Extracted `public/utils.js` - Pure utility functions
+  - Extracted `public/memory.js` - Memory management and cleanup
+  - Extracted `public/errors.js` - Error handling
+  - Extracted `public/toast.js` - Toast notifications
+  - Extracted `public/gestures.js` - Touch gesture handling
+- **Performance Optimizations**
+  - Map marker clustering for better rendering
+  - Audio instance reuse and cleanup
+  - Audio playback queue system
+  - Request batching and API response caching
+  - Memory management with automatic cleanup
+  - Optimized map tile loading for slow networks
+- **Tone Detection Integration**
+  - API endpoint for two-tone pager detection
+  - Integration with audio playback
+  - Skip/cut tone options
+
+#### Web UI Polish & Mobile Optimization
+- **Smooth Transitions & Animations**
+  - CSS transitions for modals and buttons
+  - Loading animations and skeleton loaders
+  - Smooth marker animations on map
+- **Improved Loading States**
+  - Skeleton loaders for call lists
+  - Loading spinners for all async operations
+  - Progress indicators for long-running tasks
+- **Enhanced Error Messages**
+  - User-friendly error messages with actionable steps
+  - Consistent error styling
+  - Detailed error information for debugging
+- **Responsive Design**
+  - Media queries for mobile devices
+  - Responsive modals and layouts
+  - Touch-optimized controls (minimum 44x44px)
+  - Stack vertically on small screens
+- **Accessibility Improvements**
+  - ARIA labels on interactive elements
+  - Keyboard navigation (Tab/Enter/Escape)
+  - Focus management
+  - Screen reader support
+- **Toast Notification System**
+  - Success, error, and info notifications
+  - Auto-dismiss with manual dismissal option
+  - Non-intrusive positioning
+- **Progressive Web App (PWA)**
+  - Web App Manifest (`manifest.json`)
+  - Service Worker for offline support (`sw.js`)
+  - PWA install prompt
+  - Caching of static assets and map tiles
+  - Offline fallback handling
+- **Mobile-Optimized Features**
+  - Mobile-responsive layout overhaul
+  - Bottom sheet modals for mobile
+  - Mobile-friendly audio controls
+  - FAB (Floating Action Button) for AI commands
+  - Full-screen AI command interface on mobile
+  - Large voice input button (60x60px)
+  - Swipe gestures for navigation (left/right/up/down)
+  - Long press for context menus
+  - Touch feedback with ripple effects
+  - Haptic feedback support
+  - Optimized map for mobile (lower tile quality on slow networks)
+
+#### Installer Improvements
+- **Installer Restart Prompt**
+  - Added "Press Enter to restart" prompt after npm dependency installation
+  - Allows installer to restart cleanly after PATH updates
+  - Works on both Windows (`install.bat`) and Linux/macOS (`install.sh`)
+- **npm Dependency Overrides**
+  - Added overrides for `rimraf@^5.0.0` and `glob@^10.0.0` to reduce deprecation warnings
+  - Helps force newer versions of transitive dependencies
+
+### Changed
+
+#### Installer Streamlining
+- **Reduced Installer Steps** - From 9-11 steps down to 5-6 core steps
+- **Removed from Installer** (moved to web UI):
+  - Update checking
+  - Dependency installation (Docker, Node.js, Python)
+  - GPU configuration
+  - Location configuration
+  - Optional dependencies configuration
+  - Post-installation options
+- **Frictionless Installer Flow**
+  - "Start services now?" now defaults to `false` (was `true`)
+  - Installation verification now defaults to `false` (optional)
+  - Clearer guidance about using web UI for configuration
+  - Better progress feedback with real-time Docker output
+  - Prerequisites check now only warns (doesn't install)
+- **Simplified Configuration**
+  - Installer focuses on core setup only (installation method, path, services, integrations)
+  - Advanced configuration (network, storage, auth) remains in installer
+  - All runtime configuration moved to web UI
+
+#### API Endpoints (60+ new endpoints)
+- **Location API**: `/api/location/config`, `/api/location/suggestions`, `/api/location/detect`
+- **System API**: `/api/system/status`, `/api/system/info`, `/api/system/install-*`, `/api/system/install-status/:jobId`
+- **Updates API**: `/api/updates/check`, `/api/updates/install`, `/api/updates/config`
+- **GPU API**: `/api/system/gpu-status`, `/api/system/configure-gpu`, `/api/system/install-nvidia-toolkit`
+- **Auto-Start API**: `/api/system/autostart-status`, `/api/system/configure-autostart`
+- **Radio API**: `/api/radio/talkgroups`, `/api/radio/frequencies`, `/api/radio/import-csv`, `/api/radio/import-preview`, `/api/radio/detect-software`, `/api/radio/configure-trunkrecorder`
+- **AI API**: `/api/ai/command`, `/api/ai/command-examples`
+- **Audio API**: `/api/audio/detect-tones`
+
+#### Dependency Updates
+- `fs-extra`: `^11.2.0` → `^11.3.3`
+- `moment-timezone`: `^0.5.45` → `^0.6.0`
+- `@discordjs/opus`: `^0.9.0` → `^0.10.0`
+- `@discordjs/voice`: `^0.16.0` → `^0.18.0`
+- Node.js v24 support (updated engine constraints from `<24.0.0` to `<25.0.0`)
+
+#### Code Optimizations
+- Migrated `bot.js` and `webserver.js` to use `fs-extra` instead of native `fs`
+- Replaced `fs.existsSync` + `fs.mkdirSync` with `fs.ensureDirSync` (5 locations)
+- Replaced manual `JSON.parse(fs.readFileSync())` with `fs.readJSONSync` (5 locations)
+- Cached timezone formatter functions in logger configurations (bot.js, geocoding.js)
+- Parallel directory operations using `Promise.all` in service-config.js
+- Batched API requests with caching to reduce server load
+- Optimized map rendering with marker clustering
+- Audio instance reuse and cleanup
+
+#### Service Configuration
+- Enhanced `service-config.js` with radio software detection
+- Added `detectRadioSoftware()` method
+- Added `configureTrunkRecorderFromDb()` method for auto-configuration
+- Improved Docker compose command handling (`docker compose` vs `docker-compose`)
+
+### Fixed
+- **Installer Hanging Issue**
+  - Fixed Docker compose commands hanging silently during image builds
+  - Changed from `execSync` with hidden output to `spawn` with real-time output
+  - Users now see Docker build progress instead of apparent freezes
+- **Dependency Conflict**
+  - Fixed `opusscript` peer dependency conflict with `prism-media`
+  - Reverted `opusscript` to `^0.0.8` for compatibility (it's an optional dependency)
+- **npm Installer Warnings**
+  - Removed deprecated `--ignore-optional` flag from npm install commands
+  - Updated `@discordjs/voice` to `^0.18.0` (fixes deprecated encryption warning)
+  - Reduced npm deprecation warnings during installation
+- **Docker Compose Command Handling**
+  - Fixed detection of `docker compose` vs `docker-compose` commands
+  - Proper handling of both syntaxes across platforms
+
+### Enhanced
+- **Performance Improvements**
+  - More efficient directory creation using atomic `fs.ensureDirSync`
+  - Cleaner JSON file handling with `fs.readJSONSync`
+  - Cached timezone formatters reduce overhead on high-frequency logging
+  - Parallel directory operations for faster initialization
+  - Map marker clustering for better performance with many markers
+  - Audio playback queue prevents interruption
+  - API response caching reduces server load
+- **Code Quality**
+  - Modular architecture improves maintainability
+  - More consistent codebase using fs-extra patterns
+  - Better error handling throughout
+  - JSDoc comments added to utility functions
+  - Consistent code style across modules
+- **User Experience**
+  - All configuration now accessible from web UI
+  - Real-time feedback for all operations
+  - Better error messages with actionable steps
+  - Mobile-optimized interface
+  - PWA support for app-like experience
+  - Touch-optimized controls
+  - Swipe gestures for mobile navigation
+
+### Documentation
+- Added `OPTIMIZATION_OPPORTUNITIES.md` - Detailed optimization guide
+- Added `OPTIMIZATIONS_COMPLETED.md` - Summary of implemented optimizations
+- Updated `DEPENDENCY_WARNINGS.md` - Explanation of npm deprecation warnings
+
+### Technical Details
+- **Async Job Execution**: Implemented async job system for long-running operations (dependency installation) with progress tracking
+- **File Upload**: Enhanced multipart/form-data handling with Busboy for CSV imports
+- **CSV Parsing**: Robust CSV parser with validation and error reporting
+- **Map Integration**: Leaflet.js with marker clustering plugin
+- **Audio Playback**: WaveSurfer.js with instance management and queue system
+- **Service Worker**: Basic caching strategy for offline support
+- **Web Speech API**: Voice input integration for NLP commands
+
+---
+
 ## [3.0.11] - 2024-12-20
 
 ### Installer Parity and Verification

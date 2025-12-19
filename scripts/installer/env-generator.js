@@ -113,8 +113,10 @@ TRANSCRIPTION_MODE=${transcriptionMode}
 WHISPER_MODEL=${whisperModel}
 `;
     } else if (transcriptionMode === 'remote') {
-      envContent += `FASTER_WHISPER_SERVER_URL=${fasterWhisperServerUrl}
+      if (fasterWhisperServerUrl) {
+        envContent += `FASTER_WHISPER_SERVER_URL=${fasterWhisperServerUrl}
 `;
+      }
     } else if (transcriptionMode === 'icad') {
       envContent += `ICAD_URL=${finalICADUrl}
 ICAD_PROFILE=${icadProfile}
@@ -129,11 +131,13 @@ ICAD_API_KEY=${icadApiKey}
     envContent += `
 # --- AI Provider ---
 # Options: openai, ollama
+# Note: API keys are configured via the web UI
 AI_PROVIDER=${aiProvider}
 `;
 
     if (aiProvider === 'openai') {
-      envContent += `OPENAI_API_KEY=${openaiApiKey}
+      // OpenAI API key is configured via web UI, not in installer
+      envContent += `# OPENAI_API_KEY=  # Configure via web UI
 OPENAI_MODEL=${openaiModel}
 `;
     } else {

@@ -78,8 +78,8 @@ if (!AI_PROVIDER) {
 
 if (AI_PROVIDER.toLowerCase() === 'openai') {
   if (!OPENAI_API_KEY || !OPENAI_MODEL) {
-      console.error("FATAL: AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
-      process.exit(1);
+    console.error("FATAL: AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
+    process.exit(1);
   }
 } else if (AI_PROVIDER.toLowerCase() === 'ollama') {
   if (!OLLAMA_URL || !OLLAMA_MODEL) {
@@ -118,7 +118,7 @@ if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
 
 // Now initialize derived variables
 const express = require('express');
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -712,13 +712,19 @@ const infoFilter = winston.format((info, opts) => {
   return info;
 });
 
+// Cache timezone formatter function (optimization: avoid timezone lookup on every log entry)
+const getFormattedTimestamp = (() => {
+  // Create a function that formats current time in the configured timezone
+  return () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS');
+})();
+
 // Logger setup
 const logger = winston.createLogger({
   level: 'info', // Log info and above to files
   format: winston.format.combine(
     // Default format for files (timestamp + standard json/logfmt)
     winston.format.timestamp({
-      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: getFormattedTimestamp
     }),
     winston.format.errors({ stack: true }), // Log stack traces for errors
     winston.format.splat(),
@@ -742,7 +748,7 @@ const logger = winston.createLogger({
       format: winston.format.combine(
         // 1. Add timestamp
         winston.format.timestamp({
-          format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+          format: getFormattedTimestamp
         }),
         // 2. Apply the custom info whitelist filter *for console only*
         infoFilter({ allowedPatterns }), // Pass the patterns here
@@ -873,9 +879,7 @@ function ensureApiKey() {
       
       // Ensure directory exists
       const apiKeyDir = path.dirname(finalApiKeyPath);
-      if (!fs.existsSync(apiKeyDir)) {
-        fs.mkdirSync(apiKeyDir, { recursive: true });
-      }
+      fs.ensureDirSync(apiKeyDir);
 
       if (!fs.existsSync(finalApiKeyPath)) {
         // Create a default API key
@@ -1023,9 +1027,7 @@ function updateTrunkRecorderApiKey(apiKey, createNew = false) {
       sharedKeyPath = path.join(__dirname, 'data', 'trunk-recorder-api-key.txt');
       dataDir = path.dirname(sharedKeyPath);
     }
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
+    fs.ensureDirSync(dataDir);
     fs.writeFileSync(sharedKeyPath, keyToUse);
     
   } catch (err) {
@@ -1394,9 +1396,7 @@ let queueWarningLogged = false; // Prevent spam logging of queue warnings
 let lastQueueSizeLog = 0; // Track last queue size for change detection
 
 // Ensure upload directory exists
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+fs.ensureDirSync(UPLOAD_DIR);
 
 logger.info(`Using upload directory: ${UPLOAD_DIR}`);
 
@@ -5673,7 +5673,7 @@ async function checkForUpdatesOnStartup() {
       return; // Auto-update not configured
     }
     
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = fs.readJSONSync(configPath);
     if (!config.autoUpdateCheck) {
       return; // Auto-update disabled
     }

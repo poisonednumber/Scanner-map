@@ -2,7 +2,11 @@
 
 [← Back to README](../README.md)
 
-All settings are configured in the `.env` file. This document explains every option.
+Settings can be configured in two ways:
+1. **Web UI (Recommended)** - Use the Quick Start menu for most settings (see [Web UI Configuration Guide](WEB-UI-CONFIGURATION.md))
+2. **`.env` File** - Direct editing for advanced settings
+
+This document explains all `.env` file options. For web UI configuration, see the [Web UI Configuration Guide](WEB-UI-CONFIGURATION.md).
 
 ---
 
@@ -66,6 +70,8 @@ TIMEZONE=America/New_York
 ---
 
 ## AI Provider (Required)
+
+**Note:** AI provider is now configured via web UI after installation. The installer uses safe defaults. You can configure it in the web UI under **Settings** → **Service Configuration**, or edit the `.env` file directly.
 
 You must choose an AI provider for address extraction and categorization.
 

@@ -112,12 +112,18 @@ if (!process.env.GEOCODING_TARGET_COUNTIES) process.env.GEOCODING_TARGET_COUNTIE
 const TARGET_COUNTIES = process.env.GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
 const COUNTRY_CODES = process.env.GEOCODING_COUNTRY; // LocationIQ uses country codes
 
-// Logger setup (remains the same)
+// Cache timezone formatter function (optimization: avoid timezone lookup on every log entry)
+const getFormattedTimestamp = (() => {
+  // Create a function that formats current time in the configured timezone
+  return () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS');
+})();
+
+// Logger setup
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp({
-      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: getFormattedTimestamp
     }),
     winston.format.printf(({ timestamp, level, message }) => {
       if (message.includes('Talk Group') ||

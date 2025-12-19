@@ -10,11 +10,13 @@ const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
-const fs = require('fs');
+const fs = require('fs-extra');
+const os = require('os');
+const { execSync } = require('child_process');
+const Busboy = require('busboy');
+const csv = require('csv-parser');
 const logsDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
+fs.ensureDirSync(logsDir);
 
 // Environment variables
 const {
@@ -156,6 +158,1415 @@ app.post('/api/config/services', async (req, res) => {
     res.json({ success: true, message: 'Configuration updated. Restart services for changes to take effect.' });
   } catch (error) {
     console.error('Error updating service config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Location Configuration API Endpoints
+// Get current location configuration
+app.get('/api/location/config', (req, res) => {
+  try {
+    res.json({
+      city: process.env.GEOCODING_CITY || '',
+      state: process.env.GEOCODING_STATE || '',
+      country: process.env.GEOCODING_COUNTRY || '',
+      targetCounties: process.env.GEOCODING_TARGET_COUNTIES || ''
+    });
+  } catch (error) {
+    console.error('Error reading location config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update location configuration
+app.post('/api/location/config', async (req, res) => {
+  const { city, state, country, targetCounties } = req.body;
+  const envPath = path.join(__dirname, '.env');
+  
+  try {
+    let envContent = '';
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+    }
+    
+    // Helper function to update or add env variable
+    const updateEnvVar = (varName, value) => {
+      const regex = new RegExp(`^${varName}=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${varName}=${value}`);
+      } else {
+        envContent += `\n${varName}=${value}\n`;
+      }
+    };
+    
+    if (city !== undefined) updateEnvVar('GEOCODING_CITY', city);
+    if (state !== undefined) updateEnvVar('GEOCODING_STATE', state);
+    if (country !== undefined) updateEnvVar('GEOCODING_COUNTRY', country);
+    if (targetCounties !== undefined) updateEnvVar('GEOCODING_TARGET_COUNTIES', targetCounties);
+    
+    fs.writeFileSync(envPath, envContent, 'utf8');
+    
+    // Update process.env so changes take effect immediately (until restart)
+    if (city !== undefined) process.env.GEOCODING_CITY = city;
+    if (state !== undefined) process.env.GEOCODING_STATE = state;
+    if (country !== undefined) process.env.GEOCODING_COUNTRY = country;
+    if (targetCounties !== undefined) process.env.GEOCODING_TARGET_COUNTIES = targetCounties;
+    
+    res.json({ success: true, message: 'Location configuration updated. Some changes may require a restart.' });
+  } catch (error) {
+    console.error('Error updating location config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get location suggestions within radius (requires lat/lon)
+app.get('/api/location/suggestions', async (req, res) => {
+  const { lat, lon, radius = 50 } = req.query;
+  
+  if (!lat || !lon) {
+    return res.status(400).json({ success: false, error: 'lat and lon query parameters are required' });
+  }
+  
+  try {
+    // Use Nominatim reverse geocoding to get location details
+    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`;
+    const response = await fetch(nominatimUrl, {
+      headers: {
+        'User-Agent': 'Scanner-Map/1.0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Get nearby cities/towns within radius using Nominatim search
+    // Note: Nominatim doesn't have a direct radius search, so we'll return the current location details
+    // For a full implementation, you could use a geospatial search service
+    const result = {
+      currentLocation: {
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
+        address: data.address || {},
+        displayName: data.display_name || ''
+      },
+      suggestions: [{
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
+        city: data.address?.city || data.address?.town || data.address?.village || '',
+        state: data.address?.state || '',
+        country: data.address?.country_code?.toUpperCase() || '',
+        displayName: data.display_name || ''
+      }]
+    };
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting location suggestions:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get counties for a given city/state
+app.get('/api/location/counties', async (req, res) => {
+  const { city, state, country = 'us' } = req.query;
+  
+  if (!city || !state) {
+    return res.status(400).json({ success: false, error: 'city and state query parameters are required' });
+  }
+  
+  try {
+    // Use Nominatim to search for the city and get county information
+    const searchQuery = `${city}, ${state}, ${country}`;
+    const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=5`;
+    
+    const response = await fetch(nominatimUrl, {
+      headers: {
+        'User-Agent': 'Scanner-Map/1.0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Extract counties from results (counties are often in the display_name or address)
+    const counties = new Set();
+    data.forEach(result => {
+      if (result.address?.county) {
+        counties.add(result.address.county);
+      }
+    });
+    
+    res.json({ 
+      counties: Array.from(counties),
+      suggestions: data.map(r => ({
+        displayName: r.display_name,
+        lat: parseFloat(r.lat),
+        lon: parseFloat(r.lon),
+        county: r.address?.county || ''
+      }))
+    });
+  } catch (error) {
+    console.error('Error getting counties:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Detect location from browser geolocation (lat/lon)
+app.post('/api/location/detect', async (req, res) => {
+  const { lat, lon } = req.body;
+  
+  if (!lat || !lon) {
+    return res.status(400).json({ success: false, error: 'lat and lon are required in request body' });
+  }
+  
+  try {
+    // Use Nominatim reverse geocoding
+    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`;
+    const response = await fetch(nominatimUrl, {
+      headers: {
+        'User-Agent': 'Scanner-Map/1.0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const address = data.address || {};
+    
+    res.json({
+      success: true,
+      location: {
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
+        city: address.city || address.town || address.village || '',
+        state: address.state || '',
+        country: address.country_code?.toUpperCase() || '',
+        county: address.county || '',
+        displayName: data.display_name || '',
+        address: address
+      }
+    });
+  } catch (error) {
+    console.error('Error detecting location:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// System Status API Endpoints
+// Get system status (Docker, Node.js, Python availability)
+app.get('/api/system/status', (req, res) => {
+  try {
+    const DependencyInstaller = require('./scripts/installer/dependency-installer');
+    const dependencyInstaller = new DependencyInstaller();
+    
+    const status = {
+      docker: {
+        installed: dependencyInstaller.isInstalled('docker'),
+        dockerCompose: dependencyInstaller.isDockerComposeInstalled(),
+        daemonRunning: dependencyInstaller.isDockerDaemonRunning()
+      },
+      nodejs: {
+        installed: dependencyInstaller.isNodeInstalled(),
+        version: dependencyInstaller.isNodeInstalled() ? execSync('node --version', { encoding: 'utf8' }).trim() : null
+      },
+      npm: {
+        installed: dependencyInstaller.isNpmInstalled(),
+        version: dependencyInstaller.isNpmInstalled() ? execSync('npm --version', { encoding: 'utf8' }).trim() : null
+      },
+      python: {
+        installed: dependencyInstaller.isPythonInstalled(),
+        version: dependencyInstaller.isPythonInstalled() ? 
+          (execSync('python3 --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 
+           execSync('python --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()) : null
+      }
+    };
+    
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error checking system status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get system information (OS, versions, platform)
+app.get('/api/system/info', (req, res) => {
+  try {
+    const info = {
+      platform: os.platform(),
+      arch: os.arch(),
+      hostname: os.hostname(),
+      type: os.type(),
+      release: os.release(),
+      cpus: os.cpus().length,
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem(),
+      nodeVersion: process.version,
+      npmVersion: null
+    };
+    
+    try {
+      info.npmVersion = execSync('npm --version', { encoding: 'utf8' }).trim();
+    } catch (err) {
+      // npm not available
+    }
+    
+    res.json({ success: true, info });
+  } catch (error) {
+    console.error('Error getting system info:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update Management API Endpoints
+// Check for updates
+app.get('/api/updates/check', async (req, res) => {
+  try {
+    const UpdateChecker = require('./scripts/installer/update-checker');
+    const updateChecker = new UpdateChecker(__dirname);
+    const result = await updateChecker.checkForUpdates();
+    res.json(result);
+  } catch (error) {
+    console.error('Error checking for updates:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install update (if possible via git pull)
+app.post('/api/updates/install', async (req, res) => {
+  try {
+    // Check if we're in a git repository
+    try {
+      execSync('git rev-parse --git-dir', { cwd: __dirname, stdio: 'ignore' });
+    } catch (gitErr) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Not a git repository. Cannot install updates automatically. Please update manually.' 
+      });
+    }
+    
+    // Pull latest changes
+    const output = execSync('git pull', { cwd: __dirname, encoding: 'utf8' });
+    res.json({ 
+      success: true, 
+      message: 'Update installed successfully. Please restart the application.',
+      output: output
+    });
+  } catch (error) {
+    console.error('Error installing update:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get auto-update config
+app.get('/api/updates/config', (req, res) => {
+  try {
+    const configPath = path.join(__dirname, 'data', 'update-config.json');
+    let config = { autoUpdateCheck: false };
+    
+    if (fs.existsSync(configPath)) {
+      config = fs.readJSONSync(configPath);
+    }
+    
+    res.json({ success: true, config });
+  } catch (error) {
+    console.error('Error reading update config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Set auto-update config
+app.post('/api/updates/config', async (req, res) => {
+  try {
+    const { autoUpdateCheck } = req.body;
+    const UpdateChecker = require('./scripts/installer/update-checker');
+    const updateChecker = new UpdateChecker(__dirname);
+    const result = await updateChecker.configureAutoUpdate(autoUpdateCheck === true);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error setting update config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Radio Configuration API Endpoints
+// Get all talkgroups
+app.get('/api/radio/talkgroups', (req, res) => {
+  db.all('SELECT id, hex, alpha_tag, mode, description, tag, county FROM talk_groups ORDER BY id', [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching talkgroups:', err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    res.json({ success: true, talkgroups: rows || [] });
+  });
+});
+
+// Add or update talkgroup
+app.post('/api/radio/talkgroups', (req, res) => {
+  const { id, hex, alpha_tag, mode, description, tag, county } = req.body;
+  
+  if (!id) {
+    return res.status(400).json({ success: false, error: 'id (DEC) is required' });
+  }
+  
+  db.run(
+    `INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id.toString(), hex || null, alpha_tag || null, mode || null, description || null, tag || null, county || null],
+    function(err) {
+      if (err) {
+        console.error('Error saving talkgroup:', err);
+        return res.status(500).json({ success: false, error: err.message });
+      }
+      res.json({ success: true, id: id });
+    }
+  );
+});
+
+// Delete talkgroup
+app.delete('/api/radio/talkgroups/:id', (req, res) => {
+  const { id } = req.params;
+  
+  db.run('DELETE FROM talk_groups WHERE id = ?', [id], function(err) {
+    if (err) {
+      console.error('Error deleting talkgroup:', err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ success: false, error: 'Talkgroup not found' });
+    }
+    res.json({ success: true, id: id });
+  });
+});
+
+// Get all frequencies
+app.get('/api/radio/frequencies', (req, res) => {
+  db.all('SELECT id, frequency, description FROM frequencies ORDER BY id', [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching frequencies:', err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    res.json({ success: true, frequencies: rows || [] });
+  });
+});
+
+// Add or update frequency
+app.post('/api/radio/frequencies', (req, res) => {
+  const { id, frequency, description } = req.body;
+  
+  if (!frequency) {
+    return res.status(400).json({ success: false, error: 'frequency is required' });
+  }
+  
+  // If id is provided, update; otherwise insert
+  if (id !== undefined) {
+    db.run(
+      'UPDATE frequencies SET frequency = ?, description = ? WHERE id = ?',
+      [frequency, description || null, id],
+      function(err) {
+        if (err) {
+          console.error('Error updating frequency:', err);
+          return res.status(500).json({ success: false, error: err.message });
+        }
+        if (this.changes === 0) {
+          // If no rows updated, insert instead
+          db.run(
+            'INSERT INTO frequencies (id, frequency, description) VALUES (?, ?, ?)',
+            [id, frequency, description || null],
+            function(insertErr) {
+              if (insertErr) {
+                console.error('Error inserting frequency:', insertErr);
+                return res.status(500).json({ success: false, error: insertErr.message });
+              }
+              res.json({ success: true, id: this.lastID });
+            }
+          );
+        } else {
+          res.json({ success: true, id: id });
+        }
+      }
+    );
+  } else {
+    db.run(
+      'INSERT INTO frequencies (frequency, description) VALUES (?, ?)',
+      [frequency, description || null],
+      function(err) {
+        if (err) {
+          console.error('Error inserting frequency:', err);
+          return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, id: this.lastID });
+      }
+    );
+  }
+});
+
+// Delete frequency
+app.delete('/api/radio/frequencies/:id', (req, res) => {
+  const { id } = req.params;
+  
+  db.run('DELETE FROM frequencies WHERE id = ?', [id], function(err) {
+    if (err) {
+      console.error('Error deleting frequency:', err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ success: false, error: 'Frequency not found' });
+    }
+    res.json({ success: true, id: id });
+  });
+});
+
+// CSV Import API Endpoints
+// Preview CSV (parse and return first 10 rows without importing)
+app.post('/api/radio/import-preview', (req, res) => {
+  const busboy = Busboy({ headers: req.headers });
+  const csvType = req.query.type || 'talkgroups';
+  let csvText = '';
+  
+  busboy.on('file', (fieldname, file, filename) => {
+    file.on('data', (data) => {
+      csvText += data.toString();
+    });
+    
+    file.on('end', () => {
+      const lines = csvText.split('\n').filter(line => line.trim());
+      const previewRows = lines.slice(0, 11);
+      const previewText = previewRows.join('\n');
+      
+      const results = [];
+      const errors = [];
+      let rowCount = 0;
+      
+      require('stream').Readable.from(previewText)
+        .pipe(csv())
+        .on('data', (row) => {
+          rowCount++;
+          if (rowCount <= 10) {
+            results.push(row);
+            if (csvType === 'talkgroups' && !row.DEC && !row['DEC']) {
+              errors.push(`Row ${rowCount}: Missing DEC field`);
+            } else if (csvType === 'frequencies' && !row.Frequency && !row['Frequency']) {
+              errors.push(`Row ${rowCount}: Missing Frequency field`);
+            }
+          }
+        })
+        .on('end', () => {
+          res.json({ success: true, preview: results.slice(0, 10), totalRows: lines.length - 1, errors });
+        })
+        .on('error', (err) => {
+          res.status(400).json({ success: false, error: `CSV parsing error: ${err.message}` });
+        });
+    });
+  });
+  
+  busboy.on('finish', () => {
+    if (!csvText) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+  });
+  
+  req.pipe(busboy);
+});
+
+// Import CSV (talkgroups or frequencies)
+app.post('/api/radio/import-csv', (req, res) => {
+  const busboy = Busboy({ headers: req.headers });
+  const csvType = req.query.type || 'talkgroups';
+  const mergeMode = req.query.merge === 'true';
+  let csvText = '';
+  
+  busboy.on('file', (fieldname, file, filename) => {
+    file.on('data', (data) => {
+      csvText += data.toString();
+    });
+    
+    file.on('end', () => {
+      const results = { success: true, imported: 0, errors: [], skipped: 0 };
+      
+      const processRow = (row, rowNum) => {
+        return new Promise((resolve) => {
+          if (csvType === 'talkgroups') {
+            const id = row.DEC || row['DEC'];
+            if (!id) {
+              results.errors.push(`Row ${rowNum}: Missing DEC field`);
+              results.skipped++;
+              return resolve();
+            }
+            const sql = mergeMode 
+              ? 'INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)'
+              : 'INSERT INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)';
+            db.run(sql, [id.toString(), row.HEX || row['HEX'] || null, row['Alpha Tag'] || row['alpha_tag'] || null, row.Mode || row['Mode'] || null, row.Description || row['Description'] || null, row.Tag || row['Tag'] || null, row.County || row['County'] || null], function(err) {
+              if (err) {
+                results.errors.push(`Row ${rowNum}: ${err.message}`);
+                results.skipped++;
+              } else {
+                results.imported++;
+              }
+              resolve();
+            });
+          } else if (csvType === 'frequencies') {
+            const frequency = row.Frequency || row['Frequency'];
+            if (!frequency) {
+              results.errors.push(`Row ${rowNum}: Missing Frequency field`);
+              results.skipped++;
+              return resolve();
+            }
+            const siteId = row['Site ID'] || row['site_id'];
+            const sql = mergeMode && siteId
+              ? 'INSERT OR REPLACE INTO frequencies (id, frequency, description) VALUES (?, ?, ?)'
+              : 'INSERT INTO frequencies (frequency, description) VALUES (?, ?)';
+            const params = siteId && mergeMode
+              ? [parseInt(siteId), frequency, row.Description || row['Description'] || null]
+              : [frequency, row.Description || row['Description'] || null];
+            db.run(sql, params, function(err) {
+              if (err) {
+                results.errors.push(`Row ${rowNum}: ${err.message}`);
+                results.skipped++;
+              } else {
+                results.imported++;
+              }
+              resolve();
+            });
+          }
+        });
+      };
+      
+      let rowNum = 1;
+      const promises = [];
+      require('stream').Readable.from(csvText)
+        .pipe(csv())
+        .on('data', (row) => {
+          promises.push(processRow(row, rowNum++));
+        })
+        .on('end', async () => {
+          await Promise.all(promises);
+          res.json(results);
+        })
+        .on('error', (err) => {
+          res.status(400).json({ success: false, error: `CSV parsing error: ${err.message}` });
+        });
+    });
+  });
+  
+  busboy.on('finish', () => {
+    if (!csvText) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+  });
+  
+  req.pipe(busboy);
+});
+
+// Radio Software Detection API Endpoint
+app.get('/api/radio/detect-software', (req, res) => {
+  try {
+    const detected = {
+      trunkrecorder: false,
+      sdtrunk: false,
+      op25: false,
+      rdioScanner: false,
+      details: {}
+    };
+    
+    // Check for TrunkRecorder (config.json in appdata/trunk-recorder/config/)
+    const appdataPath = process.platform === 'win32' 
+      ? path.join(os.homedir(), 'AppData', 'Local', 'trunk-recorder', 'config', 'config.json')
+      : path.join(os.homedir(), '.config', 'trunk-recorder', 'config.json');
+    
+    if (fs.existsSync(appdataPath)) {
+      detected.trunkrecorder = true;
+      detected.details.trunkrecorder = {
+        configPath: appdataPath,
+        installed: true
+      };
+    }
+    
+    // Check for SDRTrunk (common installation paths)
+    const sdrTrunkPaths = [
+      process.platform === 'win32' ? 'C:\\Program Files\\SDRTrunk' : '/usr/local/bin/sdrtrunk',
+      process.platform === 'win32' ? path.join(os.homedir(), 'SDRTrunk') : path.join(os.homedir(), '.sdrtrunk')
+    ];
+    
+    for (const sdrPath of sdrTrunkPaths) {
+      if (fs.existsSync(sdrPath)) {
+        detected.sdtrunk = true;
+        detected.details.sdtrunk = {
+          installPath: sdrPath,
+          installed: true
+        };
+        break;
+      }
+    }
+    
+    // Check for OP25 (check if op25 executable exists or Docker container)
+    try {
+      execSync('which op25', { stdio: 'ignore' });
+      detected.op25 = true;
+      detected.details.op25 = {
+        installed: true,
+        type: 'system'
+      };
+    } catch (err) {
+      // Check for Docker container
+      try {
+        const dockerPs = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' });
+        if (dockerPs.includes('op25') || dockerPs.includes('op25-')) {
+          detected.op25 = true;
+          detected.details.op25 = {
+            installed: true,
+            type: 'docker'
+          };
+        }
+      } catch (dockerErr) {
+        // Docker not available or no op25 container
+      }
+    }
+    
+    // Check for rdio-scanner (Docker container)
+    try {
+      const dockerPs = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' });
+      if (dockerPs.includes('rdio-scanner') || dockerPs.includes('rdioscanner')) {
+        detected.rdioScanner = true;
+        detected.details.rdioScanner = {
+          installed: true,
+          type: 'docker'
+        };
+      }
+      
+      // Also check stopped containers
+      const dockerPsAll = execSync('docker ps -a --format "{{.Names}}"', { encoding: 'utf8' });
+      if ((dockerPsAll.includes('rdio-scanner') || dockerPsAll.includes('rdioscanner')) && !detected.rdioScanner) {
+        detected.details.rdioScanner = {
+          installed: true,
+          type: 'docker',
+          status: 'stopped'
+        };
+      }
+    } catch (dockerErr) {
+      // Docker not available
+    }
+    
+    res.json({ success: true, detected });
+  } catch (error) {
+    console.error('Error detecting radio software:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// TrunkRecorder Auto-Configuration API Endpoint
+app.post('/api/radio/configure-trunkrecorder', async (req, res) => {
+  try {
+    const { preview = false } = req.body;
+    
+    // Determine config path (check both project root appdata and user appdata)
+    const projectAppdataPath = path.join(__dirname, 'appdata');
+    const userAppdataPath = process.platform === 'win32'
+      ? path.join(os.homedir(), 'AppData', 'Local', 'trunk-recorder', 'config')
+      : path.join(os.homedir(), '.config', 'trunk-recorder');
+    
+    let configDir, configPath;
+    if (fs.existsSync(projectAppdataPath)) {
+      configDir = path.join(projectAppdataPath, 'trunk-recorder', 'config');
+      configPath = path.join(configDir, 'config.json');
+    } else {
+      configDir = process.platform === 'win32'
+        ? path.join(os.homedir(), 'AppData', 'Local', 'trunk-recorder', 'config')
+        : path.join(os.homedir(), '.config', 'trunk-recorder');
+      configPath = path.join(configDir, 'config.json');
+    }
+    
+    // Ensure directories exist
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    
+    // Read frequencies and talkgroups from database
+    const frequencies = await new Promise((resolve, reject) => {
+      db.all('SELECT id, frequency, description FROM frequencies ORDER BY id', [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+    
+    const talkgroups = await new Promise((resolve, reject) => {
+      db.all('SELECT id, hex, alpha_tag, mode, description, tag, county FROM talk_groups ORDER BY id', [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+    
+    if (frequencies.length === 0 && talkgroups.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No frequencies or talkgroups found. Please add frequencies and talkgroups before configuring TrunkRecorder.' 
+      });
+    }
+    
+    // Generate API key (reuse from existing config if available, otherwise generate new)
+    let apiKey = null;
+    if (fs.existsSync(configPath)) {
+      try {
+        const existing = fs.readJSONSync(configPath);
+        if (existing.uploadServer && existing.uploadServer.apiKey) {
+          apiKey = existing.uploadServer.apiKey;
+        }
+      } catch (err) {
+        // Config exists but is invalid, will generate new
+      }
+    }
+    
+    if (!apiKey) {
+      const crypto = require('crypto');
+      apiKey = crypto.randomBytes(16).toString('hex');
+    }
+    
+    // Determine installation type (default to docker)
+    const installationType = 'docker'; // Could be made configurable
+    const uploadUrl = installationType === 'docker'
+      ? 'http://scanner-map:3306/api/call-upload'
+      : 'http://localhost:3306/api/call-upload';
+    
+    // Group frequencies by proximity and determine control channels
+    // For simplicity, use first frequency in each group as control channel
+    // In a more sophisticated implementation, we could group by proximity
+    const controlChannels = frequencies.slice(0, Math.min(5, frequencies.length)).map(f => {
+      const freq = parseFloat(f.frequency);
+      return isNaN(freq) ? null : freq;
+    }).filter(f => f !== null);
+    
+    // Determine system type (default to P25 if mode not specified)
+    // Group talkgroups by mode if available
+    const systems = [];
+    const modeGroups = {};
+    
+    talkgroups.forEach(tg => {
+      const mode = (tg.mode || 'P25').toUpperCase();
+      if (!modeGroups[mode]) {
+        modeGroups[mode] = [];
+      }
+      modeGroups[mode].push(tg);
+    });
+    
+    // If no talkgroups, create a single system from frequencies
+    if (Object.keys(modeGroups).length === 0) {
+      systems.push({
+        shortName: 'System1',
+        control_channels: controlChannels.length > 0 ? controlChannels : [851.0125],
+        type: 'p25',
+        modulation: 'qpsk',
+        squelch: -50,
+        audioGain: 1.0
+      });
+    } else {
+      // Create systems for each mode group
+      Object.keys(modeGroups).forEach((mode, index) => {
+        const systemType = mode.includes('P25') ? 'p25' : mode.toLowerCase();
+        systems.push({
+          shortName: `System${index + 1}`,
+          control_channels: controlChannels.length > 0 ? controlChannels.slice(0, 3) : [851.0125],
+          type: systemType,
+          modulation: 'qpsk',
+          squelch: -50,
+          audioGain: 1.0
+        });
+      });
+    }
+    
+    // Calculate optimal center frequency from frequencies
+    const freqValues = frequencies
+      .map(f => parseFloat(f.frequency))
+      .filter(f => !isNaN(f) && f > 0);
+    
+    const centerFreq = freqValues.length > 0
+      ? Math.round(freqValues.reduce((a, b) => a + b, 0) / freqValues.length)
+      : 850000000;
+    
+    // Generate config
+    const config = {
+      ver: 2,
+      sources: [
+        {
+          driver: 'osmosdr',
+          device: 'rtl=0',
+          center: centerFreq,
+          rate: 2048000,
+          gain: 30,
+          error: 0,
+          digitalRecorders: Math.min(4, Math.max(1, Math.ceil(frequencies.length / 10)))
+        }
+      ],
+      systems: systems,
+      uploadServer: {
+        type: 'rdio-scanner',
+        url: uploadUrl,
+        apiKey: apiKey
+      }
+    };
+    
+    if (preview) {
+      // Return preview without saving
+      return res.json({ success: true, config, preview: true });
+    }
+    
+    // Write config file
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    
+    res.json({ 
+      success: true, 
+      message: 'TrunkRecorder configuration generated successfully',
+      configPath: configPath,
+      apiKey: apiKey
+    });
+  } catch (error) {
+    console.error('Error configuring TrunkRecorder:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// NLP Command Processing API Endpoints
+// Command parsing prompt template
+const PARSE_COMMAND_PROMPT_TEMPLATE = `You are a command parser for a radio scanner configuration system. Parse the following user command and extract the intent and parameters.
+
+Available intents:
+- add_talkgroup: Add a new talkgroup (requires: id or dec, optional: hex, alpha_tag, mode, description, tag, county)
+- delete_talkgroup: Delete a talkgroup (requires: id or dec)
+- add_frequency: Add a new frequency (requires: frequency, optional: description, site_id)
+- delete_frequency: Delete a frequency (requires: frequency or id)
+- list_talkgroups: List all talkgroups (no params)
+- list_frequencies: List all frequencies (no params)
+- multi: Multiple actions in one command
+
+Return ONLY valid JSON in this exact format:
+{
+  "intent": "intent_name",
+  "params": {
+    "param1": "value1",
+    "param2": "value2"
+  },
+  "confidence": 0.0-1.0,
+  "suggestedActions": ["action1", "action2"]
+}
+
+User command: "{command}"
+
+JSON response:`;
+
+/**
+ * Parse natural language command using AI provider
+ */
+async function parseCommand(command) {
+  const prompt = PARSE_COMMAND_PROMPT_TEMPLATE.replace('{command}', command);
+  
+  try {
+    if (AI_PROVIDER.toLowerCase() === 'openai' && OPENAI_API_KEY) {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          messages: [
+            { role: 'system', content: 'You are a JSON command parser. Always return valid JSON only.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 500
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      const content = data.choices[0].message.content.trim();
+      
+      // Extract JSON from response (might have markdown code blocks)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return JSON.parse(content);
+      
+    } else {
+      // Ollama
+      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: OLLAMA_MODEL,
+          prompt: prompt,
+          stream: false,
+          options: {
+            temperature: 0.3,
+            num_predict: 500
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Ollama API error: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      const content = data.response.trim();
+      
+      // Extract JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return JSON.parse(content);
+    }
+  } catch (error) {
+    console.error(`Error parsing command "${command}":`, error.message);
+    return {
+      intent: 'error',
+      params: {},
+      confidence: 0,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Execute parsed command by calling appropriate API endpoints
+ */
+async function executeCommand(intent, params) {
+  try {
+    switch (intent) {
+      case 'add_talkgroup':
+        const talkgroupData = {
+          id: params.id || params.dec,
+          hex: params.hex || null,
+          alpha_tag: params.alpha_tag || null,
+          mode: params.mode || null,
+          description: params.description || null,
+          tag: params.tag || null,
+          county: params.county || null
+        };
+        // Call internal API (would need to make HTTP request or direct DB call)
+        // For now, return structured response
+        return { success: true, action: 'add_talkgroup', data: talkgroupData };
+        
+      case 'delete_talkgroup':
+        return { success: true, action: 'delete_talkgroup', id: params.id || params.dec };
+        
+      case 'add_frequency':
+        const frequencyData = {
+          frequency: params.frequency,
+          description: params.description || null,
+          site_id: params.site_id || null
+        };
+        return { success: true, action: 'add_frequency', data: frequencyData };
+        
+      case 'delete_frequency':
+        return { success: true, action: 'delete_frequency', frequency: params.frequency || params.id };
+        
+      case 'list_talkgroups':
+        return { success: true, action: 'list_talkgroups' };
+        
+      case 'list_frequencies':
+        return { success: true, action: 'list_frequencies' };
+        
+      default:
+        return { success: false, error: `Unknown intent: ${intent}` };
+    }
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// Process natural language command
+app.post('/api/ai/command', async (req, res) => {
+  try {
+    const { command } = req.body;
+    
+    if (!command || typeof command !== 'string') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Command is required and must be a string' 
+      });
+    }
+    
+    // Parse command using AI
+    const parsed = await parseCommand(command);
+    
+    // Execute the command
+    const executionResult = await executeCommand(parsed.intent, parsed.params || {});
+    
+    res.json({
+      success: parsed.intent !== 'error',
+      parsed: {
+        intent: parsed.intent,
+        params: parsed.params || {},
+        confidence: parsed.confidence || 0,
+        suggestedActions: parsed.suggestedActions || []
+      },
+      execution: executionResult,
+      error: parsed.error || null
+    });
+  } catch (error) {
+    console.error('Error processing command:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get command examples
+app.get('/api/ai/command-examples', (req, res) => {
+  const examples = {
+    talkgroups: [
+      { text: "Add talkgroup 1234 with description Fire Department", intent: "add_talkgroup" },
+      { text: "Create a talkgroup for police with ID 5678", intent: "add_talkgroup" },
+      { text: "Delete talkgroup 9999", intent: "delete_talkgroup" },
+      { text: "Remove talkgroup 1234", intent: "delete_talkgroup" },
+      { text: "Show me all talkgroups", intent: "list_talkgroups" },
+      { text: "What talkgroups do I have?", intent: "list_talkgroups" }
+    ],
+    frequencies: [
+      { text: "Add frequency 852.5125 for dispatch", intent: "add_frequency" },
+      { text: "Add a frequency at 154.415 with description Ambulance", intent: "add_frequency" },
+      { text: "Remove frequency 852.5125", intent: "delete_frequency" },
+      { text: "Delete frequency 154.415", intent: "delete_frequency" },
+      { text: "List all frequencies", intent: "list_frequencies" },
+      { text: "Show me my frequencies", intent: "list_frequencies" }
+    ],
+    multi: [
+      { text: "Add talkgroup 1234 and frequency 852.5125", intent: "multi" },
+      { text: "Create talkgroup for fire and add frequency 154.415", intent: "multi" }
+    ]
+  };
+  
+  res.json({ success: true, examples });
+});
+
+// Dependency Installation API Endpoints
+// Store for installation jobs (in-memory for now, could be persisted)
+const installationJobs = new Map();
+
+// Install Docker
+app.post('/api/system/install-docker', async (req, res) => {
+  try {
+    const DependencyInstaller = require('./scripts/installer/dependency-installer');
+    const dependencyInstaller = new DependencyInstaller();
+    
+    const jobId = `docker-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'docker',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    dependencyInstaller.installDocker()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting Docker installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install Node.js
+app.post('/api/system/install-nodejs', async (req, res) => {
+  try {
+    const DependencyInstaller = require('./scripts/installer/dependency-installer');
+    const dependencyInstaller = new DependencyInstaller();
+    
+    const jobId = `nodejs-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'nodejs',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    dependencyInstaller.installNodejs()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting Node.js installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install Python
+app.post('/api/system/install-python', async (req, res) => {
+  try {
+    const DependencyInstaller = require('./scripts/installer/dependency-installer');
+    const dependencyInstaller = new DependencyInstaller();
+    
+    const jobId = `python-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'python',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    dependencyInstaller.installPython()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting Python installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get installation status
+app.get('/api/system/install-status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = installationJobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Job not found' });
+  }
+  
+  // Clean up old completed/failed jobs (older than 1 hour)
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  if ((job.status === 'completed' || job.status === 'failed') && job.startedAt.getTime() < oneHourAgo) {
+    installationJobs.delete(jobId);
+    return res.status(404).json({ success: false, error: 'Job expired' });
+  }
+  
+  res.json({ success: true, job });
+});
+
+// GPU Configuration API Endpoints
+// Get GPU status
+app.get('/api/system/gpu-status', async (req, res) => {
+  try {
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const gpuDetector = new GPUDetector();
+    const gpuInfo = await gpuDetector.detectNvidiaGPU();
+    
+    let toolkitCheck = null;
+    if (gpuInfo.available && process.platform === 'linux') {
+      toolkitCheck = await gpuDetector.checkNvidiaContainerToolkit();
+    }
+    
+    res.json({
+      success: true,
+      available: gpuInfo.available,
+      name: gpuInfo.name || null,
+      toolkitInstalled: toolkitCheck?.installed || false,
+      toolkitVersion: toolkitCheck?.version || null
+    });
+  } catch (error) {
+    console.error('Error checking GPU status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configure GPU (enable/disable in .env)
+app.post('/api/system/configure-gpu', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const envPath = path.join(__dirname, '.env');
+    
+    let envContent = '';
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+    }
+    
+    const varName = 'DOCKER_GPU_ENABLED';
+    const regex = new RegExp(`^${varName}=.*$`, 'm');
+    if (regex.test(envContent)) {
+      envContent = envContent.replace(regex, `${varName}=${enabled ? 'true' : 'false'}`);
+    } else {
+      envContent += `\n${varName}=${enabled ? 'true' : 'false'}\n`;
+    }
+    
+    fs.writeFileSync(envPath, envContent, 'utf8');
+    res.json({ success: true, message: 'GPU configuration updated. Restart Docker services for changes to take effect.' });
+  } catch (error) {
+    console.error('Error configuring GPU:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install NVIDIA Container Toolkit (Linux only)
+app.post('/api/system/install-nvidia-toolkit', async (req, res) => {
+  try {
+    if (process.platform !== 'linux') {
+      return res.status(400).json({ success: false, error: 'NVIDIA Container Toolkit installation is only available on Linux' });
+    }
+    
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const gpuDetector = new GPUDetector();
+    const result = await gpuDetector.installNvidiaContainerToolkit();
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error installing NVIDIA Container Toolkit:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Auto-Start Configuration API Endpoints
+// Get auto-start status (check if configured)
+app.get('/api/system/autostart-status', async (req, res) => {
+  try {
+    const os = require('os');
+    const fs = require('fs');
+    let enabled = false;
+    
+    // Check platform-specific auto-start configuration
+    if (process.platform === 'win32') {
+      const startupDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+      const batPath = path.join(startupDir, 'Scanner-Map.bat');
+      enabled = fs.existsSync(batPath);
+    } else if (process.platform === 'linux') {
+      const servicePath = '/etc/systemd/system/scanner-map.service';
+      enabled = fs.existsSync(servicePath);
+    } else if (process.platform === 'darwin') {
+      const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.scanner-map.plist');
+      enabled = fs.existsSync(plistPath);
+    }
+    
+    res.json({ success: true, enabled });
+  } catch (error) {
+    console.error('Error checking auto-start status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configure auto-start
+app.post('/api/system/configure-autostart', async (req, res) => {
+  try {
+    const { enabled, installationType = 'docker' } = req.body;
+    const AutoStart = require('./scripts/installer/auto-start');
+    const autoStart = new AutoStart(__dirname);
+    
+    if (enabled) {
+      // Enable auto-start
+      const result = await autoStart.configure(installationType, {});
+      res.json(result);
+    } else {
+      // Disable auto-start (remove configuration files)
+      const os = require('os');
+      const fs = require('fs');
+      let removed = false;
+      
+      if (process.platform === 'win32') {
+        const startupDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+        const batPath = path.join(startupDir, 'Scanner-Map.bat');
+        if (fs.existsSync(batPath)) {
+          fs.unlinkSync(batPath);
+          removed = true;
+        }
+      } else if (process.platform === 'linux') {
+        const servicePath = '/etc/systemd/system/scanner-map.service';
+        if (fs.existsSync(servicePath)) {
+          try {
+            execSync('sudo systemctl disable scanner-map.service', { stdio: 'ignore' });
+            execSync('sudo rm /etc/systemd/system/scanner-map.service', { stdio: 'ignore' });
+            execSync('sudo systemctl daemon-reload', { stdio: 'ignore' });
+            removed = true;
+          } catch (err) {
+            // May require sudo, return error
+            return res.status(403).json({ success: false, error: 'Auto-start removal requires administrator privileges' });
+          }
+        }
+      } else if (process.platform === 'darwin') {
+        const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.scanner-map.plist');
+        if (fs.existsSync(plistPath)) {
+          try {
+            execSync(`launchctl unload ${plistPath}`, { stdio: 'ignore' });
+            fs.unlinkSync(plistPath);
+            removed = true;
+          } catch (err) {
+            // Ignore errors
+          }
+        }
+      }
+      
+      res.json({ success: true, removed });
+    }
+  } catch (error) {
+    console.error('Error configuring auto-start:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

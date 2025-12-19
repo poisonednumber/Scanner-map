@@ -263,10 +263,13 @@ class ServiceConfig {
     const modelsDir = path.join(icadDir, 'models');
 
     // Ensure all directories exist
-    await fs.ensureDir(icadDir);
-    await fs.ensureDir(logDir);
-    await fs.ensureDir(varDir);
-    await fs.ensureDir(modelsDir);
+    // Create all directories in parallel for better performance
+    await Promise.all([
+      fs.ensureDir(icadDir),
+      fs.ensureDir(logDir),
+      fs.ensureDir(varDir),
+      fs.ensureDir(modelsDir)
+    ]);
 
     // Generate API key if not provided
     const generatedApiKey = apiKey || this.generateApiKey();

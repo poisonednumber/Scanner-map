@@ -187,9 +187,9 @@ install_dependencies() {
             fi
         fi
         
-        # Use --ignore-optional to skip native modules that fail to build
+        # Install dependencies (optional dependencies will be skipped automatically if they fail)
         # Use --no-audit --no-fund to speed up installation
-        if ! npm install --ignore-optional --no-audit --no-fund 2>&1; then
+        if ! npm install --no-audit --no-fund 2>&1; then
             print_error "Failed to install npm dependencies"
             echo ""
             
@@ -222,6 +222,12 @@ install_dependencies() {
         fi
         
         print_success "Dependencies installed successfully"
+        echo ""
+        print_info "The installer needs to restart to continue with configuration."
+        echo ""
+        read -p "Press Enter to restart the installer..."
+        restart_installer "$@"
+        exit 0
     fi
 }
 
@@ -282,7 +288,7 @@ update_and_restart() {
                         if [[ -d "node_modules" ]]; then
                             rm -rf node_modules
                         fi
-                        if npm install --ignore-optional --no-audit --no-fund; then
+                        if npm install --no-audit --no-fund; then
                             print_success "Dependencies rebuilt successfully"
                         else
                             print_warning "Dependency rebuild had issues, but continuing..."
@@ -306,6 +312,13 @@ update_and_restart() {
     sleep 3
     print_info "Restarting installer..."
     echo ""
+    exec "$0" "$@"
+}
+
+# Simple restart function (without update check)
+restart_installer() {
+    echo ""
+    print_info "Restarting installer..."
     exec "$0" "$@"
 }
 

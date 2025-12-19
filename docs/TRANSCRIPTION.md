@@ -2,6 +2,8 @@
 
 [← Back to README](../README.md)
 
+**Note:** Transcription mode is now configured via web UI after installation. The installer uses safe defaults (`local` mode). You can configure it in the web UI under **Settings** → **Service Configuration**, or edit the `.env` file directly as described below.
+
 Scanner Map supports multiple transcription backends. Choose based on your needs.
 
 ---

@@ -137,9 +137,9 @@ if not exist "node_modules\inquirer" (
         )
     )
     
-    REM Use --ignore-optional to skip native modules that fail to build
+    REM Install dependencies (optional dependencies will be skipped automatically if they fail)
     REM Use --no-audit --no-fund to speed up installation
-    npm install --ignore-optional --no-audit --no-fund 2>&1
+    npm install --no-audit --no-fund 2>&1
     set NPM_INSTALL_ERROR=%ERRORLEVEL%
     
     REM Check if critical modules are installed
@@ -184,6 +184,13 @@ if not exist "node_modules\inquirer" (
     
     echo.
     echo [OK] Dependencies installed successfully
+    echo.
+    echo The installer needs to restart to continue with configuration.
+    echo.
+    pause
+    REM Restart the installer without updating (dependencies are already installed)
+    call :restart_installer
+    exit /b 0
 ) else (
     echo [OK] Dependencies already installed
 )
@@ -243,7 +250,7 @@ if %ERRORLEVEL% EQU 0 (
                         if exist "node_modules" (
                             rmdir /s /q "node_modules" 2>nul
                         )
-                        npm install --ignore-optional --no-audit --no-fund
+                        npm install --no-audit --no-fund
                         if %ERRORLEVEL% EQU 0 (
                             echo [OK] Dependencies rebuilt successfully
                         ) else (
@@ -269,5 +276,12 @@ echo [INFO] Waiting 3 seconds for PATH to update...
 timeout /t 3 /nobreak >nul
 echo [INFO] Restarting installer...
 echo.
+call "%~f0"
+exit /b 0
+
+:restart_installer
+REM Simple restart function (without update check)
+echo.
+echo [INFO] Restarting installer...
 call "%~f0"
 exit /b 0

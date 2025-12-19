@@ -1,12 +1,16 @@
 // app.js
 
 // Global variables
+// Map variables - now managed by MapModule
 let map, markerGroups;
 const markers = {};
 let allMarkers = {}; // Store all markers for filtering
 let timeRangeHours; // Time range from config
 let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
 let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
+
+// Map module reference (will be set after map.js loads)
+let MapModule = null;
 let socket; // Socket.IO
 let currentSearchTerm = ''; // Current search term
 const wavesurfers = {}; // Store WaveSurfer instances
@@ -816,112 +820,115 @@ function attemptAutoplay() {
     }
 }
 
-// Initialize map
+// Initialize map - now uses MapModule if available
 function initMap() {
-    // Initialize the map with the configuration center and zoom level
-    map = L.map('map', {
-        center: appConfig.map.defaultCenter,
-        zoom: appConfig.map.defaultZoom,
-        maxZoom: appConfig.map.maxZoom,
-        minZoom: appConfig.map.minZoom,
-        zoomControl: !isMobile(),
-        tap: true
-    });
+    // Use MapModule if available, otherwise fall back to inline implementation
+    if (window.MapModule) {
+        MapModule = window.MapModule;
+        MapModule.initMap(appConfig, isMobile, setupEventListeners, loadCalls, timeRangeHours, addPermanentHouseMarkers);
+        // Sync global variables from module
+        map = MapModule.getMap();
+        markerGroups = MapModule.getMarkerGroups();
+        // Note: markers and allMarkers are managed by the module but we keep local refs for compatibility
+    } else {
+        // Fallback to original inline implementation
+        map = L.map('map', {
+            center: appConfig.map.defaultCenter,
+            zoom: appConfig.map.defaultZoom,
+            maxZoom: appConfig.map.maxZoom,
+            minZoom: appConfig.map.minZoom,
+            zoomControl: !isMobile(),
+            tap: true
+        });
 
-    // Day layer using OpenStreetMap
-    dayLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
+        dayLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    // Add CSS for dark mode tiles
-    const style = document.createElement('style');
-    style.textContent = `
-        .dark-mode-tiles {
-            filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
-        }
-        .dark-mode-tiles img {
-            background: #0e1216;
-        }
-        
-        /* Preserve marker colors */
-        .leaflet-marker-icon,
-        .leaflet-marker-shadow,
-        .marker-cluster-small,
-        .marker-cluster-medium,
-        .marker-cluster-large {
-            filter: none !important;
-        }
-    `;
-    document.head.appendChild(style);
-
-    // Night layer using filtered OpenStreetMap
-    nightLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true,
-        className: 'dark-mode-tiles'
-    });
-
-    // Satellite view using two layers combined
-    const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
-
-    const satelliteLabels = L.tileLayer(appConfig.mapStyles.satelliteLabelsLayer, {
-        attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
-
-    satelliteLayer = L.layerGroup([satelliteBase, satelliteLabels]);
-
-    dayLayer.addTo(map);
-
-    markerGroups = L.markerClusterGroup({
-        iconCreateFunction: function(cluster) {
-            const childCount = cluster.getChildCount();
-            let c = ' marker-cluster-';
-            if (childCount < 10) {
-                c += 'small';
-            } else if (childCount < 100) {
-                c += 'medium';
-            } else {
-                c += 'large';
+        const style = document.createElement('style');
+        style.textContent = `
+            .dark-mode-tiles {
+                filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
             }
+            .dark-mode-tiles img {
+                background: #0e1216;
+            }
+            
+            .leaflet-marker-icon,
+            .leaflet-marker-shadow,
+            .marker-cluster-small,
+            .marker-cluster-medium,
+            .marker-cluster-large {
+                filter: none !important;
+            }
+        `;
+        document.head.appendChild(style);
 
-            return L.divIcon({
-                html: '<div><span>' + childCount + '</span></div>',
-                className: 'marker-cluster' + c,
-                iconSize: L.point(40, 40)
-            });
-        },
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: true,
-        zoomToBoundsOnClick: true,
-        maxClusterRadius: 55,
-        spiderfyDistanceMultiplier: 2
-    });
+        nightLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true,
+            className: 'dark-mode-tiles'
+        });
 
-    map.addLayer(markerGroups);
+        const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    if (isMobile()) {
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-} else {
-    L.control.zoom({ position: 'topright' }).addTo(map);
-}
+        const satelliteLabels = L.tileLayer(appConfig.mapStyles.satelliteLabelsLayer, {
+            attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    setupEventListeners();
-    L.control.scale().addTo(map);
-    loadCalls(timeRangeHours);
+        satelliteLayer = L.layerGroup([satelliteBase, satelliteLabels]);
+        dayLayer.addTo(map);
 
-    map.on('zoomend', function() {
-        console.log('Current zoom level:', map.getZoom());
-        addPermanentHouseMarkers();
-    });
+        markerGroups = L.markerClusterGroup({
+            iconCreateFunction: function(cluster) {
+                const childCount = cluster.getChildCount();
+                let c = ' marker-cluster-';
+                if (childCount < 10) {
+                    c += 'small';
+                } else if (childCount < 100) {
+                    c += 'medium';
+                } else {
+                    c += 'large';
+                }
+                return L.divIcon({
+                    html: '<div><span>' + childCount + '</span></div>',
+                    className: 'marker-cluster' + c,
+                    iconSize: L.point(40, 40)
+                });
+            },
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: true,
+            zoomToBoundsOnClick: true,
+            maxClusterRadius: 55,
+            spiderfyDistanceMultiplier: 2
+        });
+
+        map.addLayer(markerGroups);
+
+        if (isMobile()) {
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+        } else {
+            L.control.zoom({ position: 'topright' }).addTo(map);
+        }
+
+        setupEventListeners();
+        L.control.scale().addTo(map);
+        loadCalls(timeRangeHours);
+
+        map.on('zoomend', function() {
+            console.log('Current zoom level:', map.getZoom());
+            addPermanentHouseMarkers();
+        });
+    }
 }
 
 // Event Listeners Setup
@@ -945,26 +952,30 @@ function setupEventListeners() {
     });
 }
 
-// Toggle Map Mode (Day, Night, Satellite)
+// Toggle Map Mode (Day, Night, Satellite) - now uses MapModule if available
 function toggleMapMode() {
-    if (currentMapMode === 'day') {
-        map.removeLayer(dayLayer);
-        nightLayer.addTo(map);
-        currentMapMode = 'night';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Night';
-    } else if (currentMapMode === 'night') {
-        map.removeLayer(nightLayer);
-        satelliteLayer.addTo(map);
-        currentMapMode = 'satellite';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Satellite';
-    } else if (currentMapMode === 'satellite') {
-        map.removeLayer(satelliteLayer);
-        dayLayer.addTo(map);
-        currentMapMode = 'day';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Day';
+    if (window.MapModule && MapModule.toggleMapMode) {
+        MapModule.toggleMapMode();
+        // Sync currentMapMode from module
+        currentMapMode = MapModule.getCurrentMapMode();
+    } else {
+        // Fallback to original implementation
+        if (currentMapMode === 'day') {
+            map.removeLayer(dayLayer);
+            nightLayer.addTo(map);
+            currentMapMode = 'night';
+            toggleModeButton.textContent = 'Night';
+        } else if (currentMapMode === 'night') {
+            map.removeLayer(nightLayer);
+            satelliteLayer.addTo(map);
+            currentMapMode = 'satellite';
+            toggleModeButton.textContent = 'Satellite';
+        } else if (currentMapMode === 'satellite') {
+            map.removeLayer(satelliteLayer);
+            dayLayer.addTo(map);
+            currentMapMode = 'day';
+            toggleModeButton.textContent = 'Day';
+        }
     }
 }
 
@@ -3598,11 +3609,22 @@ function setupUserManagement() {
         });
     }
     
+    // Quick Start button click
+    const quickStartBtn = document.getElementById('quick-start-btn');
+    if (quickStartBtn) {
+        quickStartBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showQuickStartModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
     // Setup modal forms
     setupAddUserForm();
     setupModalCancelButtons();
     setupCallPurgeModal();
     setupServiceConfigModal();
+    setupQuickStartModal();
 }
 
 function showAddUserModal() {
@@ -3918,6 +3940,34 @@ function setupSidebarToggle() {
 // document.addEventListener('DOMContentLoaded', initializeApp);
 
 document.addEventListener('DOMContentLoaded', initializeApp); // Re-add DOMContentLoaded listener
+
+// Register service worker
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+                console.log('[Service Worker] Registered successfully:', registration.scope);
+                
+                // Check for updates
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    console.log('[Service Worker] New worker found, installing...');
+                    newWorker.addEventListener('statechange', () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            // New service worker available
+                            console.log('[Service Worker] New version available');
+                            if (window.showInfoToast) {
+                                window.showInfoToast('New version available. Refresh to update.', 0);
+                            }
+                        }
+                    });
+                });
+            })
+            .catch((error) => {
+                console.error('[Service Worker] Registration failed:', error);
+            });
+    });
+}
 
 function initializeApp() {
     console.log("[App] Initializing..."); // Add log
@@ -5597,5 +5647,1779 @@ function setupServiceConfigModal() {
         });
     }
 }
+
+// Quick Start Modal Functions
+function showQuickStartModal() {
+    const modal = document.getElementById('quick-start-modal');
+    if (modal) {
+        // Reset to first tab
+        switchQuickStartTab('location');
+        // Load initial data for active tabs
+        loadLocationConfig();
+        loadSystemStatus();
+        loadGPUStatus();
+        loadAutoStartStatus();
+        loadUpdateStatus();
+        loadTalkgroups();
+        loadFrequencies();
+        modal.style.display = 'block';
+    }
+}
+
+function closeQuickStartModal() {
+    const modal = document.getElementById('quick-start-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function switchQuickStartTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.quick-start-tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    // Remove active from all tabs
+    document.querySelectorAll('.quick-start-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    // Show selected tab content
+    const tabContent = document.getElementById(`quick-start-${tabName}-tab`);
+    if (tabContent) {
+        tabContent.classList.add('active');
+    }
+    // Activate selected tab button
+    const tabButton = document.querySelector(`.quick-start-tab[data-tab="${tabName}"]`);
+    if (tabButton) {
+        tabButton.classList.add('active');
+    }
+}
+
+function switchRadioSubtab(subtabName) {
+    // Hide all sub-tab contents
+    document.querySelectorAll('.quick-start-subtab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    // Remove active from all sub-tabs
+    document.querySelectorAll('.quick-start-subtab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    // Show selected sub-tab content
+    let subtabContent = null;
+    if (subtabName === 'software-config') {
+        subtabContent = document.getElementById('radio-software-config-subtab');
+    } else {
+        subtabContent = document.getElementById(`radio-${subtabName}-subtab`);
+    }
+    if (subtabContent) {
+        subtabContent.classList.add('active');
+    }
+    // Activate selected sub-tab button
+    const subtabButton = document.querySelector(`.quick-start-subtab[data-subtab="${subtabName}"]`);
+    if (subtabButton) {
+        subtabButton.classList.add('active');
+    }
+}
+
+function setupQuickStartModal() {
+    // Tab switching
+    document.querySelectorAll('.quick-start-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.getAttribute('data-tab');
+            switchQuickStartTab(tabName);
+        });
+    });
+    
+    // Radio sub-tab switching
+    document.querySelectorAll('.quick-start-subtab').forEach(subtab => {
+        subtab.addEventListener('click', function() {
+            const subtabName = this.getAttribute('data-subtab');
+            switchRadioSubtab(subtabName);
+        });
+    });
+    
+    // Location configuration
+    const detectLocationBtn = document.getElementById('detect-location-btn');
+    if (detectLocationBtn) {
+        detectLocationBtn.addEventListener('click', detectUserLocation);
+    }
+    
+    const saveLocationBtn = document.getElementById('save-location-btn');
+    if (saveLocationBtn) {
+        saveLocationBtn.addEventListener('click', saveLocationConfig);
+    }
+    
+    // System status - Install buttons
+    const installDockerBtn = document.getElementById('install-docker-btn');
+    if (installDockerBtn) {
+        installDockerBtn.addEventListener('click', function() {
+            installDependency('docker');
+        });
+    }
+    
+    const installNodejsBtn = document.getElementById('install-nodejs-btn');
+    if (installNodejsBtn) {
+        installNodejsBtn.addEventListener('click', function() {
+            installDependency('nodejs');
+        });
+    }
+    
+    const installPythonBtn = document.getElementById('install-python-btn');
+    if (installPythonBtn) {
+        installPythonBtn.addEventListener('click', function() {
+            installDependency('python');
+        });
+    }
+    
+    // GPU configuration
+    const gpuEnabledCheckbox = document.getElementById('gpu-enabled-checkbox');
+    if (gpuEnabledCheckbox) {
+        gpuEnabledCheckbox.addEventListener('change', function() {
+            saveGPUConfig(this.checked);
+        });
+    }
+    
+    const installNvidiaToolkitBtn = document.getElementById('install-nvidia-toolkit-btn');
+    if (installNvidiaToolkitBtn) {
+        installNvidiaToolkitBtn.addEventListener('click', installNvidiaToolkit);
+    }
+    
+    // Auto-start configuration
+    const autostartEnabledCheckbox = document.getElementById('autostart-enabled-checkbox');
+    if (autostartEnabledCheckbox) {
+        autostartEnabledCheckbox.addEventListener('change', function() {
+            saveAutoStartConfig(this.checked);
+        });
+    }
+    
+    // Updates
+    const checkUpdatesBtn = document.getElementById('check-updates-btn');
+    if (checkUpdatesBtn) {
+        checkUpdatesBtn.addEventListener('click', checkForUpdates);
+    }
+    
+    const installUpdateBtn = document.getElementById('install-update-btn');
+    if (installUpdateBtn) {
+        installUpdateBtn.addEventListener('click', installUpdate);
+    }
+    
+    const autoUpdateCheckbox = document.getElementById('auto-update-checkbox');
+    if (autoUpdateCheckbox) {
+        autoUpdateCheckbox.addEventListener('change', function() {
+            saveUpdateConfig(this.checked);
+        });
+    }
+    
+    // Radio configuration - Talkgroups
+    const addTalkgroupBtn = document.getElementById('add-talkgroup-btn');
+    if (addTalkgroupBtn) {
+        addTalkgroupBtn.addEventListener('click', function() {
+            showTalkgroupEditForm();
+        });
+    }
+    
+    const saveTalkgroupBtn = document.getElementById('save-talkgroup-btn');
+    if (saveTalkgroupBtn) {
+        saveTalkgroupBtn.addEventListener('click', saveTalkgroup);
+    }
+    
+    const cancelTalkgroupBtn = document.getElementById('cancel-talkgroup-btn');
+    if (cancelTalkgroupBtn) {
+        cancelTalkgroupBtn.addEventListener('click', function() {
+            document.getElementById('talkgroup-edit-form').style.display = 'none';
+        });
+    }
+    
+    // Radio configuration - Frequencies
+    const addFrequencyBtn = document.getElementById('add-frequency-btn');
+    if (addFrequencyBtn) {
+        addFrequencyBtn.addEventListener('click', function() {
+            showFrequencyEditForm();
+        });
+    }
+    
+    const saveFrequencyBtn = document.getElementById('save-frequency-btn');
+    if (saveFrequencyBtn) {
+        saveFrequencyBtn.addEventListener('click', saveFrequency);
+    }
+    
+    const cancelFrequencyBtn = document.getElementById('cancel-frequency-btn');
+    if (cancelFrequencyBtn) {
+        cancelFrequencyBtn.addEventListener('click', function() {
+            document.getElementById('frequency-edit-form').style.display = 'none';
+        });
+    }
+    
+    // Setup CSV import
+    setupCSVImport('talkgroups');
+    setupCSVImport('frequencies');
+    
+    // Setup radio software detection and configuration
+    setupRadioSoftwareConfig();
+    
+    // Setup AI commands
+    setupAICommands();
+}
+
+// Radio Software Detection and Configuration Functions
+function setupRadioSoftwareConfig() {
+    const detectBtn = document.getElementById('detect-radio-software-btn');
+    const configureBtn = document.getElementById('configure-trunkrecorder-btn');
+    const statusContent = document.getElementById('radio-software-status-content');
+    const previewDiv = document.getElementById('trunkrecorder-config-preview');
+    const previewContent = document.getElementById('trunkrecorder-config-preview-content');
+    const saveBtn = document.getElementById('trunkrecorder-config-save-btn');
+    const cancelBtn = document.getElementById('trunkrecorder-config-cancel-btn');
+    const resultsDiv = document.getElementById('trunkrecorder-config-results');
+    
+    let previewConfig = null;
+    
+    // Load status on tab open
+    const softwareConfigTab = document.getElementById('radio-software-config-subtab');
+    if (softwareConfigTab) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    if (softwareConfigTab.classList.contains('active')) {
+                        loadRadioSoftwareStatus();
+                    }
+                }
+            });
+        });
+        observer.observe(softwareConfigTab, { attributes: true });
+    }
+    
+    function loadRadioSoftwareStatus() {
+        fetch('/api/radio/detect-software')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.detected) {
+                    const detected = data.detected;
+                    let html = '<ul style="list-style: none; padding: 0;">';
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>TrunkRecorder:</strong> 
+                        <span style="color: ${detected.trunkrecorder ? '#00ff00' : '#ff0000'};">
+                            ${detected.trunkrecorder ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                        ${detected.trunkrecorder && detected.details.trunkrecorder ? `<br><small style="color: #888;">Path: ${detected.details.trunkrecorder.configPath}</small>` : ''}
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>SDRTrunk:</strong> 
+                        <span style="color: ${detected.sdtrunk ? '#00ff00' : '#ff0000'};">
+                            ${detected.sdtrunk ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>OP25:</strong> 
+                        <span style="color: ${detected.op25 ? '#00ff00' : '#ff0000'};">
+                            ${detected.op25 ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>rdio-scanner:</strong> 
+                        <span style="color: ${detected.rdioScanner ? '#00ff00' : '#ff0000'};">
+                            ${detected.rdioScanner ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += '</ul>';
+                    
+                    if (statusContent) statusContent.innerHTML = html;
+                    
+                    // Show configure button if TrunkRecorder is detected
+                    if (detected.trunkrecorder && configureBtn) {
+                        configureBtn.style.display = 'inline-block';
+                    } else if (configureBtn) {
+                        configureBtn.style.display = 'none';
+                    }
+                } else {
+                    if (statusContent) statusContent.innerHTML = '<span style="color: #ff0000;">Error loading detection status</span>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading radio software status:', error);
+                if (statusContent) statusContent.innerHTML = '<span style="color: #ff0000;">Error loading detection status</span>';
+            });
+    }
+    
+    if (detectBtn) {
+        detectBtn.addEventListener('click', function() {
+            loadRadioSoftwareStatus();
+        });
+    }
+    
+    if (configureBtn) {
+        configureBtn.addEventListener('click', function() {
+            // Generate preview
+            fetch('/api/radio/configure-trunkrecorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ preview: true })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.config) {
+                        previewConfig = data.config;
+                        if (previewContent) {
+                            previewContent.textContent = JSON.stringify(data.config, null, 2);
+                        }
+                        if (previewDiv) previewDiv.style.display = 'block';
+                        if (resultsDiv) resultsDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error generating configuration preview', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error generating config preview:', error);
+                    showNotification('Error generating configuration preview', 'error');
+                });
+        });
+    }
+    
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            if (!previewConfig) {
+                showNotification('No configuration to save', 'error');
+                return;
+            }
+            
+            fetch('/api/radio/configure-trunkrecorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ preview: false })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (resultsDiv) {
+                            resultsDiv.style.display = 'block';
+                            resultsDiv.style.backgroundColor = 'rgba(0, 255, 0, 0.2)';
+                            resultsDiv.innerHTML = `<strong>Success!</strong><br>Configuration saved to: ${data.configPath || 'config.json'}<br>API Key: ${data.apiKey || 'N/A'}`;
+                        }
+                        showNotification('TrunkRecorder configuration saved successfully', 'success');
+                        if (previewDiv) previewDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error saving configuration', 'error');
+                        if (resultsDiv) {
+                            resultsDiv.style.display = 'block';
+                            resultsDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+                            resultsDiv.innerHTML = `<strong>Error:</strong> ${data.error || 'Unknown error'}`;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving config:', error);
+                    showNotification('Error saving configuration', 'error');
+                });
+        });
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (previewDiv) previewDiv.style.display = 'none';
+            if (resultsDiv) resultsDiv.style.display = 'none';
+            previewConfig = null;
+        });
+    }
+}
+
+// Location Configuration Functions
+function loadLocationConfig() {
+    fetch('/api/location/config')
+        .then(response => response.json())
+        .then(data => {
+            const cityInput = document.getElementById('geocoding-city');
+            const stateInput = document.getElementById('geocoding-state');
+            const countryInput = document.getElementById('geocoding-country');
+            const countiesInput = document.getElementById('geocoding-counties');
+            
+            if (cityInput) cityInput.value = data.city || '';
+            if (stateInput) stateInput.value = data.state || '';
+            if (countryInput) countryInput.value = data.country || '';
+            if (countiesInput) countiesInput.value = data.targetCounties || '';
+        })
+        .catch(error => {
+            console.error('Error loading location config:', error);
+        });
+}
+
+function detectUserLocation() {
+    const statusEl = document.getElementById('location-detect-status');
+    if (!navigator.geolocation) {
+        if (statusEl) statusEl.textContent = 'Geolocation is not supported by this browser.';
+        return;
+    }
+    
+    if (statusEl) statusEl.textContent = 'Detecting location...';
+    
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            
+            // Send to API to get location details
+            fetch('/api/location/detect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ lat, lon })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.location) {
+                    const loc = data.location;
+                    const cityInput = document.getElementById('geocoding-city');
+                    const stateInput = document.getElementById('geocoding-state');
+                    const countryInput = document.getElementById('geocoding-country');
+                    const countiesInput = document.getElementById('geocoding-counties');
+                    
+                    if (cityInput) cityInput.value = loc.city || '';
+                    if (stateInput) stateInput.value = loc.state || '';
+                    if (countryInput) countryInput.value = loc.country || '';
+                    if (countiesInput) countiesInput.value = loc.county || '';
+                    
+                    if (statusEl) statusEl.textContent = `Detected: ${loc.displayName}`;
+                    
+                    // TODO: Show map with radius circle (Phase 2A - can be enhanced later)
+                } else {
+                    if (statusEl) statusEl.textContent = 'Could not detect location details.';
+                }
+            })
+            .catch(error => {
+                console.error('Error detecting location:', error);
+                if (statusEl) statusEl.textContent = 'Error detecting location.';
+            });
+        },
+        function(error) {
+            if (statusEl) statusEl.textContent = 'Location detection failed: ' + error.message;
+        }
+    );
+}
+
+function saveLocationConfig() {
+    const city = document.getElementById('geocoding-city').value.trim();
+    const state = document.getElementById('geocoding-state').value.trim();
+    const country = document.getElementById('geocoding-country').value.trim();
+    const counties = document.getElementById('geocoding-counties').value.trim();
+    
+    fetch('/api/location/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ city, state, country, targetCounties: counties })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'Location configuration saved.', 'success');
+        } else {
+            showNotification(data.error || 'Error saving location configuration', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error saving location config:', error);
+        showNotification('Error saving location configuration', 'error');
+    });
+}
+
+// System Status Functions
+const installationProgress = {
+    docker: null,
+    nodejs: null,
+    python: null
+};
+
+function loadGPUStatus() {
+    fetch('/api/system/gpu-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const statusText = document.getElementById('gpu-status-text');
+                const gpuName = document.getElementById('gpu-name');
+                const gpuCheckbox = document.getElementById('gpu-enabled-checkbox');
+                const toolkitSection = document.getElementById('nvidia-toolkit-section');
+                
+                if (data.available) {
+                    if (statusText) statusText.textContent = '✓ NVIDIA GPU Detected';
+                    if (statusText) statusText.style.color = '#00ff00';
+                    if (gpuName) gpuName.textContent = `GPU: ${data.name || 'Unknown'}`;
+                    if (toolkitSection && !data.toolkitInstalled) {
+                        toolkitSection.style.display = 'block';
+                    }
+                } else {
+                    if (statusText) statusText.textContent = '✗ No NVIDIA GPU Detected';
+                    if (statusText) statusText.style.color = '#ff0000';
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading GPU status:', error);
+        });
+}
+
+function saveGPUConfig(enabled) {
+    fetch('/api/system/configure-gpu', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(data.message || 'GPU configuration saved.', 'success');
+            } else {
+                showNotification(data.error || 'Error saving GPU configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving GPU config:', error);
+            showNotification('Error saving GPU configuration', 'error');
+        });
+}
+
+function installNvidiaToolkit() {
+    const btn = document.getElementById('install-nvidia-toolkit-btn');
+    if (btn) btn.disabled = true;
+    
+    fetch('/api/system/install-nvidia-toolkit', {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('NVIDIA Container Toolkit installed successfully', 'success');
+                loadGPUStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error installing NVIDIA Container Toolkit', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error installing NVIDIA Container Toolkit:', error);
+            showNotification('Error installing NVIDIA Container Toolkit', 'error');
+        })
+        .finally(() => {
+            if (btn) btn.disabled = false;
+        });
+}
+
+function loadAutoStartStatus() {
+    fetch('/api/system/autostart-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const statusText = document.getElementById('autostart-status-text');
+                const checkbox = document.getElementById('autostart-enabled-checkbox');
+                
+                if (statusText) {
+                    statusText.textContent = data.enabled ? '✓ Enabled' : '✗ Disabled';
+                    statusText.style.color = data.enabled ? '#00ff00' : '#ff0000';
+                }
+                if (checkbox) {
+                    checkbox.checked = data.enabled || false;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading auto-start status:', error);
+        });
+}
+
+function saveAutoStartConfig(enabled) {
+    fetch('/api/system/configure-autostart', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Auto-start configuration saved.', 'success');
+                loadAutoStartStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error saving auto-start configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving auto-start config:', error);
+            showNotification('Error saving auto-start configuration', 'error');
+        });
+}
+
+function loadSystemStatus() {
+    fetch('/api/system/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                
+                // Docker status
+                const dockerStatus = document.getElementById('docker-status');
+                const installDockerBtn = document.getElementById('install-docker-btn');
+                if (dockerStatus) {
+                    if (status.docker.installed && status.docker.daemonRunning) {
+                        dockerStatus.textContent = '✓ Installed & Running';
+                        dockerStatus.style.color = '#00ff00';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else if (status.docker.installed) {
+                        dockerStatus.textContent = '⚠ Installed (not running)';
+                        dockerStatus.style.color = '#ffff00';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else {
+                        dockerStatus.textContent = '✗ Not Installed';
+                        dockerStatus.style.color = '#ff0000';
+                        if (installDockerBtn) {
+                            installDockerBtn.style.display = 'inline-block';
+                            installDockerBtn.disabled = false;
+                        }
+                    }
+                }
+                
+                // Node.js status
+                const nodejsStatus = document.getElementById('nodejs-status');
+                const installNodejsBtn = document.getElementById('install-nodejs-btn');
+                if (nodejsStatus) {
+                    if (status.nodejs.installed) {
+                        nodejsStatus.textContent = `✓ ${status.nodejs.version || 'Installed'}`;
+                        nodejsStatus.style.color = '#00ff00';
+                        if (installNodejsBtn) installNodejsBtn.style.display = 'none';
+                    } else {
+                        nodejsStatus.textContent = '✗ Not Installed';
+                        nodejsStatus.style.color = '#ff0000';
+                        if (installNodejsBtn) {
+                            installNodejsBtn.style.display = 'inline-block';
+                            installNodejsBtn.disabled = false;
+                        }
+                    }
+                }
+                
+                // Python status
+                const pythonStatus = document.getElementById('python-status');
+                const installPythonBtn = document.getElementById('install-python-btn');
+                if (pythonStatus) {
+                    if (status.python.installed) {
+                        pythonStatus.textContent = `✓ ${status.python.version || 'Installed'}`;
+                        pythonStatus.style.color = '#00ff00';
+                        if (installPythonBtn) installPythonBtn.style.display = 'none';
+                    } else {
+                        pythonStatus.textContent = '✗ Not Installed';
+                        pythonStatus.style.color = '#ff0000';
+                        if (installPythonBtn) {
+                            installPythonBtn.style.display = 'inline-block';
+                            installPythonBtn.disabled = false;
+                        }
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading system status:', error);
+        });
+    
+    // Load system info
+    fetch('/api/system/info')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.info) {
+                const info = data.info;
+                const infoContent = document.getElementById('system-info-content');
+                if (infoContent) {
+                    infoContent.innerHTML = `
+                        <div><strong>Platform:</strong> ${info.platform} ${info.arch}</div>
+                        <div><strong>OS:</strong> ${info.type} ${info.release}</div>
+                        <div><strong>Hostname:</strong> ${info.hostname}</div>
+                        <div><strong>CPUs:</strong> ${info.cpus}</div>
+                        <div><strong>Node.js:</strong> ${info.nodeVersion}</div>
+                        ${info.npmVersion ? `<div><strong>npm:</strong> ${info.npmVersion}</div>` : ''}
+                    `;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading system info:', error);
+        });
+}
+
+// Update Management Functions
+function loadUpdateStatus() {
+    fetch('/api/updates/check')
+        .then(response => response.json())
+        .then(data => {
+            const currentVersionEl = document.getElementById('current-version');
+            const latestVersionEl = document.getElementById('latest-version');
+            const updateBadge = document.getElementById('update-available-badge');
+            const installUpdateBtn = document.getElementById('install-update-btn');
+            
+            if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || 'Unknown';
+            if (latestVersionEl) latestVersionEl.textContent = data.latestVersion || 'Unknown';
+            
+            if (data.updateAvailable) {
+                if (updateBadge) updateBadge.style.display = 'block';
+                if (installUpdateBtn) installUpdateBtn.style.display = 'inline-block';
+            } else {
+                if (updateBadge) updateBadge.style.display = 'none';
+                if (installUpdateBtn) installUpdateBtn.style.display = 'none';
+            }
+        })
+        .catch(error => {
+            console.error('Error checking updates:', error);
+        });
+    
+    // Load auto-update config
+    fetch('/api/updates/config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.config) {
+                const checkbox = document.getElementById('auto-update-checkbox');
+                if (checkbox) {
+                    checkbox.checked = data.config.autoUpdateCheck || false;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading update config:', error);
+        });
+}
+
+function checkForUpdates() {
+    const checkBtn = document.getElementById('check-updates-btn');
+    if (checkBtn) checkBtn.disabled = true;
+    
+    fetch('/api/updates/check')
+        .then(response => response.json())
+        .then(data => {
+            loadUpdateStatus(); // Reload to update UI
+            if (data.updateAvailable) {
+                showNotification('Update available!', 'success');
+            } else {
+                showNotification('You are running the latest version.', 'success');
+            }
+        })
+        .catch(error => {
+            console.error('Error checking updates:', error);
+            showNotification('Error checking for updates', 'error');
+        })
+        .finally(() => {
+            if (checkBtn) checkBtn.disabled = false;
+        });
+}
+
+function installUpdate() {
+    if (!confirm('This will update the application. Continue?')) {
+        return;
+    }
+    
+    const installBtn = document.getElementById('install-update-btn');
+    if (installBtn) installBtn.disabled = true;
+    
+    fetch('/api/updates/install', {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(data.message || 'Update installed. Please restart the application.', 'success');
+                loadUpdateStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error installing update', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error installing update:', error);
+            showNotification('Error installing update', 'error');
+        })
+        .finally(() => {
+            if (installBtn) installBtn.disabled = false;
+        });
+}
+
+function saveUpdateConfig(enabled) {
+    fetch('/api/updates/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ autoUpdateCheck: enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Auto-update configuration saved.', 'success');
+            } else {
+                showNotification(data.error || 'Error saving update config', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving update config:', error);
+            showNotification('Error saving update configuration', 'error');
+        });
+}
+
+// Radio Configuration Functions - Talkgroups
+function loadTalkgroups() {
+    fetch('/api/radio/talkgroups')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.talkgroups) {
+                const tbody = document.getElementById('talkgroups-table-body');
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    if (data.talkgroups.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="8">No talkgroups configured</td></tr>';
+                    } else {
+                        data.talkgroups.forEach(tg => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${tg.id || ''}</td>
+                                <td>${tg.hex || ''}</td>
+                                <td>${tg.alpha_tag || ''}</td>
+                                <td>${tg.mode || ''}</td>
+                                <td>${tg.description || ''}</td>
+                                <td>${tg.tag || ''}</td>
+                                <td>${tg.county || ''}</td>
+                                <td>
+                                    <button onclick="editTalkgroup('${tg.id}')">Edit</button>
+                                    <button onclick="deleteTalkgroup('${tg.id}')">Delete</button>
+                                </td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading talkgroups:', error);
+        });
+}
+
+function showTalkgroupEditForm(talkgroupId = null) {
+    const form = document.getElementById('talkgroup-edit-form');
+    const title = document.getElementById('talkgroup-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        
+        if (talkgroupId) {
+            if (title) title.textContent = 'Edit Talkgroup';
+            // Load existing talkgroup data
+            fetch(`/api/radio/talkgroups`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.talkgroups) {
+                        const tg = data.talkgroups.find(t => t.id.toString() === talkgroupId.toString());
+                        if (tg) {
+                            document.getElementById('talkgroup-dec').value = tg.id || '';
+                            document.getElementById('talkgroup-hex').value = tg.hex || '';
+                            document.getElementById('talkgroup-alpha-tag').value = tg.alpha_tag || '';
+                            document.getElementById('talkgroup-mode').value = tg.mode || '';
+                            document.getElementById('talkgroup-description').value = tg.description || '';
+                            document.getElementById('talkgroup-tag').value = tg.tag || '';
+                            document.getElementById('talkgroup-county').value = tg.county || '';
+                            document.getElementById('talkgroup-dec').disabled = true; // Can't change ID
+                        }
+                    }
+                });
+        } else {
+            if (title) title.textContent = 'Add Talkgroup';
+            // Clear form
+            document.getElementById('talkgroup-dec').value = '';
+            document.getElementById('talkgroup-hex').value = '';
+            document.getElementById('talkgroup-alpha-tag').value = '';
+            document.getElementById('talkgroup-mode').value = '';
+            document.getElementById('talkgroup-description').value = '';
+            document.getElementById('talkgroup-tag').value = '';
+            document.getElementById('talkgroup-county').value = '';
+            document.getElementById('talkgroup-dec').disabled = false;
+        }
+    }
+}
+
+function editTalkgroup(id) {
+    showTalkgroupEditForm(id);
+}
+
+function deleteTalkgroup(id) {
+    if (!confirm(`Delete talkgroup ${id}?`)) {
+        return;
+    }
+    
+    fetch(`/api/radio/talkgroups/${id}`, {
+        method: 'DELETE'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Talkgroup deleted successfully', 'success');
+                loadTalkgroups();
+            } else {
+                showNotification(data.error || 'Error deleting talkgroup', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting talkgroup:', error);
+            showNotification('Error deleting talkgroup', 'error');
+        });
+}
+
+function saveTalkgroup() {
+    const id = document.getElementById('talkgroup-dec').value.trim();
+    if (!id) {
+        showNotification('DEC (ID) is required', 'error');
+        return;
+    }
+    
+    const data = {
+        id: id,
+        hex: document.getElementById('talkgroup-hex').value.trim() || null,
+        alpha_tag: document.getElementById('talkgroup-alpha-tag').value.trim() || null,
+        mode: document.getElementById('talkgroup-mode').value.trim() || null,
+        description: document.getElementById('talkgroup-description').value.trim() || null,
+        tag: document.getElementById('talkgroup-tag').value.trim() || null,
+        county: document.getElementById('talkgroup-county').value.trim() || null
+    };
+    
+    fetch('/api/radio/talkgroups', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showNotification('Talkgroup saved successfully', 'success');
+                document.getElementById('talkgroup-edit-form').style.display = 'none';
+                loadTalkgroups();
+            } else {
+                showNotification(result.error || 'Error saving talkgroup', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving talkgroup:', error);
+            showNotification('Error saving talkgroup', 'error');
+        });
+}
+
+// Radio Configuration Functions - Frequencies
+function loadFrequencies() {
+    fetch('/api/radio/frequencies')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.frequencies) {
+                const tbody = document.getElementById('frequencies-table-body');
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    if (data.frequencies.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4">No frequencies configured</td></tr>';
+                    } else {
+                        data.frequencies.forEach(freq => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${freq.id || ''}</td>
+                                <td>${freq.frequency || ''}</td>
+                                <td>${freq.description || ''}</td>
+                                <td>
+                                    <button onclick="editFrequency('${freq.id}')">Edit</button>
+                                    <button onclick="deleteFrequency('${freq.id}')">Delete</button>
+                                </td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading frequencies:', error);
+        });
+}
+
+function showFrequencyEditForm(frequencyId = null) {
+    const form = document.getElementById('frequency-edit-form');
+    const title = document.getElementById('frequency-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        
+        if (frequencyId) {
+            if (title) title.textContent = 'Edit Frequency';
+            // Load existing frequency data
+            fetch(`/api/radio/frequencies`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.frequencies) {
+                        const freq = data.frequencies.find(f => f.id.toString() === frequencyId.toString());
+                        if (freq) {
+                            document.getElementById('frequency-site-id').value = freq.id || '';
+                            document.getElementById('frequency-value').value = freq.frequency || '';
+                            document.getElementById('frequency-description').value = freq.description || '';
+                        }
+                    }
+                });
+        } else {
+            if (title) title.textContent = 'Add Frequency';
+            // Clear form
+            document.getElementById('frequency-site-id').value = '';
+            document.getElementById('frequency-value').value = '';
+            document.getElementById('frequency-description').value = '';
+        }
+    }
+}
+
+function editFrequency(id) {
+    showFrequencyEditForm(id);
+}
+
+function deleteFrequency(id) {
+    if (!confirm(`Delete frequency ${id}?`)) {
+        return;
+    }
+    
+    fetch(`/api/radio/frequencies/${id}`, {
+        method: 'DELETE'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Frequency deleted successfully', 'success');
+                loadFrequencies();
+            } else {
+                showNotification(data.error || 'Error deleting frequency', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting frequency:', error);
+            showNotification('Error deleting frequency', 'error');
+        });
+}
+
+function saveFrequency() {
+    const frequency = document.getElementById('frequency-value').value.trim();
+    if (!frequency) {
+        showNotification('Frequency is required', 'error');
+        return;
+    }
+    
+    const siteId = document.getElementById('frequency-site-id').value.trim();
+    const data = {
+        frequency: frequency,
+        description: document.getElementById('frequency-description').value.trim() || null
+    };
+    
+    if (siteId) {
+        data.id = parseInt(siteId);
+    }
+    
+    fetch('/api/radio/frequencies', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showNotification('Frequency saved successfully', 'success');
+                document.getElementById('frequency-edit-form').style.display = 'none';
+                loadFrequencies();
+            } else {
+                showNotification(result.error || 'Error saving frequency', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving frequency:', error);
+            showNotification('Error saving frequency', 'error');
+        });
+}
+
+function installDependency(type) {
+    const btn = document.getElementById(`install-${type}-btn`);
+    const statusEl = document.getElementById(`${type}-status`);
+    
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = '⏳ Installing...';
+    
+    fetch(`/api/system/install-${type}`, {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                installationProgress[type] = data.jobId;
+                pollInstallationStatus(type, data.jobId);
+            } else {
+                if (statusEl) statusEl.textContent = '✗ Installation failed';
+                if (btn) btn.disabled = false;
+                showNotification(data.error || 'Installation failed', 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error starting ${type} installation:`, error);
+            if (statusEl) statusEl.textContent = '✗ Installation error';
+            if (btn) btn.disabled = false;
+            showNotification(`Error starting ${type} installation`, 'error');
+        });
+}
+
+function pollInstallationStatus(type, jobId) {
+    const statusEl = document.getElementById(`${type}-status`);
+    const btn = document.getElementById(`install-${type}-btn`);
+    
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        if (statusEl) statusEl.textContent = `⏳ Installing... (${job.progress || 0}%)`;
+                        setTimeout(poll, 2000); // Poll every 2 seconds
+                    } else if (job.status === 'completed') {
+                        if (statusEl) statusEl.textContent = '✓ Installation complete';
+                        if (statusEl) statusEl.style.color = '#00ff00';
+                        if (btn) btn.style.display = 'none';
+                        installationProgress[type] = null;
+                        showNotification(`${type} installed successfully`, 'success');
+                        // Reload system status to update versions
+                        setTimeout(() => loadSystemStatus(), 2000);
+                    } else if (job.status === 'failed') {
+                        if (statusEl) statusEl.textContent = '✗ Installation failed';
+                        if (statusEl) statusEl.style.color = '#ff0000';
+                        if (btn) btn.disabled = false;
+                        installationProgress[type] = null;
+                        showNotification(job.error || `${type} installation failed`, 'error');
+                    }
+                } else {
+                    // Job not found or expired
+                    if (statusEl) statusEl.textContent = '✗ Installation status unknown';
+                    if (btn) btn.disabled = false;
+                    installationProgress[type] = null;
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling ${type} installation status:`, error);
+                if (statusEl) statusEl.textContent = '✗ Status check failed';
+                if (btn) btn.disabled = false;
+                installationProgress[type] = null;
+            });
+    };
+    
+    poll();
+}
+
+// CSV Import Functions
+function setupCSVImport(type) {
+    const importBtn = document.getElementById(`import-${type}-csv-btn`);
+    const importSection = document.getElementById(`${type}-csv-import-section`);
+    const fileInput = document.getElementById(`${type}-csv-file`);
+    const dropZone = document.getElementById(`${type}-csv-drop-zone`);
+    const previewDiv = document.getElementById(`${type}-csv-preview`);
+    const previewContent = document.getElementById(`${type}-csv-preview-content`);
+    const previewErrors = document.getElementById(`${type}-csv-preview-errors`);
+    const importBtn2 = document.getElementById(`${type}-csv-import-btn`);
+    const cancelBtn = document.getElementById(`${type}-csv-cancel-btn`);
+    const progressDiv = document.getElementById(`${type}-csv-progress`);
+    const resultsDiv = document.getElementById(`${type}-csv-results`);
+    const mergeCheckbox = document.getElementById(`${type}-csv-merge`);
+    
+    let selectedFile = null;
+    let previewData = null;
+    
+    // Show/hide import section
+    if (importBtn) {
+        importBtn.addEventListener('click', function() {
+            if (importSection) {
+                importSection.style.display = importSection.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+    }
+    
+    // File input change
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                selectedFile = e.target.files[0];
+                previewCSVFile(selectedFile, type);
+            }
+        });
+    }
+    
+    // Drag and drop
+    if (dropZone) {
+        dropZone.addEventListener('click', function() {
+            if (fileInput) fileInput.click();
+        });
+        
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = 'rgba(0, 255, 0, 0.1)';
+        });
+        
+        dropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = '';
+        });
+        
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = '';
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                selectedFile = e.dataTransfer.files[0];
+                if (fileInput) fileInput.files = e.dataTransfer.files;
+                previewCSVFile(selectedFile, type);
+            }
+        });
+    }
+    
+    // Preview CSV
+    function previewCSVFile(file, csvType) {
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        fetch(`/api/radio/import-preview?type=${csvType}`, {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    previewData = data;
+                    if (previewContent) {
+                        let html = '<table style="width: 100%; font-size: 12px;"><thead><tr>';
+                        if (csvType === 'talkgroups') {
+                            html += '<th>DEC</th><th>HEX</th><th>Alpha Tag</th><th>Mode</th><th>Description</th><th>Tag</th><th>County</th>';
+                        } else {
+                            html += '<th>Site ID</th><th>Frequency</th><th>Description</th>';
+                        }
+                        html += '</tr></thead><tbody>';
+                        data.preview.forEach(row => {
+                            html += '<tr>';
+                            if (csvType === 'talkgroups') {
+                                html += `<td>${row.DEC || row['DEC'] || ''}</td>`;
+                                html += `<td>${row.HEX || row['HEX'] || ''}</td>`;
+                                html += `<td>${row['Alpha Tag'] || row['alpha_tag'] || ''}</td>`;
+                                html += `<td>${row.Mode || row['Mode'] || ''}</td>`;
+                                html += `<td>${row.Description || row['Description'] || ''}</td>`;
+                                html += `<td>${row.Tag || row['Tag'] || ''}</td>`;
+                                html += `<td>${row.County || row['County'] || ''}</td>`;
+                            } else {
+                                html += `<td>${row['Site ID'] || row['site_id'] || ''}</td>`;
+                                html += `<td>${row.Frequency || row['Frequency'] || ''}</td>`;
+                                html += `<td>${row.Description || row['Description'] || ''}</td>`;
+                            }
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        previewContent.innerHTML = html;
+                    }
+                    if (previewErrors) {
+                        if (data.errors && data.errors.length > 0) {
+                            previewErrors.innerHTML = '<strong>Validation Errors:</strong><br>' + data.errors.join('<br>');
+                        } else {
+                            previewErrors.innerHTML = '';
+                        }
+                    }
+                    if (previewDiv) previewDiv.style.display = 'block';
+                } else {
+                    showNotification(data.error || 'Error previewing CSV', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error previewing CSV:', error);
+                showNotification('Error previewing CSV file', 'error');
+            });
+    }
+    
+    // Import CSV
+    if (importBtn2) {
+        importBtn2.addEventListener('click', function() {
+            if (!selectedFile) {
+                showNotification('Please select a CSV file first', 'error');
+                return;
+            }
+            
+            const merge = mergeCheckbox ? mergeCheckbox.checked : false;
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            
+            if (progressDiv) progressDiv.style.display = 'block';
+            if (importBtn2) importBtn2.disabled = true;
+            
+            fetch(`/api/radio/import-csv?type=${type}&merge=${merge}`, {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (progressDiv) progressDiv.style.display = 'none';
+                    if (importBtn2) importBtn2.disabled = false;
+                    
+                    if (data.success !== false) {
+                        let message = `Imported ${data.imported} ${type}`;
+                        if (data.skipped > 0) {
+                            message += `, skipped ${data.skipped}`;
+                        }
+                        if (data.errors && data.errors.length > 0) {
+                            message += `, ${data.errors.length} errors`;
+                            if (resultsDiv) {
+                                resultsDiv.style.display = 'block';
+                                resultsDiv.style.backgroundColor = 'rgba(255, 255, 0, 0.2)';
+                                resultsDiv.innerHTML = `<strong>Import Results:</strong><br>${message}<br><strong>Errors:</strong><br>${data.errors.slice(0, 10).join('<br>')}${data.errors.length > 10 ? '<br>...' : ''}`;
+                            }
+                        } else {
+                            showNotification(message, 'success');
+                            if (resultsDiv) resultsDiv.style.display = 'none';
+                        }
+                        
+                        // Reload the list
+                        if (type === 'talkgroups') {
+                            loadTalkgroups();
+                        } else {
+                            loadFrequencies();
+                        }
+                        
+                        // Reset form
+                        if (fileInput) fileInput.value = '';
+                        selectedFile = null;
+                        if (previewDiv) previewDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error importing CSV', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error importing CSV:', error);
+                    if (progressDiv) progressDiv.style.display = 'none';
+                    if (importBtn2) importBtn2.disabled = false;
+                    showNotification('Error importing CSV file', 'error');
+                });
+        });
+    }
+    
+    // Cancel
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (fileInput) fileInput.value = '';
+            selectedFile = null;
+            if (previewDiv) previewDiv.style.display = 'none';
+            if (progressDiv) progressDiv.style.display = 'none';
+            if (resultsDiv) resultsDiv.style.display = 'none';
+        });
+    }
+}
+
+// AI Commands Functions
+function setupAICommands() {
+    const commandInput = document.getElementById('ai-command-input');
+    const submitBtn = document.getElementById('ai-command-submit-btn');
+    const voiceBtn = document.getElementById('ai-command-voice-btn');
+    const historyDiv = document.getElementById('ai-command-history');
+    const parsingDiv = document.getElementById('ai-command-parsing');
+    const parsingResultDiv = document.getElementById('ai-command-parsing-result');
+    const voiceFeedbackDiv = document.getElementById('ai-voice-feedback');
+    const voiceStatusDiv = document.getElementById('ai-voice-status');
+    const examplesList = document.getElementById('command-examples-list');
+    
+    let commandHistory = JSON.parse(localStorage.getItem('ai-command-history') || '[]');
+    let recognition = null;
+    
+    // Load command examples
+    function loadCommandExamples() {
+        fetch('/api/ai/command-examples')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.examples) {
+                    let html = '';
+                    Object.keys(data.examples).forEach(category => {
+                        html += `<div style="margin-bottom: 15px;"><strong>${category.charAt(0).toUpperCase() + category.slice(1)}:</strong>`;
+                        data.examples[category].forEach(example => {
+                            html += `<div style="margin: 5px 0; padding: 5px; background-color: rgba(0, 255, 0, 0.1); border-radius: 4px; cursor: pointer;" class="command-example" data-command="${example.text}">${example.text}</div>`;
+                        });
+                        html += '</div>';
+                    });
+                    if (examplesList) examplesList.innerHTML = html;
+                    
+                    // Add click handlers to examples
+                    document.querySelectorAll('.command-example').forEach(el => {
+                        el.addEventListener('click', function() {
+                            const cmd = this.getAttribute('data-command');
+                            if (commandInput) {
+                                commandInput.value = cmd;
+                                commandInput.focus();
+                            }
+                        });
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error loading command examples:', error);
+            });
+    }
+    
+    // Render command history
+    function renderHistory() {
+        if (!historyDiv) return;
+        
+        if (commandHistory.length === 0) {
+            historyDiv.innerHTML = '<div style="color: #888; font-style: italic;">No commands yet. Try entering a command above.</div>';
+            return;
+        }
+        
+        let html = '';
+        commandHistory.slice().reverse().forEach((item, index) => {
+            const date = new Date(item.timestamp);
+            html += `<div style="margin-bottom: 15px; padding: 10px; border-bottom: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <strong>Command:</strong>
+                    <span style="color: #888; font-size: 12px;">${date.toLocaleTimeString()}</span>
+                </div>
+                <div style="margin-bottom: 5px; color: var(--primary-color);">${item.command}</div>
+                <div style="margin-bottom: 5px;"><strong>Intent:</strong> ${item.parsed?.intent || 'unknown'}</div>
+                ${item.parsed?.confidence ? `<div style="margin-bottom: 5px;"><strong>Confidence:</strong> ${(item.parsed.confidence * 100).toFixed(0)}%</div>` : ''}
+                ${item.result ? `<div style="color: ${item.result.success ? '#00ff00' : '#ff0000'};">
+                    ${item.result.success ? '✓ Success' : '✗ Error: ' + (item.result.error || 'Unknown error')}
+                </div>` : ''}
+            </div>`;
+        });
+        historyDiv.innerHTML = html;
+    }
+    
+    // Process command
+    function processCommand(command) {
+        if (!command || !command.trim()) return;
+        
+        // Add to history
+        const historyItem = {
+            command: command,
+            timestamp: new Date().toISOString(),
+            parsed: null,
+            result: null
+        };
+        commandHistory.push(historyItem);
+        if (commandHistory.length > 50) {
+            commandHistory = commandHistory.slice(-50); // Keep last 50
+        }
+        localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+        renderHistory();
+        
+        // Show parsing div
+        if (parsingDiv) parsingDiv.style.display = 'block';
+        if (parsingResultDiv) parsingResultDiv.innerHTML = 'Parsing command...';
+        
+        // Send to API
+        fetch('/api/ai/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ command: command })
+        })
+            .then(response => response.json())
+            .then(data => {
+                // Update history item
+                historyItem.parsed = data.parsed || {};
+                historyItem.result = data;
+                
+                // Update localStorage
+                const index = commandHistory.findIndex(item => item.timestamp === historyItem.timestamp);
+                if (index !== -1) {
+                    commandHistory[index] = historyItem;
+                    localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+                }
+                
+                // Show parsing result
+                if (parsingResultDiv) {
+                    let html = `<div style="margin-bottom: 10px;"><strong>Intent:</strong> ${data.parsed?.intent || 'unknown'}</div>`;
+                    if (data.parsed?.confidence !== undefined) {
+                        html += `<div style="margin-bottom: 10px;"><strong>Confidence:</strong> ${(data.parsed.confidence * 100).toFixed(0)}%</div>`;
+                    }
+                    if (data.parsed?.params) {
+                        html += `<div style="margin-bottom: 10px;"><strong>Parameters:</strong><pre style="background-color: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; font-size: 12px;">${JSON.stringify(data.parsed.params, null, 2)}</pre></div>`;
+                    }
+                    if (data.success) {
+                        html += `<div style="color: #00ff00; margin-top: 10px;">✓ Command parsed successfully</div>`;
+                        // Execute command if needed
+                        executeParsedCommand(data);
+                    } else {
+                        html += `<div style="color: #ff0000; margin-top: 10px;">✗ Error: ${data.error || 'Failed to parse command'}</div>`;
+                    }
+                    parsingResultDiv.innerHTML = html;
+                }
+                
+                renderHistory();
+            })
+            .catch(error => {
+                console.error('Error processing command:', error);
+                if (parsingResultDiv) {
+                    parsingResultDiv.innerHTML = `<div style="color: #ff0000;">Error: ${error.message}</div>`;
+                }
+                historyItem.result = { success: false, error: error.message };
+                const index = commandHistory.findIndex(item => item.timestamp === historyItem.timestamp);
+                if (index !== -1) {
+                    commandHistory[index] = historyItem;
+                    localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+                }
+                renderHistory();
+            });
+    }
+    
+    // Execute parsed command
+    function executeParsedCommand(data) {
+        if (!data.parsed || !data.parsed.intent) return;
+        
+        const intent = data.parsed.intent;
+        const params = data.parsed.params || {};
+        
+        // Map intents to actual API calls
+        switch (intent) {
+            case 'add_talkgroup':
+                fetch('/api/radio/talkgroups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: params.id || params.dec,
+                        hex: params.hex || null,
+                        alpha_tag: params.alpha_tag || null,
+                        mode: params.mode || null,
+                        description: params.description || null,
+                        tag: params.tag || null,
+                        county: params.county || null
+                    })
+                })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            showNotification('Talkgroup added successfully', 'success');
+                            if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                        } else {
+                            showNotification(result.error || 'Error adding talkgroup', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        showNotification('Error adding talkgroup', 'error');
+                    });
+                break;
+                
+            case 'delete_talkgroup':
+                const tgId = params.id || params.dec;
+                if (tgId) {
+                    fetch(`/api/radio/talkgroups/${tgId}`, { method: 'DELETE' })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.success) {
+                                showNotification('Talkgroup deleted successfully', 'success');
+                                if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                            } else {
+                                showNotification(result.error || 'Error deleting talkgroup', 'error');
+                            }
+                        })
+                        .catch(error => {
+                            showNotification('Error deleting talkgroup', 'error');
+                        });
+                }
+                break;
+                
+            case 'add_frequency':
+                fetch('/api/radio/frequencies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        frequency: params.frequency,
+                        description: params.description || null,
+                        site_id: params.site_id || null
+                    })
+                })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            showNotification('Frequency added successfully', 'success');
+                            if (typeof loadFrequencies === 'function') loadFrequencies();
+                        } else {
+                            showNotification(result.error || 'Error adding frequency', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        showNotification('Error adding frequency', 'error');
+                    });
+                break;
+                
+            case 'delete_frequency':
+                const freqId = params.id || params.frequency;
+                if (freqId) {
+                    fetch(`/api/radio/frequencies/${freqId}`, { method: 'DELETE' })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.success) {
+                                showNotification('Frequency deleted successfully', 'success');
+                                if (typeof loadFrequencies === 'function') loadFrequencies();
+                            } else {
+                                showNotification(result.error || 'Error deleting frequency', 'error');
+                            }
+                        })
+                        .catch(error => {
+                            showNotification('Error deleting frequency', 'error');
+                        });
+                }
+                break;
+                
+            case 'list_talkgroups':
+                if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                break;
+                
+            case 'list_frequencies':
+                if (typeof loadFrequencies === 'function') loadFrequencies();
+                break;
+        }
+    }
+    
+    // Setup voice recognition
+    function setupVoiceRecognition() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            if (voiceBtn) voiceBtn.style.display = 'none';
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+        
+        recognition.onstart = function() {
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'block';
+            if (voiceStatusDiv) voiceStatusDiv.textContent = 'Listening...';
+            if (voiceBtn) voiceBtn.disabled = true;
+        };
+        
+        recognition.onresult = function(event) {
+            const transcript = event.results[0][0].transcript;
+            if (commandInput) commandInput.value = transcript;
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+            if (voiceBtn) voiceBtn.disabled = false;
+            processCommand(transcript);
+        };
+        
+        recognition.onerror = function(event) {
+            console.error('Speech recognition error:', event.error);
+            if (voiceStatusDiv) voiceStatusDiv.textContent = `Error: ${event.error}`;
+            setTimeout(() => {
+                if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+                if (voiceBtn) voiceBtn.disabled = false;
+            }, 2000);
+        };
+        
+        recognition.onend = function() {
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+            if (voiceBtn) voiceBtn.disabled = false;
+        };
+    }
+    
+    // Event listeners
+    if (submitBtn) {
+        submitBtn.addEventListener('click', function() {
+            if (commandInput && commandInput.value) {
+                processCommand(commandInput.value);
+                commandInput.value = '';
+            }
+        });
+    }
+    
+    if (commandInput) {
+        commandInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                if (commandInput.value) {
+                    processCommand(commandInput.value);
+                    commandInput.value = '';
+                }
+            }
+        });
+    }
+    
+    if (voiceBtn) {
+        voiceBtn.addEventListener('click', function() {
+            if (recognition) {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Error starting voice recognition:', error);
+                }
+            }
+        });
+    }
+    
+    // Load examples and history on tab open
+    const aiCommandsTab = document.getElementById('quick-start-ai-commands-tab');
+    if (aiCommandsTab) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    if (aiCommandsTab.classList.contains('active')) {
+                        loadCommandExamples();
+                        renderHistory();
+                    }
+                }
+            });
+        });
+        observer.observe(aiCommandsTab, { attributes: true });
+    }
+    
+    // Initialize
+    setupVoiceRecognition();
+    renderHistory();
+
+    // Mobile: Add FAB button for AI commands
+    if (window.UtilsModule && window.UtilsModule.isMobile && window.UtilsModule.isMobile()) {
+        const fab = document.createElement('button');
+        fab.className = 'ai-command-fab';
+        fab.innerHTML = '🎤';
+        fab.setAttribute('aria-label', 'Open AI command interface');
+        fab.addEventListener('click', () => {
+            // Open Quick Start modal to AI Commands tab
+            if (typeof showQuickStartModal === 'function') {
+                showQuickStartModal();
+                setTimeout(() => {
+                    const aiTab = document.querySelector('.quick-start-tab[data-tab="ai-commands"]');
+                    if (aiTab) aiTab.click();
+                }, 100);
+            }
+        });
+        document.body.appendChild(fab);
+    }
+}
+
+// Haptic feedback for mobile
+function triggerHapticFeedback(type = 'light') {
+    if ('vibrate' in navigator) {
+        const patterns = {
+            light: 10,
+            medium: 20,
+            heavy: 30
+        };
+        navigator.vibrate(patterns[type] || patterns.light);
+    }
+}
+
+// Make functions global for onclick handlers
+window.editTalkgroup = editTalkgroup;
+window.deleteTalkgroup = deleteTalkgroup;
+window.editFrequency = editFrequency;
+window.deleteFrequency = deleteFrequency;
 
 

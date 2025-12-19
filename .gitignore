@@ -101,6 +101,11 @@ test-output/
 debug/
 *.debug.js
 *.debug.log
+# Test scripts in scripts directory
+scripts/test-*.js
+scripts/*/test-*.js
+scripts/validate-*.js
+test-release/
 
 # ----------------
 # Temporary Files

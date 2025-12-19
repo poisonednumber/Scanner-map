@@ -479,6 +479,7 @@
       <div class="user-management-dropdown">
         <button id="user-menu-btn" class="cyberpunk-button">Settings</button>
         <div id="user-menu-content" class="dropdown-content">
+          <a href="#" id="quick-start-btn">Quick Start</a>
           <a href="#" id="add-user-btn">Add User</a>
           <a href="#" id="view-users-btn">View Users</a>
           <a href="#" id="manage-sessions-btn">Manage Sessions</a>
@@ -720,7 +721,426 @@
   </div>
   <!-- END Service Configuration Modal -->
 
+  <!-- Quick Start Modal -->
+  <div id="quick-start-modal" class="modal">
+    <div class="modal-content quick-start-modal-content">
+      <h2>Quick Start</h2>
+      <div class="quick-start-tabs">
+        <button class="quick-start-tab active" data-tab="location">Location</button>
+        <button class="quick-start-tab" data-tab="system">System Status</button>
+        <button class="quick-start-tab" data-tab="updates">Updates</button>
+        <button class="quick-start-tab" data-tab="radio">Radio Config</button>
+        <button class="quick-start-tab" data-tab="ai-commands">AI Commands</button>
+      </div>
+      
+      <!-- Location Tab -->
+      <div id="quick-start-location-tab" class="quick-start-tab-content active">
+        <h3>Location Configuration</h3>
+        <p class="config-description">Configure your location for accurate geocoding of radio calls.</p>
+        
+        <div class="form-group">
+          <button type="button" id="detect-location-btn" class="confirm-btn">Detect My Location</button>
+          <span id="location-detect-status"></span>
+        </div>
+        
+        <div id="location-map-container" style="height: 300px; margin: 15px 0; display: none;"></div>
+        
+        <div class="form-group">
+          <label for="geocoding-city">City:</label>
+          <input type="text" id="geocoding-city" placeholder="e.g., Baltimore" />
+        </div>
+        
+        <div class="form-group">
+          <label for="geocoding-state">State/Province:</label>
+          <input type="text" id="geocoding-state" placeholder="e.g., MD" />
+        </div>
+        
+        <div class="form-group">
+          <label for="geocoding-country">Country:</label>
+          <input type="text" id="geocoding-country" placeholder="e.g., us" />
+        </div>
+        
+        <div class="form-group">
+          <label for="geocoding-counties">Target Counties (comma-separated):</label>
+          <input type="text" id="geocoding-counties" placeholder="e.g., Baltimore, Baltimore City, Anne Arundel" />
+        </div>
+        
+        <div id="location-suggestions" style="margin: 15px 0;"></div>
+        
+        <div class="modal-buttons">
+          <button type="button" id="save-location-btn" class="confirm-btn">Save Location</button>
+        </div>
+      </div>
+      
+      <!-- System Status Tab -->
+      <div id="quick-start-system-tab" class="quick-start-tab-content">
+        <h3>System Status</h3>
+        <p class="config-description">Check system requirements and dependencies.</p>
+        
+        <div id="system-status-list">
+          <div class="system-status-item">
+            <span class="system-status-name">Docker</span>
+            <span class="system-status-icon" id="docker-status">⏳ Checking...</span>
+            <button type="button" id="install-docker-btn" class="install-btn" style="display: none;" disabled>Install</button>
+          </div>
+          <div class="system-status-item">
+            <span class="system-status-name">Node.js</span>
+            <span class="system-status-icon" id="nodejs-status">⏳ Checking...</span>
+            <button type="button" id="install-nodejs-btn" class="install-btn" style="display: none;" disabled>Install</button>
+          </div>
+          <div class="system-status-item">
+            <span class="system-status-name">Python</span>
+            <span class="system-status-icon" id="python-status">⏳ Checking...</span>
+            <button type="button" id="install-python-btn" class="install-btn" style="display: none;" disabled>Install</button>
+          </div>
+        </div>
+        
+        <div id="system-info" style="margin-top: 20px;">
+          <h4>System Information</h4>
+          <div id="system-info-content">Loading...</div>
+        </div>
+        
+        <div id="gpu-config" style="margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4>GPU Configuration (Docker only)</h4>
+          <div id="gpu-status-display">
+            <div>Status: <span id="gpu-status-text">Loading...</span></div>
+            <div id="gpu-name" style="margin-top: 10px;"></div>
+            <div style="margin-top: 10px;">
+              <label>
+                <input type="checkbox" id="gpu-enabled-checkbox" />
+                Enable GPU acceleration
+              </label>
+            </div>
+            <div id="nvidia-toolkit-section" style="margin-top: 10px; display: none;">
+              <button type="button" id="install-nvidia-toolkit-btn" class="install-btn">Install NVIDIA Container Toolkit</button>
+            </div>
+          </div>
+        </div>
+        
+        <div id="autostart-config" style="margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4>Auto-Start Configuration</h4>
+          <div id="autostart-status-display">
+            <div>Status: <span id="autostart-status-text">Loading...</span></div>
+            <div style="margin-top: 10px;">
+              <label>
+                <input type="checkbox" id="autostart-enabled-checkbox" />
+                Start Scanner Map automatically on system boot
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Updates Tab -->
+      <div id="quick-start-updates-tab" class="quick-start-tab-content">
+        <h3>Update Scanner Map</h3>
+        <p class="config-description">Check for updates and configure auto-update.</p>
+        
+        <div id="update-status">
+          <div class="update-info-item">
+            <span>Current Version:</span>
+            <span id="current-version">Loading...</span>
+          </div>
+          <div class="update-info-item">
+            <span>Latest Version:</span>
+            <span id="latest-version">Loading...</span>
+          </div>
+          <div id="update-available-badge" style="display: none; margin: 10px 0; padding: 10px; background-color: #00ff00; color: #000; border-radius: 4px;">
+            Update Available!
+          </div>
+        </div>
+        
+        <div class="modal-buttons" style="margin-top: 20px;">
+          <button type="button" id="check-updates-btn" class="confirm-btn">Check for Updates</button>
+          <button type="button" id="install-update-btn" class="confirm-btn" style="display: none;">Install Update</button>
+        </div>
+        
+        <div class="form-group" style="margin-top: 20px;">
+          <label>
+            <input type="checkbox" id="auto-update-checkbox" />
+            Enable auto-update (checks on startup)
+          </label>
+        </div>
+      </div>
+      
+      <!-- Radio Config Tab -->
+      <div id="quick-start-radio-tab" class="quick-start-tab-content">
+        <h3>Radio Configuration</h3>
+        <p class="config-description">Manage talkgroups and frequencies.</p>
+        
+        <div class="quick-start-radio-subtabs">
+          <button class="quick-start-subtab active" data-subtab="talkgroups">Talkgroups</button>
+          <button class="quick-start-subtab" data-subtab="frequencies">Frequencies</button>
+          <button class="quick-start-subtab" data-subtab="software-config">Auto-Config</button>
+        </div>
+        
+        <!-- Talkgroups Sub-tab -->
+        <div id="radio-talkgroups-subtab" class="quick-start-subtab-content active">
+          <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button type="button" id="add-talkgroup-btn" class="confirm-btn">Add Talkgroup</button>
+            <button type="button" id="import-talkgroups-csv-btn" class="confirm-btn">Import CSV</button>
+          </div>
+          
+          <!-- CSV Import Section (hidden by default) -->
+          <div id="talkgroups-csv-import-section" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h4>Import Talkgroups from CSV</h4>
+            <div class="form-group">
+              <label for="talkgroups-csv-file">Select CSV file:</label>
+              <input type="file" id="talkgroups-csv-file" accept=".csv" style="margin-top: 5px;" />
+              <div style="margin-top: 10px; padding: 10px; border: 2px dashed var(--border-color); border-radius: 4px; text-align: center; cursor: pointer;" id="talkgroups-csv-drop-zone">
+                <p>Drag and drop CSV file here, or click to select</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="talkgroups-csv-merge" />
+                Merge/Update existing entries (if unchecked, will only add new entries)
+              </label>
+            </div>
+            <div id="talkgroups-csv-preview" style="margin-top: 15px; display: none;">
+              <h5>Preview (first 10 rows):</h5>
+              <div id="talkgroups-csv-preview-content" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px;"></div>
+              <div id="talkgroups-csv-preview-errors" style="margin-top: 10px; color: #ff0000;"></div>
+              <div style="margin-top: 10px;">
+                <button type="button" id="talkgroups-csv-import-btn" class="confirm-btn">Import CSV</button>
+                <button type="button" id="talkgroups-csv-cancel-btn" class="cancel-btn">Cancel</button>
+              </div>
+            </div>
+            <div id="talkgroups-csv-progress" style="display: none; margin-top: 15px;">
+              <div>Importing...</div>
+              <div id="talkgroups-csv-progress-bar" style="width: 100%; height: 20px; background-color: rgba(0, 255, 0, 0.2); border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden;">
+                <div id="talkgroups-csv-progress-fill" style="height: 100%; background-color: var(--primary-color); width: 0%; transition: width 0.3s;"></div>
+              </div>
+            </div>
+            <div id="talkgroups-csv-results" style="display: none; margin-top: 15px; padding: 10px; border-radius: 4px;"></div>
+          </div>
+          <div id="talkgroups-list-container">
+            <table id="talkgroups-table" style="width: 100%; margin-top: 15px;">
+              <thead>
+                <tr>
+                  <th>DEC</th>
+                  <th>HEX</th>
+                  <th>Alpha Tag</th>
+                  <th>Mode</th>
+                  <th>Description</th>
+                  <th>Tag</th>
+                  <th>County</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="talkgroups-table-body">
+                <tr><td colspan="8">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <!-- Talkgroup Edit Form (hidden by default) -->
+          <div id="talkgroup-edit-form" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h4 id="talkgroup-form-title">Add Talkgroup</h4>
+            <div class="form-group">
+              <label for="talkgroup-dec">DEC (required):</label>
+              <input type="number" id="talkgroup-dec" required />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-hex">HEX:</label>
+              <input type="text" id="talkgroup-hex" />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-alpha-tag">Alpha Tag:</label>
+              <input type="text" id="talkgroup-alpha-tag" />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-mode">Mode:</label>
+              <input type="text" id="talkgroup-mode" />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-description">Description:</label>
+              <input type="text" id="talkgroup-description" />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-tag">Tag:</label>
+              <input type="text" id="talkgroup-tag" />
+            </div>
+            <div class="form-group">
+              <label for="talkgroup-county">County:</label>
+              <input type="text" id="talkgroup-county" />
+            </div>
+            <div class="modal-buttons">
+              <button type="button" id="save-talkgroup-btn" class="confirm-btn">Save</button>
+              <button type="button" id="cancel-talkgroup-btn" class="cancel-btn">Cancel</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Frequencies Sub-tab -->
+        <div id="radio-frequencies-subtab" class="quick-start-subtab-content">
+          <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button type="button" id="add-frequency-btn" class="confirm-btn">Add Frequency</button>
+            <button type="button" id="import-frequencies-csv-btn" class="confirm-btn">Import CSV</button>
+          </div>
+          
+          <!-- CSV Import Section (hidden by default) -->
+          <div id="frequencies-csv-import-section" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h4>Import Frequencies from CSV</h4>
+            <div class="form-group">
+              <label for="frequencies-csv-file">Select CSV file:</label>
+              <input type="file" id="frequencies-csv-file" accept=".csv" style="margin-top: 5px;" />
+              <div style="margin-top: 10px; padding: 10px; border: 2px dashed var(--border-color); border-radius: 4px; text-align: center; cursor: pointer;" id="frequencies-csv-drop-zone">
+                <p>Drag and drop CSV file here, or click to select</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="frequencies-csv-merge" />
+                Merge/Update existing entries (if unchecked, will only add new entries)
+              </label>
+            </div>
+            <div id="frequencies-csv-preview" style="margin-top: 15px; display: none;">
+              <h5>Preview (first 10 rows):</h5>
+              <div id="frequencies-csv-preview-content" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px;"></div>
+              <div id="frequencies-csv-preview-errors" style="margin-top: 10px; color: #ff0000;"></div>
+              <div style="margin-top: 10px;">
+                <button type="button" id="frequencies-csv-import-btn" class="confirm-btn">Import CSV</button>
+                <button type="button" id="frequencies-csv-cancel-btn" class="cancel-btn">Cancel</button>
+              </div>
+            </div>
+            <div id="frequencies-csv-progress" style="display: none; margin-top: 15px;">
+              <div>Importing...</div>
+              <div id="frequencies-csv-progress-bar" style="width: 100%; height: 20px; background-color: rgba(0, 255, 0, 0.2); border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden;">
+                <div id="frequencies-csv-progress-fill" style="height: 100%; background-color: var(--primary-color); width: 0%; transition: width 0.3s;"></div>
+              </div>
+            </div>
+            <div id="frequencies-csv-results" style="display: none; margin-top: 15px; padding: 10px; border-radius: 4px;"></div>
+          </div>
+          <div id="frequencies-list-container">
+            <table id="frequencies-table" style="width: 100%; margin-top: 15px;">
+              <thead>
+                <tr>
+                  <th>Site ID</th>
+                  <th>Frequency (MHz)</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="frequencies-table-body">
+                <tr><td colspan="4">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <!-- Frequency Edit Form (hidden by default) -->
+          <div id="frequency-edit-form" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h4 id="frequency-form-title">Add Frequency</h4>
+            <div class="form-group">
+              <label for="frequency-site-id">Site ID:</label>
+              <input type="number" id="frequency-site-id" />
+            </div>
+            <div class="form-group">
+              <label for="frequency-value">Frequency (MHz) (required):</label>
+              <input type="number" id="frequency-value" step="0.0001" required />
+            </div>
+            <div class="form-group">
+              <label for="frequency-description">Description:</label>
+              <input type="text" id="frequency-description" />
+            </div>
+            <div class="modal-buttons">
+              <button type="button" id="save-frequency-btn" class="confirm-btn">Save</button>
+              <button type="button" id="cancel-frequency-btn" class="cancel-btn">Cancel</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Radio Software Auto-Config Sub-tab -->
+        <div id="radio-software-config-subtab" class="quick-start-subtab-content">
+          <h4>Radio Software Auto-Configuration</h4>
+          <p>Automatically configure TrunkRecorder from your frequencies and talkgroups.</p>
+          
+          <div id="radio-software-status" style="margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h5>Detection Status</h5>
+            <div id="radio-software-status-content">Loading...</div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 20px;">
+            <button type="button" id="detect-radio-software-btn" class="confirm-btn">Detect Radio Software</button>
+            <button type="button" id="configure-trunkrecorder-btn" class="confirm-btn" style="display: none;">Configure TrunkRecorder</button>
+          </div>
+          
+          <div id="trunkrecorder-config-preview" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h5>Configuration Preview</h5>
+            <div id="trunkrecorder-config-preview-content" style="max-height: 300px; overflow-y: auto; background-color: rgba(0, 0, 0, 0.5); padding: 10px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px; white-space: pre-wrap; word-wrap: break-word;"></div>
+            <div style="margin-top: 15px;">
+              <button type="button" id="trunkrecorder-config-save-btn" class="confirm-btn">Save Configuration</button>
+              <button type="button" id="trunkrecorder-config-cancel-btn" class="cancel-btn">Cancel</button>
+            </div>
+          </div>
+          
+          <div id="trunkrecorder-config-results" style="display: none; margin-top: 15px; padding: 10px; border-radius: 4px;"></div>
+        </div>
+      </div>
+      
+      <!-- AI Commands Tab -->
+      <div id="quick-start-ai-commands-tab" class="quick-start-tab-content">
+        <h3>AI Commands</h3>
+        <p class="config-description">Configure radio settings using natural language commands.</p>
+        
+        <!-- Command Examples -->
+        <div class="form-group" style="margin-bottom: 20px;">
+          <h4>Example Commands</h4>
+          <div id="command-examples-list" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-top: 10px;">
+            <!-- Examples will be loaded here -->
+          </div>
+        </div>
+        
+        <!-- Command Input -->
+        <div class="form-group" style="margin-bottom: 20px;">
+          <label for="ai-command-input">Enter Command:</label>
+          <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <input type="text" id="ai-command-input" placeholder="e.g., Add talkgroup 1234 for Fire Department" style="flex: 1; padding: 10px;" />
+            <button type="button" id="ai-command-submit-btn" class="confirm-btn">Send</button>
+            <button type="button" id="ai-command-voice-btn" class="confirm-btn" title="Voice Input">🎤</button>
+          </div>
+        </div>
+        
+        <!-- Command History -->
+        <div class="form-group" style="margin-bottom: 20px;">
+          <h4>Command History</h4>
+          <div id="ai-command-history" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+            <div style="color: #888; font-style: italic;">No commands yet. Try entering a command above.</div>
+          </div>
+        </div>
+        
+        <!-- Parsing Results (shown when command is being parsed) -->
+        <div id="ai-command-parsing" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h5>Parsing Command...</h5>
+          <div id="ai-command-parsing-result"></div>
+        </div>
+        
+        <!-- Voice Input Feedback -->
+        <div id="ai-voice-feedback" style="display: none; margin-bottom: 20px; padding: 15px; border: 2px solid var(--primary-color); border-radius: 4px; text-align: center;">
+          <div style="font-size: 24px; margin-bottom: 10px;">🎤</div>
+          <div>Listening...</div>
+          <div id="ai-voice-status" style="margin-top: 10px; color: #888; font-size: 12px;"></div>
+        </div>
+      </div>
+      
+      <div class="modal-buttons" style="margin-top: 20px;">
+        <button type="button" class="cancel-btn" onclick="closeQuickStartModal()">Close</button>
+      </div>
+    </div>
+  </div>
+  <!-- END Quick Start Modal -->
+
   <script src="config.js"></script>
+  <script src="utils.js"></script>
+  <script src="memory.js"></script>
+  <script src="errors.js"></script>
+  <script src="toast.js"></script>
+  <script src="gestures.js"></script>
+  <script src="map.js"></script>
+  <script src="audio.js"></script>
+  <script src="modals.js"></script>
+  <script src="api.js"></script>
+  <script src="ui.js"></script>
   <script src="app.js" defer></script>
 
   <script>
@@ -766,6 +1186,14 @@
     // Placeholder function to close the new modal (will be defined in app.js)
     function closeLiveFeedModal() {
       const modal = document.getElementById('live-feed-modal');
+      if (modal) {
+          modal.style.display = 'none';
+      }
+    }
+    
+    // Placeholder function to close Quick Start modal (will be defined in app.js)
+    function closeQuickStartModal() {
+      const modal = document.getElementById('quick-start-modal');
       if (modal) {
           modal.style.display = 'none';
       }

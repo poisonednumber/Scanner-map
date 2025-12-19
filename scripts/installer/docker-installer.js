@@ -17,9 +17,7 @@ function debugLog(location, message, data, hypothesisId) {
     const logPath = path.join(logDir, 'debug.log');
     
     // Ensure directory exists
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
+    fs.ensureDirSync(logDir);
     
     const logEntry = {
       location,
@@ -348,17 +346,16 @@ class DockerInstaller {
       // #endregion
 
       // Check if docker-compose or docker compose
-      let composeCmd = 'docker compose';
-      let composeArgs = ['compose']; // For spawn, we need to split "docker compose"
+      let useDockerCompose = false; // true for "docker-compose", false for "docker compose"
       try {
         execSync('docker compose version', { stdio: 'ignore' });
+        useDockerCompose = false; // Use "docker compose" (newer)
       } catch (err) {
-        composeCmd = 'docker-compose';
-        composeArgs = []; // docker-compose is a single command
+        useDockerCompose = true; // Use "docker-compose" (older)
       }
 
       // #region agent log
-      debugLog('docker-installer.js:175', 'composeCmd determined', { composeCmd, composeArgs }, 'D');
+      debugLog('docker-installer.js:175', 'composeCmd determined', { useDockerCompose }, 'D');
       // #endregion
 
       // Check for running containers before starting (Hypothesis D)
@@ -403,21 +400,50 @@ class DockerInstaller {
       // If TrunkRecorder image doesn't exist (and TrunkRecorder was enabled), start other services anyway
       try {
         // #region agent log
-        debugLog('docker-installer.js:209', 'attempting docker compose up', { composeCmd }, 'D');
+        debugLog('docker-installer.js:209', 'attempting docker compose up', { useDockerCompose }, 'D');
         // #endregion
 
         // Note: scanner-map image will be built automatically if it doesn't exist
         // This is required because it contains the application code
         // Build is optimized based on transcription mode (local vs remote/iCAD/OpenAI)
         // Optional services (Ollama, iCAD) use pre-built images and don't require building
-        execSync(`${composeCmd} up -d`, {
+        
+        // Use spawn instead of execSync to show real-time output and prevent hanging
+        const composeCommand = useDockerCompose ? 'docker-compose' : 'docker compose';
+        console.log(chalk.gray(`   Running: ${composeCommand} up -d`));
+        console.log(chalk.gray('   (This may take a few minutes if building images...)\n'));
+        
+        // Build spawn arguments correctly for both docker compose and docker-compose
+        const spawnArgs = useDockerCompose 
+          ? ['up', '-d']  // docker-compose is a single command
+          : ['compose', 'up', '-d'];  // docker compose needs 'compose' as first arg
+        const spawnCmd = useDockerCompose ? 'docker-compose' : 'docker';
+        
+        const child = spawn(spawnCmd, spawnArgs, {
           cwd: this.projectRoot,
-          stdio: 'pipe' // Use pipe to capture output
+          stdio: 'inherit', // Show output in real-time
+          shell: false
         });
-      const result = { success: true };
+        
+        // Wait for process to complete
+        await new Promise((resolve, reject) => {
+          child.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`Docker compose exited with code ${code}`));
+            }
+          });
+          
+          child.on('error', (err) => {
+            reject(err);
+          });
+        });
+        
+        const result = { success: true };
       
       // Wait a moment for services to fully start
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       return result;
     } catch (err) {
@@ -493,10 +519,10 @@ class DockerInstaller {
             try {
               // Split command properly for spawn
               // Use --no-deps to prevent starting dependencies that might conflict
-              const spawnCmd = composeCmd === 'docker compose' ? 'docker' : composeCmd;
-              const spawnArgs = composeCmd === 'docker compose' 
-                ? [...composeArgs, 'up', '-d', '--no-deps', service]
-                : ['up', '-d', '--no-deps', service];
+              const spawnCmd = useDockerCompose ? 'docker-compose' : 'docker';
+              const spawnArgs = useDockerCompose 
+                ? ['up', '-d', '--no-deps', service]
+                : ['compose', 'up', '-d', '--no-deps', service];
               
               // #region agent log
               debugLog('docker-installer.js:332', 'spawning service start', { spawnCmd, spawnArgs, service, usingNoDeps: true }, 'A,B,C');
@@ -591,7 +617,12 @@ class DockerInstaller {
 
             // Use spawn instead of execSync to show real-time output
             // Fix deprecation warning: don't use shell:true with array args
-            const child = spawn(composeCmd, ['up', '-d', ...servicesToStart], {
+            const spawnCmd = useDockerCompose ? 'docker-compose' : 'docker';
+            const spawnArgs = useDockerCompose 
+              ? ['up', '-d', ...servicesToStart]
+              : ['compose', 'up', '-d', ...servicesToStart];
+            
+            const child = spawn(spawnCmd, spawnArgs, {
               cwd: this.projectRoot,
               stdio: 'inherit'
             });
@@ -630,10 +661,10 @@ class DockerInstaller {
             try {
               // Split command properly for spawn
               // Use --no-deps to prevent starting dependencies that might conflict
-              const spawnCmd = composeCmd === 'docker compose' ? 'docker' : composeCmd;
-              const spawnArgs = composeCmd === 'docker compose' 
-                ? [...composeArgs, 'up', '-d', '--no-deps', 'scanner-map']
-                : ['up', '-d', '--no-deps', 'scanner-map'];
+              const spawnCmd = useDockerCompose ? 'docker-compose' : 'docker';
+              const spawnArgs = useDockerCompose 
+                ? ['up', '-d', '--no-deps', 'scanner-map']
+                : ['compose', 'up', '-d', '--no-deps', 'scanner-map'];
               
               // #region agent log
               debugLog('docker-installer.js:456', 'spawning scanner-map only', { spawnCmd, spawnArgs, usingNoDeps: true }, 'A,B,C');
@@ -856,14 +887,17 @@ class DockerInstaller {
    */
   async stopServices() {
     try {
-      let composeCmd = 'docker compose';
+      let useDockerCompose = false;
       try {
         execSync('docker compose version', { stdio: 'ignore' });
+        useDockerCompose = false;
       } catch (err) {
-        composeCmd = 'docker-compose';
+        useDockerCompose = true;
       }
 
-      execSync(`${composeCmd} down`, {
+      const downCmd = useDockerCompose ? 'docker-compose' : 'docker';
+      const downArgs = useDockerCompose ? ['down'] : ['compose', 'down'];
+      execSync(`${downCmd} ${downArgs.join(' ')}`, {
         cwd: this.projectRoot,
         stdio: 'inherit'
       });
