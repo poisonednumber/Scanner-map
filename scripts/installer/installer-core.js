@@ -18,6 +18,7 @@ const ModelRecommendations = require('./model-recommendations');
 const WhisperDownloader = require('./whisper-downloader');
 const AutoStart = require('./auto-start');
 const UpdateChecker = require('./update-checker');
+const PathSelector = require('./path-selector');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -60,7 +61,9 @@ const SERVICE_URLS = {
 
 class InstallerCore {
   constructor(projectRoot) {
+    this.originalProjectRoot = projectRoot;
     this.projectRoot = projectRoot;
+    this.pathSelector = new PathSelector(projectRoot);
     this.dockerInstaller = new DockerInstaller(projectRoot);
     this.localInstaller = new LocalInstaller(projectRoot);
     this.dependencyInstaller = new DependencyInstaller();
@@ -68,6 +71,18 @@ class InstallerCore {
     this.whisperDownloader = new WhisperDownloader(projectRoot);
     this.autoStart = new AutoStart(projectRoot);
     this.updateChecker = new UpdateChecker(projectRoot);
+  }
+
+  /**
+   * Update project root after path selection
+   */
+  updateProjectRoot(newRoot) {
+    this.projectRoot = newRoot;
+    this.dockerInstaller = new DockerInstaller(newRoot);
+    this.localInstaller = new LocalInstaller(newRoot);
+    this.whisperDownloader = new WhisperDownloader(newRoot);
+    this.autoStart = new AutoStart(newRoot);
+    this.updateChecker = new UpdateChecker(newRoot);
   }
 
   /**
@@ -149,9 +164,25 @@ class InstallerCore {
       process.exit(1);
     }
 
-    // Step 1: Choose installation type
-    // Note: Total steps will be 8 for Docker, 7 for Local (we'll use 8 as placeholder)
-    this.printStep(1, 8, 'Choose installation method');
+    // Step 1: Choose installation location
+    this.printStep(1, 9, 'Choose installation location');
+    const locationResult = await this.configureInstallLocation();
+    if (!locationResult.success) {
+      console.log(chalk.red(`\n❌ ${locationResult.error}\n`));
+      process.exit(1);
+    }
+    
+    // Update project root if moved
+    if (locationResult.moved) {
+      this.updateProjectRoot(locationResult.installPath);
+      // Change to new directory
+      process.chdir(locationResult.installPath);
+      console.log(chalk.green(`✓ Changed working directory to: ${locationResult.installPath}\n`));
+    }
+    console.log('');
+
+    // Step 2: Choose installation type
+    this.printStep(2, 9, 'Choose installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
@@ -175,10 +206,10 @@ class InstallerCore {
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
     // Calculate total steps based on installation type
-    const totalSteps = installationType === 'docker' ? 8 : 7;
-    let currentStep = 2;
+    const totalSteps = installationType === 'docker' ? 9 : 8;
+    let currentStep = 3;
 
-    // Step 2: Check prerequisites and install missing dependencies
+    // Step 3: Check prerequisites and install missing dependencies
     this.printStep(currentStep++, totalSteps, 'Checking system requirements');
     const prereqResult = await this.checkPrerequisites(installationType);
     if (!prereqResult.success) {
@@ -186,17 +217,17 @@ class InstallerCore {
     }
     console.log(chalk.green('✓ All prerequisites met\n'));
 
-    // Step 3: Location setup (for geocoding)
+    // Step 4: Location setup (for geocoding)
     this.printStep(currentStep++, totalSteps, 'Configure your location');
     const locationConfig = await this.configureLocation();
     console.log('');
 
-    // Step 4: Choose services and transcription
+    // Step 5: Choose services and transcription
     this.printStep(currentStep++, totalSteps, 'Configure transcription and AI');
     const serviceConfig = await this.configureServices(installationType);
     console.log('');
 
-    // Step 5: GPU acceleration (Docker only)
+    // Step 6: GPU acceleration (Docker only)
     let gpuConfig = { enableGPU: false };
     if (installationType === 'docker') {
       this.printStep(currentStep++, totalSteps, 'GPU acceleration (optional)');
@@ -204,22 +235,22 @@ class InstallerCore {
       console.log('');
     }
 
-    // Step 5/6: Optional dependencies (based on selected services)
+    // Step 7: Optional dependencies (based on selected services)
     this.printStep(currentStep++, totalSteps, 'Optional dependencies');
     const optionalDeps = await this.configureOptionalDependencies(installationType, serviceConfig);
     console.log('');
 
-    // Step 6/7: Optional integrations
+    // Step 8: Optional integrations
     this.printStep(currentStep++, totalSteps, 'Optional integrations');
     const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 7/8: Post-installation options
+    // Step 9: Post-installation options
     this.printStep(currentStep++, totalSteps, 'Post-installation options');
     const postInstallConfig = await this.configurePostInstall(installationType, {});
     console.log('');
 
-    // Step 8/9: Review and install
+    // Step 10: Review and install
     this.printStep(currentStep++, totalSteps, 'Review and install');
     
     // Build final configuration with auto-configured URLs
@@ -378,6 +409,83 @@ class InstallerCore {
     }
 
     return { success: true };
+  }
+
+  /**
+   * Configure installation location
+   */
+  async configureInstallLocation() {
+    console.log(chalk.gray('   Choose where to install Scanner Map.\n'));
+
+    const defaultPaths = this.pathSelector.getDefaultPaths();
+    const recommendedPath = this.pathSelector.getRecommendedPath();
+
+    const { installPath } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'installPath',
+        message: 'Installation location:',
+        choices: defaultPaths.map(p => ({
+          name: p.name,
+          value: p.value,
+          description: p.description
+        })),
+        default: recommendedPath
+      }
+    ]);
+
+    let finalPath = installPath;
+
+    // Handle custom path input
+    if (installPath === 'custom') {
+      const { customPath } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customPath',
+          message: 'Enter installation path:',
+          validate: (input) => {
+            const validation = this.pathSelector.validatePath(input.trim());
+            if (!validation.valid) {
+              return validation.error;
+            }
+            return true;
+          },
+          filter: (input) => input.trim()
+        }
+      ]);
+      finalPath = this.pathSelector.validatePath(customPath).path;
+    }
+
+    // Check if elevation is needed
+    const needsElevation = this.pathSelector.requiresElevation(finalPath);
+    if (needsElevation) {
+      console.log(chalk.yellow(`\n   ⚠️  This location may require administrator/sudo privileges.`));
+      console.log(chalk.gray(`   You may be prompted for elevation during installation.\n`));
+    }
+
+    // Move files if needed
+    if (path.resolve(finalPath) !== path.resolve(this.originalProjectRoot)) {
+      const moveResult = await this.pathSelector.moveToInstallPath(finalPath);
+      if (!moveResult.success) {
+        return {
+          success: false,
+          error: moveResult.error || 'Failed to move installation files'
+        };
+      }
+      return {
+        success: true,
+        installPath: finalPath,
+        moved: moveResult.moved,
+        needsElevation: needsElevation
+      };
+    }
+
+    return {
+      success: true,
+      installPath: finalPath,
+      moved: false,
+      needsElevation: needsElevation
+    };
   }
 
   /**
