@@ -2,6 +2,62 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.2] - 2024-12-20
+
+### Installer & Startup Script Improvements
+
+### Added
+- Transcription configuration step in interactive installer
+  - Support for Local Whisper (CPU/CUDA with model selection)
+  - OpenAI Whisper API configuration
+  - Remote Faster-Whisper server setup
+  - iCAD Transcribe integration
+- Configurable geocoding location settings (city, state, country, counties)
+- Node.js version check for very new versions (v23+) with compatibility warning
+- Better error handling and user feedback throughout installer
+
+### Changed
+- **Reorganized installer flow** into 9 logical steps:
+  1. Installation method selection
+  2. System requirements check
+  3. Basic settings (ports, timezone)
+  4. Geocoding configuration
+  5. Transcription setup (NEW)
+  6. AI provider configuration
+  7. Optional services (TrunkRecorder)
+  8. Discord integration
+  9. Review and confirm
+- **Improved Windows installer (`install.bat`)**:
+  - Added Git prerequisite check
+  - Fixed Node.js version detection and validation
+  - Added warning for Node.js v23+ compatibility
+  - Improved npm dependency installation with better error handling
+  - Enhanced error messages with troubleshooting tips
+- **Improved Linux/macOS installer (`install.sh`)**:
+  - Fixed redundant directory check logic
+  - Refactored into cleaner, more maintainable functions
+  - Now offers to clone repository if not found
+  - Better status indicators and error messages
+- **Enhanced CLI entry point (`bin/scanner-map.js`)**:
+  - Removed unnecessary `shell: true` flag (security improvement)
+  - Now passes through command-line arguments to installer
+- **Improved interactive installer (`installer-core.js`)**:
+  - Better step descriptions and user guidance
+  - Enhanced summary display with grouped configuration sections
+  - OpenAI API key input now masked for security
+  - OpenAI model selection uses dropdown instead of free text
+  - Improved error handling and user feedback messages
+  - Fixed geocoding defaults (now prompts for location instead of hardcoded)
+
+### Fixed
+- Typos and awkward wording throughout all installer scripts
+- Redundant directory check logic in `install.sh`
+- Missing Git check in Windows installer
+- Inconsistent error message formatting
+- Hardcoded geocoding location (Baltimore, MD) - now user-configurable
+
+---
+
 ## [3.0.0] - 2024-12-18
 
 ### Major Documentation Overhaul

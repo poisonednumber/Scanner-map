@@ -1,6 +1,6 @@
 {
   "name": "scanner-map",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Real-time mapping system for radio calls with AI transcription and geocoding",
   "main": "bot.js",
   "bin": {
