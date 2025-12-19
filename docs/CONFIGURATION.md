@@ -6,6 +6,35 @@ All settings are configured in the `.env` file. This document explains every opt
 
 ---
 
+## Port Reference
+
+All services and their default ports:
+
+| Service | Port | Type | Description |
+|---------|------|------|-------------|
+| **Scanner Map Web UI** | `3001` | HTTP | Main web interface |
+| **Scanner Map API** | `3306` | HTTP | Audio upload endpoint |
+| **iCAD Transcribe Web UI** | `9912` | HTTP | Transcription manager |
+| **Ollama API** | `11434` | HTTP | Local AI service (no web UI) |
+| **Faster-Whisper Server** | `8000` | HTTP | Remote transcription (if used) |
+
+### Web Interface URLs
+
+| Interface | URL | Login |
+|-----------|-----|-------|
+| Scanner Map | `http://localhost:3001` | Optional (see Authentication) |
+| iCAD Transcribe | `http://localhost:9912` | `admin` / `changeme123` |
+
+### API Endpoints
+
+| Endpoint | URL | Auth |
+|----------|-----|------|
+| Audio Upload | `http://localhost:3306/api/call-upload` | API Key |
+| iCAD Transcribe | `http://localhost:9912/api/transcribe` | API Key |
+| Ollama Generate | `http://localhost:11434/api/generate` | None |
+
+---
+
 ## Quick Reference
 
 | Setting | Required | Default | Description |

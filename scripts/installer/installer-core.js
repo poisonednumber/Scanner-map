@@ -649,18 +649,54 @@ class InstallerCore {
       console.log(chalk.cyan('     npm start\n'));
     }
 
-    console.log(chalk.white('   Web Interface:'));
-    console.log(chalk.cyan(`     http://localhost:${config.webserverPort}\n`));
+    // Show all web interfaces
+    this.printHeader('Web Interfaces');
 
-    this.printHeader('Connect Radio Software');
+    console.log(chalk.white('   📍 Scanner Map (Main Interface):'));
+    console.log(chalk.cyan(`      http://localhost:${config.webserverPort}\n`));
 
-    console.log(chalk.white('   SDRTrunk / TrunkRecorder endpoint:'));
-    console.log(chalk.cyan(`     http://localhost:${config.botPort}/api/call-upload\n`));
+    if (config.transcriptionMode === 'icad' || config.enableICAD) {
+      console.log(chalk.white('   🎤 iCAD Transcribe (Transcription Manager):'));
+      console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}`));
+      console.log(chalk.gray('      Default login: admin / changeme123\n'));
+    }
 
-    console.log(chalk.white('   API Key (saved to data/apikeys.json):'));
-    console.log(chalk.cyan(`     ${config.trunkRecorderApiKey}\n`));
+    if (config.aiProvider === 'ollama' || config.enableOllama) {
+      console.log(chalk.white('   🤖 Ollama (Local AI - API only):'));
+      console.log(chalk.cyan(`      http://localhost:${DEFAULTS.OLLAMA_PORT}\n`));
+    }
+
+    // API endpoints
+    this.printHeader('API Endpoints');
+
+    console.log(chalk.white('   📡 Audio Upload (SDRTrunk/TrunkRecorder):'));
+    console.log(chalk.cyan(`      http://localhost:${config.botPort}/api/call-upload\n`));
+
+    console.log(chalk.white('   🔑 API Key:'));
+    console.log(chalk.cyan(`      ${config.trunkRecorderApiKey}`));
+    console.log(chalk.gray('      (Saved to data/api-key.txt)\n'));
+
+    if (config.transcriptionMode === 'icad' || config.enableICAD) {
+      console.log(chalk.white('   🎤 iCAD Transcribe API:'));
+      console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}/api/transcribe\n`));
+    }
 
     console.log(chalk.gray('   See docs/RADIO-SOFTWARE.md for detailed setup.\n'));
+
+    // Port summary
+    this.printHeader('Port Summary');
+    console.log(chalk.gray('   ┌─────────────────────────────────────────────────┐'));
+    console.log(chalk.gray('   │  Service                      Port             │'));
+    console.log(chalk.gray('   ├─────────────────────────────────────────────────┤'));
+    console.log(chalk.gray(`   │  Scanner Map Web UI           ${config.webserverPort}              │`));
+    console.log(chalk.gray(`   │  Scanner Map API              ${config.botPort}              │`));
+    if (config.transcriptionMode === 'icad' || config.enableICAD) {
+      console.log(chalk.gray(`   │  iCAD Transcribe Web UI      ${DEFAULTS.ICAD_PORT}              │`));
+    }
+    if (config.aiProvider === 'ollama' || config.enableOllama) {
+      console.log(chalk.gray(`   │  Ollama API                  ${DEFAULTS.OLLAMA_PORT}             │`));
+    }
+    console.log(chalk.gray('   └─────────────────────────────────────────────────┘\n'));
 
     // Ask to start services (Docker)
     if (installationType === 'docker') {
@@ -678,7 +714,10 @@ class InstallerCore {
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
           console.log(chalk.green('✓ Services started!\n'));
-          console.log(chalk.cyan.bold('🌐 Open: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
+          console.log(chalk.cyan.bold('🌐 Open Scanner Map: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
+          if (config.transcriptionMode === 'icad' || config.enableICAD) {
+            console.log(chalk.cyan.bold('🎤 Open iCAD:        ') + chalk.underline(`http://localhost:${DEFAULTS.ICAD_PORT}`));
+          }
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
           console.log(chalk.gray('   Start manually: docker-compose up -d'));
