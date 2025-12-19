@@ -2,6 +2,42 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.8] - 2024-12-20
+
+### Installer Fixes and Improvements
+
+### Fixed
+- **Radio Software Display Issue**
+  - Fixed "Radio Software: undefined" showing in installer summary
+  - Added proper merging of `radioSoftware` and related flags from integration config
+  - Added safety checks to prevent undefined values in display
+- **Ollama/iCAD Remote Detection**
+  - Fixed health checks incorrectly showing Ollama/iCAD as remote when Docker is selected
+  - Improved logic to distinguish local Docker containers from remote URLs
+  - Fixed summary display to correctly show "(auto)" for local Docker vs "(remote)" for remote services
+- **TrunkRecorder Health Check**
+  - Fixed health check to work with both `enableTrunkRecorder` flag and `radioSoftware` selection
+  - Now properly detects TrunkRecorder when selected via radio software option
+- **Model Pulling**
+  - Verified and ensured Ollama model auto-pulling works when Docker Ollama is enabled
+  - Model pulling condition now correctly checks `enableOllama` flag
+
+### Enhanced
+- **iCAD Model Installation Guidance**
+  - Added clearer instructions for accessing iCAD web UI to install models
+  - Improved messaging about model installation process
+- **Health Check Logic**
+  - Refined Ollama and iCAD health check conditions for better accuracy
+  - Improved detection of local vs remote service configurations
+
+### Changed
+- **Installer Configuration Flow**
+  - Radio software selection now properly flows through entire installation process
+  - All enable flags correctly set based on user selections
+  - Config object construction improved for better consistency
+
+---
+
 ## [3.0.7] - 2024-12-20
 
 ### Radio Software Alternatives with Complete Auto-Configuration

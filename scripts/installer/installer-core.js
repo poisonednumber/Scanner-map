@@ -334,7 +334,11 @@ class InstallerCore {
       enableDiscord: integrationConfig.enableDiscord,
       discordToken: integrationConfig.discordToken || '',
       clientId: integrationConfig.clientId || '',
-      enableTrunkRecorder: integrationConfig.enableTrunkRecorder,
+      radioSoftware: integrationConfig.radioSoftware || 'none',
+      enableTrunkRecorder: integrationConfig.enableTrunkRecorder || false,
+      enableSDRTrunk: integrationConfig.enableSDRTrunk || false,
+      enableRdioScanner: integrationConfig.enableRdioScanner || false,
+      enableOP25: integrationConfig.enableOP25 || false,
       
       // GPU acceleration (Docker only)
       enableGPU: gpuConfig.enableGPU,
@@ -1977,7 +1981,9 @@ class InstallerCore {
       console.log(chalk.white(`     Model: ${formatValue(config.whisperModel)}`));
     } else if (config.transcriptionMode === 'icad') {
       const icadDisplayUrl = config.icadUrl || (config.enableICAD ? 'http://icad-transcribe:9912' : 'Not configured');
-      const icadType = config.icadUrl && !config.icadUrl.includes('icad-transcribe') ? ' (remote)' : ' (auto)';
+      // Determine if it's remote: has URL but doesn't contain service name or localhost, and enableICAD is false
+      const isRemoteICAD = config.icadUrl && !config.icadUrl.includes('icad-transcribe:') && !config.icadUrl.includes('localhost:9912') && !config.enableICAD;
+      const icadType = isRemoteICAD ? ' (remote)' : (config.enableICAD ? ' (auto)' : '');
       console.log(chalk.white(`     URL: ${formatValue(icadDisplayUrl)}${icadType}`));
     } else if (config.transcriptionMode === 'remote') {
       console.log(chalk.white(`     URL: ${formatValue(config.fasterWhisperServerUrl)} (remote)`));
@@ -1991,8 +1997,10 @@ class InstallerCore {
       console.log(chalk.white(`     Model: ${formatValue(config.openaiModel)}`));
       console.log(chalk.white(`     API Key: ${formatValue(config.openaiApiKey, true)}`));
     } else {
-      const ollamaDisplayUrl = config.ollamaUrl || 'http://ollama:11434';
-      const ollamaType = config.ollamaUrl && !config.ollamaUrl.includes('ollama:') && !config.ollamaUrl.includes('localhost') ? ' (remote)' : (config.enableOllama ? ' (auto)' : ' (remote)');
+      const ollamaDisplayUrl = config.ollamaUrl || (config.enableOllama ? 'http://ollama:11434' : 'Not configured');
+      // Determine if it's remote: has URL but doesn't contain service name or localhost, and enableOllama is false
+      const isRemoteOllama = config.ollamaUrl && !config.ollamaUrl.includes('ollama:') && !config.ollamaUrl.includes('localhost:11434') && !config.enableOllama;
+      const ollamaType = isRemoteOllama ? ' (remote)' : (config.enableOllama ? ' (auto)' : '');
       console.log(chalk.white(`     URL: ${formatValue(ollamaDisplayUrl)}${ollamaType}`));
       console.log(chalk.white(`     Model: ${formatValue(config.ollamaModel)}`));
     }
@@ -2014,9 +2022,10 @@ class InstallerCore {
     // Integrations
     console.log(chalk.white.bold('   🔗 Integrations'));
     console.log(chalk.white(`     Discord: ${formatValue(config.enableDiscord)}`));
-    console.log(chalk.white(`     Radio Software: ${config.radioSoftware === 'none' ? 'None (manual setup)' : config.radioSoftware}`));
-    if (config.radioSoftware !== 'none') {
-      console.log(chalk.gray(`       (Config files generated in appdata/${config.radioSoftware}/config/)`));
+    const radioSoftwareDisplay = config.radioSoftware || 'none';
+    console.log(chalk.white(`     Radio Software: ${radioSoftwareDisplay === 'none' ? 'None (manual setup)' : radioSoftwareDisplay}`));
+    if (radioSoftwareDisplay !== 'none' && radioSoftwareDisplay !== undefined) {
+      console.log(chalk.gray(`       (Config files generated in appdata/${radioSoftwareDisplay}/config/)`));
     }
     console.log('');
   }
@@ -2265,8 +2274,9 @@ class InstallerCore {
         
         if (config.transcriptionMode === 'icad' || config.enableICAD) {
           console.log(chalk.white('   4. Access iCAD Transcribe to install models:'));
-          console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}\n`));
-          console.log(chalk.gray('      Default login: admin / changeme123 (CHANGE THIS!)\n'));
+          console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}`));
+          console.log(chalk.gray('      Default login: admin / changeme123 (CHANGE THIS!)'));
+          console.log(chalk.gray('      After logging in, go to Models section to download transcription models\n'));
         }
       }
     } else {

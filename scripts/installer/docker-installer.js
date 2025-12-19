@@ -1152,7 +1152,13 @@ class DockerInstaller {
         }
 
         // Check Ollama if enabled locally
-        if (config.enableOllama && !config.ollamaUrl) {
+        // Local if: enableOllama is true OR URL contains service name/localhost
+        // Remote if: URL exists, doesn't contain service name/localhost, and enableOllama is false
+        const hasLocalUrl = config.ollamaUrl && (config.ollamaUrl.includes('ollama:') || config.ollamaUrl.includes('localhost:11434'));
+        const isLocalOllama = config.enableOllama || hasLocalUrl;
+        const isRemoteOllama = config.ollamaUrl && !hasLocalUrl && !config.enableOllama;
+        
+        if (isLocalOllama && !isRemoteOllama) {
           try {
             execSync('docker exec ollama ollama list', {
               stdio: 'ignore',
@@ -1164,13 +1170,19 @@ class DockerInstaller {
             console.log(chalk.yellow('   ⚠️  ollama: Not responding (may still be starting)'));
             status.health['ollama'] = 'starting';
           }
-        } else if (config.ollamaUrl) {
+        } else if (isRemoteOllama) {
           console.log(chalk.blue(`   ℹ️  ollama: Using remote URL (${config.ollamaUrl})`));
           status.health['ollama'] = 'remote';
         }
 
         // Check iCAD if enabled locally
-        if (config.enableICAD && !config.icadUrl) {
+        // Local if: enableICAD is true OR URL contains service name/localhost
+        // Remote if: URL exists, doesn't contain service name/localhost, and enableICAD is false
+        const hasLocalICADUrl = config.icadUrl && (config.icadUrl.includes('icad-transcribe:') || config.icadUrl.includes('localhost:9912'));
+        const isLocalICAD = config.enableICAD || hasLocalICADUrl;
+        const isRemoteICAD = config.icadUrl && !hasLocalICADUrl && !config.enableICAD;
+        
+        if (isLocalICAD && !isRemoteICAD) {
           try {
             execSync('curl -f http://localhost:9912/api/health 2>/dev/null || echo "not-ready"', {
               stdio: 'ignore',
@@ -1182,13 +1194,13 @@ class DockerInstaller {
             console.log(chalk.yellow('   ⚠️  icad-transcribe: Not responding (may still be starting)'));
             status.health['icad-transcribe'] = 'starting';
           }
-        } else if (config.icadUrl) {
+        } else if (isRemoteICAD) {
           console.log(chalk.blue(`   ℹ️  icad-transcribe: Using remote URL (${config.icadUrl})`));
           status.health['icad-transcribe'] = 'remote';
         }
 
         // Check TrunkRecorder if enabled
-        if (config.enableTrunkRecorder) {
+        if (config.enableTrunkRecorder || config.radioSoftware === 'trunk-recorder') {
           try {
             execSync('docker exec trunk-recorder echo "test" 2>/dev/null', {
               stdio: 'ignore',

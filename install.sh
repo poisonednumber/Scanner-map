@@ -159,7 +159,58 @@ install_dependencies() {
         print_success "Dependencies already installed"
     else
         print_info "Installing npm dependencies..."
-        npm install --no-audit --no-fund
+        
+        # Check if npm is available
+        if ! command_exists npm; then
+            print_warning "npm not found in PATH"
+            print_info "Node.js may have been just installed."
+            echo ""
+            print_info "The installer needs to be restarted for PATH to update."
+            echo ""
+            read -p "Restart installer now? [Y/n]: " restart
+            restart=${restart:-Y}
+            
+            if [[ "$restart" =~ ^[Yy]$ ]]; then
+                update_and_restart "$@"
+            else
+                echo ""
+                echo "Please restart the installer manually after Node.js is available in PATH."
+                echo "Run: bash install.sh"
+                exit 1
+            fi
+        fi
+        
+        if ! npm install --no-audit --no-fund; then
+            print_error "Failed to install npm dependencies"
+            echo ""
+            
+            # Check if npm is still available (might have been a PATH issue)
+            if ! command_exists npm; then
+                print_warning "npm not found in PATH"
+                print_info "Node.js may have been just installed."
+                echo ""
+                print_info "The installer needs to be restarted for PATH to update."
+                echo ""
+                read -p "Restart installer now? [Y/n]: " restart
+                restart=${restart:-Y}
+                
+                if [[ "$restart" =~ ^[Yy]$ ]]; then
+                    update_and_restart "$@"
+                else
+                    echo ""
+                    echo "Please restart the installer manually after Node.js is available in PATH."
+                    echo "Run: bash install.sh"
+                    exit 1
+                fi
+            else
+                echo "Common fixes:"
+                echo "  1. Delete node_modules folder and try again"
+                echo "  2. Run: npm cache clean --force"
+                echo "  3. Check your internet connection"
+                exit 1
+            fi
+        fi
+        
         print_success "Dependencies installed successfully"
     fi
 }
@@ -196,6 +247,56 @@ main() {
     node scripts/installer/installer-core.js
     
     print_success "Setup complete!"
+}
+
+# Update and restart function
+update_and_restart() {
+    # Check if we're in a git repository
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        print_info "Checking for project updates..."
+        
+        # Fetch latest changes without merging
+        if git fetch origin >/dev/null 2>&1; then
+            # Check if there are updates available
+            if ! git diff HEAD origin/HEAD --quiet >/dev/null 2>&1; then
+                print_info "Updates available. Pulling latest changes..."
+                # Store the commit before pull to check what changed
+                local before_pull=$(git rev-parse HEAD 2>/dev/null)
+                
+                if git pull origin; then
+                    print_success "Project updated successfully"
+                    
+                    # Check if package.json changed in the pull (need to rebuild dependencies)
+                    if [[ -n "$before_pull" ]] && git diff "$before_pull" HEAD --name-only 2>/dev/null | grep -q "package.json"; then
+                        print_info "package.json changed. Rebuilding dependencies..."
+                        if [[ -d "node_modules" ]]; then
+                            rm -rf node_modules
+                        fi
+                        if npm install --no-audit --no-fund; then
+                            print_success "Dependencies rebuilt successfully"
+                        else
+                            print_warning "Dependency rebuild had issues, but continuing..."
+                        fi
+                    fi
+                else
+                    print_warning "Failed to pull updates, but continuing with restart..."
+                fi
+            else
+                print_info "Project is up to date"
+            fi
+        else
+            print_warning "Could not check for updates (not a git repo or no network)"
+        fi
+    else
+        print_info "Not a git repository, skipping update check"
+    fi
+    
+    echo ""
+    print_info "Waiting 3 seconds for PATH to update..."
+    sleep 3
+    print_info "Restarting installer..."
+    echo ""
+    exec "$0" "$@"
 }
 
 # Run main function
