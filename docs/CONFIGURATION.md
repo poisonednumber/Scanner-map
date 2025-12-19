@@ -53,7 +53,7 @@ All services and their default ports:
 # Port for the web interface
 WEBSERVER_PORT=3001
 
-# Port for SDRTrunk/TrunkRecorder uploads
+# Port for radio software uploads (TrunkRecorder, SDRTrunk, rdio-scanner, OP25)
 BOT_PORT=3306
 
 # Public domain or IP for audio playback URLs
@@ -219,13 +219,38 @@ TONE_DETECTION_THRESHOLD=0.3
 
 ---
 
+## Radio Software Configuration
+
+The installer automatically configures your selected radio software. This setting is stored for reference:
+
+```env
+# Selected radio software (set by installer)
+# Options: trunk-recorder, sdrtrunk, rdio-scanner, op25, none
+RADIO_SOFTWARE=trunk-recorder
+```
+
+**Auto-Configuration:**
+- API keys are automatically generated and injected into all config files
+- Upload URLs are pre-configured for Docker or local installation
+- Configuration files are generated in `appdata/{software}/config/`
+
+**Config File Locations:**
+- **TrunkRecorder:** `appdata/trunk-recorder/config/config.json`
+- **SDRTrunk:** `appdata/sdrtrunk/config/streaming-config.json`
+- **rdio-scanner:** `appdata/rdio-scanner/config/config.json`
+- **OP25:** `appdata/op25/config/config.json`
+
+See [Radio Software Guide](RADIO-SOFTWARE.md) for detailed setup instructions.
+
+---
+
 ## API Keys File
 
-API keys for SDRTrunk/TrunkRecorder are stored in:
+API keys for radio software (TrunkRecorder, SDRTrunk, rdio-scanner, OP25) are stored in:
 - **Docker:** `appdata/scanner-map/data/apikeys.json`
 - **Local:** `data/apikeys.json`
 
-This file is auto-generated on first startup. The plain-text key is displayed in the console once.
+This file is auto-generated on first startup. The plain-text key is displayed in the console once and saved to `data/api-key.txt` for easy reference.
 
 ---
 

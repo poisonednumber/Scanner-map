@@ -39,10 +39,12 @@ bash install.sh
 The installer will:
 1. ✅ Check prerequisites
 2. ✅ Let you choose Docker or Local installation
-3. ✅ Configure optional services (Ollama, iCAD, TrunkRecorder)
-4. ✅ Set up geocoding and AI providers
-5. ✅ Generate `.env` configuration
-6. ✅ Optionally start services
+3. ✅ Configure transcription and AI providers
+4. ✅ Set up geocoding settings
+5. ✅ Select radio software (TrunkRecorder, SDRTrunk, rdio-scanner, OP25) - **all auto-configured**
+6. ✅ Configure optional services (Ollama, iCAD)
+7. ✅ Generate `.env` configuration and config files
+8. ✅ Optionally start services
 
 ---
 

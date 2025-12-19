@@ -12,6 +12,8 @@
 | `ollama` | Local AI service (optional) | 11434 |
 | `icad-transcribe` | Advanced transcription (optional) | 9912 |
 | `trunk-recorder` | Radio recording (optional) | - |
+| `rdio-scanner` | Web-based scanner (optional) | 3000 |
+| `op25` | Command-line decoder (optional) | - |
 
 ---
 
@@ -154,7 +156,17 @@ appdata/
 ├── ollama/            # Ollama models
 ├── icad-transcribe/   # iCAD data
 └── trunk-recorder/
-    ├── config/        # TrunkRecorder config
+    ├── trunk-recorder/
+    │   ├── config/        # TrunkRecorder config
+    │   └── recordings/    # Audio recordings
+    ├── sdrtrunk/
+    │   └── config/        # SDRTrunk config files
+    ├── rdio-scanner/
+    │   ├── config/        # rdio-scanner config
+    │   └── data/          # rdio-scanner data
+    └── op25/
+        ├── config/        # OP25 config
+        └── recordings/    # Audio recordings
     └── recordings/    # Raw recordings
 ```
 

@@ -4,7 +4,7 @@
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da?logo=discord)](https://discord.gg/X7vej75zZy)
 
-Scanner Map ingests radio calls from SDRTrunk, TrunkRecorder, or any rdio-scanner compatible source, then:
+Scanner Map ingests radio calls from TrunkRecorder, SDRTrunk, rdio-scanner, OP25, or any rdio-scanner compatible source, then:
 - 🎤 **Transcribes** audio using local AI, OpenAI, or iCAD
 - 📍 **Extracts addresses** and geocodes them to coordinates
 - 🗺️ **Displays calls** on an interactive real-time map
@@ -52,7 +52,10 @@ Before installing, make sure you have:
    - Choosing Docker or local installation
    - Configuring transcription and AI
    - Setting up geocoding
+   - Selecting radio software (TrunkRecorder, SDRTrunk, rdio-scanner, OP25)
    - Optional Discord integration
+   
+   **All radio software is auto-configured** with API keys and upload URLs!
 
 5. **Start Scanner Map**
 
@@ -107,11 +110,24 @@ bash install.sh
 
 ## 📡 Connect Your Radio Software
 
-After installation, connect SDRTrunk or TrunkRecorder:
+Scanner Map supports multiple radio recording software options, all with **complete auto-configuration**:
+
+| Software | Type | Auto-Configured |
+|----------|------|----------------|
+| **TrunkRecorder** | Docker/Linux | ✅ Yes |
+| **SDRTrunk** | Desktop app | ✅ Config file |
+| **rdio-scanner** | Web-based | ✅ Docker + Config |
+| **OP25** | Command-line | ✅ Docker + Config |
 
 **Endpoint:** `http://localhost:3306/api/call-upload`
 
-**API Key:** Found in `data/apikeys.json` (auto-generated on first run)
+**API Key:** Auto-generated and configured in all radio software config files
+
+The installer automatically:
+- Generates API keys
+- Creates configuration files
+- Sets up Docker containers (where applicable)
+- Configures upload URLs
 
 See [Radio Software Guide](docs/RADIO-SOFTWARE.md) for detailed setup.
 
@@ -127,7 +143,7 @@ See [Radio Software Guide](docs/RADIO-SOFTWARE.md) for detailed setup.
 | [Transcription](docs/TRANSCRIPTION.md) | Local, remote, OpenAI, iCAD modes |
 | [Geocoding](docs/GEOCODING.md) | Nominatim, LocationIQ, Google Maps |
 | [Discord](docs/DISCORD.md) | Discord bot setup |
-| [Radio Software](docs/RADIO-SOFTWARE.md) | SDRTrunk & TrunkRecorder |
+| [Radio Software](docs/RADIO-SOFTWARE.md) | TrunkRecorder, SDRTrunk, rdio-scanner, OP25 |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ---
