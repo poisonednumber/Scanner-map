@@ -139,9 +139,17 @@ class DockerInstaller {
 
     // Build docker-compose.yml
     // Pass service URLs so compose builder knows if services are remote
+    // Only pass URLs if they are truly remote (not Docker internal service names)
+    const isRemoteOllama = envConfig.ollamaUrl && 
+      !envConfig.ollamaUrl.includes('localhost') && 
+      !envConfig.ollamaUrl.includes('ollama:');
+    const isRemoteICAD = envConfig.icadUrl && 
+      !envConfig.icadUrl.includes('localhost') && 
+      !envConfig.icadUrl.includes('icad-transcribe:');
+    
     const composeResult = await this.composeBuilder.build({
-      enableOllama: enableOllama || !!envConfig.ollamaUrl,  // Enable if local or remote
-      enableICAD: enableICAD || !!envConfig.icadUrl,  // Enable if local or remote
+      enableOllama: enableOllama || isRemoteOllama,  // Enable if local Docker or remote
+      enableICAD: enableICAD || isRemoteICAD,  // Enable if local Docker or remote
       enableTrunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
       enableRdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
       enableOP25: enableOP25 || radioSoftware === 'op25',
@@ -149,8 +157,8 @@ class DockerInstaller {
       enableGPU,
       transcriptionMode,
       timezone,
-      ollamaUrl: envConfig.ollamaUrl,  // Pass remote URL if provided
-      icadUrl: envConfig.icadUrl  // Pass remote URL if provided
+      ollamaUrl: isRemoteOllama ? envConfig.ollamaUrl : null,  // Only pass if truly remote
+      icadUrl: isRemoteICAD ? envConfig.icadUrl : null  // Only pass if truly remote
     });
     
     // Store enabled services for error handling
@@ -166,13 +174,15 @@ class DockerInstaller {
 
     // Generate .env file with API keys
     // Use provided ollamaUrl if it's a remote URL, otherwise use local Docker container URL
-    const finalOllamaUrl = envConfig.ollamaUrl || (enableOllama ? 'http://ollama:11434' : undefined);
+    // Note: If URLs are Docker internal (ollama:, icad-transcribe:), they're not truly remote
+    const finalOllamaUrl = isRemoteOllama ? envConfig.ollamaUrl : (enableOllama ? 'http://ollama:11434' : undefined);
+    const finalICADUrl = isRemoteICAD ? envConfig.icadUrl : (enableICAD ? 'http://icad-transcribe:9912' : undefined);
     
     const envPath = await this.envGenerator.generate({
       ...envConfig,
       installationType: 'docker',
       enableICAD,
-      icadUrl: envConfig.icadUrl || (enableICAD ? 'http://icad-transcribe:9912' : undefined),
+      icadUrl: finalICADUrl,
       icadApiKey: finalICADApiKey,
       trunkRecorderApiKey: finalRadioApiKey,
       radioApiKey: finalRadioApiKey,

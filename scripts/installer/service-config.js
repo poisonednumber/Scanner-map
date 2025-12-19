@@ -49,16 +49,18 @@ class ServiceConfig {
       ver: 2,  // Required: Config format version 2
       sources: [
         {
-          type: 'rtl_sdr',
-          device: 0,
+          driver: 'osmosdr',  // Use 'osmosdr' for RTL-SDR devices (or 'rtl' for some images)
+          device: 'rtl=0',  // RTL-SDR device specification
           center: 850000000,
-          rate: 2048000
+          rate: 2048000,
+          gain: 30,  // Default gain
+          error: 0,  // Frequency error correction
+          digitalRecorders: 4  // Number of digital recorders
         }
       ],
       systems: [
         {
-          id: 1,
-          name: 'Your System',
+          shortName: 'YourSystem',  // Short name for the system (required for some uploaders)
           control_channels: [851.0125, 851.5125],
           type: 'p25',
           modulation: 'qpsk',  // Moved from Source to System in v2
@@ -129,9 +131,33 @@ class ServiceConfig {
         existing.uploadServer.url = uploadUrl;
         existing.uploadServer.type = 'rdio-scanner';
         
+        // Migrate sources to v2 format (convert 'type' to 'driver', update structure)
+        if (existing.sources && Array.isArray(existing.sources)) {
+          existing.sources.forEach(source => {
+            if (source.type && !source.driver) {
+              // Convert type to driver format
+              if (source.type === 'rtl_sdr') {
+                source.driver = 'osmosdr';
+                source.device = source.device !== undefined ? `rtl=${source.device}` : 'rtl=0';
+              } else {
+                source.driver = source.type;
+              }
+              delete source.type;
+            }
+            // Ensure required fields exist
+            if (!source.gain) source.gain = 30;
+            if (!source.error) source.error = 0;
+            if (!source.digitalRecorders) source.digitalRecorders = 4;
+          });
+        }
+        
         // Migrate systems to v2 format if needed (add modulation, squelch, audioGain if missing)
         if (existing.systems && Array.isArray(existing.systems)) {
           existing.systems.forEach(system => {
+            // Ensure shortName exists (use name or id if available)
+            if (!system.shortName) {
+              system.shortName = system.name || `System${system.id || 1}`;
+            }
             if (!system.modulation) {
               system.modulation = 'qpsk';  // Default for P25
             }
@@ -161,9 +187,33 @@ class ServiceConfig {
         // Update to version 2
         existing.ver = 2;
         
+        // Migrate sources to v2 format (convert 'type' to 'driver', update structure)
+        if (existing.sources && Array.isArray(existing.sources)) {
+          existing.sources.forEach(source => {
+            if (source.type && !source.driver) {
+              // Convert type to driver format
+              if (source.type === 'rtl_sdr') {
+                source.driver = 'osmosdr';
+                source.device = source.device !== undefined ? `rtl=${source.device}` : 'rtl=0';
+              } else {
+                source.driver = source.type;
+              }
+              delete source.type;
+            }
+            // Ensure required fields exist
+            if (!source.gain) source.gain = 30;
+            if (!source.error) source.error = 0;
+            if (!source.digitalRecorders) source.digitalRecorders = 4;
+          });
+        }
+        
         // Migrate systems to v2 format
         if (existing.systems && Array.isArray(existing.systems)) {
           existing.systems.forEach(system => {
+            // Ensure shortName exists (use name or id if available)
+            if (!system.shortName) {
+              system.shortName = system.name || `System${system.id || 1}`;
+            }
             if (!system.modulation) {
               system.modulation = 'qpsk';
             }
@@ -573,6 +623,7 @@ API_KEY=${generatedApiKey}
       // TrunkRecorder directories
       'trunk-recorder/config',
       'trunk-recorder/recordings',
+      'trunk-recorder/logs',  // For TrunkRecorder log files
       
       // SDRTrunk directories
       'sdrtrunk/config',
