@@ -1,19 +1,38 @@
 # Multi-stage Dockerfile for Scanner Map (Optimized for lightweight production)
 # Target size: <2GB (down from ~14GB)
 
-# Stage 1: Python build environment (Alpine for smaller size)
-FROM python:3.11-alpine as python-build
+# Stage 1: Python build environment (Debian slim for better package compatibility)
+FROM python:3.11-slim as python-build
 
-# Install build dependencies
-RUN apk add --no-cache \
-    gcc \
-    g++ \
-    musl-dev \
-    linux-headers \
-    ffmpeg-dev \
-    git \
-    make \
-    cmake
+# Build argument for transcription mode
+ARG TRANSCRIPTION_MODE=local
+
+# Install build dependencies (only if needed for local transcription)
+# For non-local modes, we only need minimal runtime dependencies
+RUN if [ "$TRANSCRIPTION_MODE" = "local" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        libffi-dev \
+        libssl-dev \
+        ffmpeg \
+        libavformat-dev \
+        libavcodec-dev \
+        libavdevice-dev \
+        libavutil-dev \
+        libswscale-dev \
+        libswresample-dev \
+        libavfilter-dev \
+        pkg-config \
+        git \
+        make \
+        cmake \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Create virtual environment
 WORKDIR /build
@@ -23,18 +42,29 @@ ENV PATH="/build/.venv/bin:$PATH"
 # Copy and install Python requirements
 COPY requirements.txt /build/
 
-# Install PyTorch first (CPU version for Alpine - PyTorch doesn't have official Alpine builds)
-# For Alpine, we use the CPU-only version from PyPI
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
 
-# Install other requirements (excluding torch packages)
-RUN pip install --no-cache-dir -r requirements.txt || \
-    (pip install --no-cache-dir faster-whisper>=0.10.0 pydub>=0.25.1 icad-tone-detection>=1.0.0 python-dotenv>=1.0.0 boto3>=1.34.0 && \
-     echo "Installed packages individually (torch already installed)")
+# Install dependencies based on transcription mode
+RUN if [ "$TRANSCRIPTION_MODE" = "local" ]; then \
+      # Local transcription mode: install PyTorch, av, faster-whisper, etc. \
+      echo "Installing local transcription dependencies (PyTorch, faster-whisper, av)..." && \
+      pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+      pip install --no-cache-dir --upgrade "setuptools>=65.0" wheel && \
+      pip install --no-cache-dir "Cython>=0.29,<3.0" && \
+      pip install --no-cache-dir "av==12.3.0" && \
+      pip install --no-cache-dir -r requirements.txt || \
+        (echo "Fallback: Installing packages individually..." && \
+         pip install --no-cache-dir "faster-whisper>=0.10.0" pydub>=0.25.1 icad-tone-detection>=1.0.0 python-dotenv>=1.0.0 boto3>=1.34.0 && \
+         echo "Installed packages individually"); \
+    else \
+      # Non-local modes: only install minimal dependencies (no build needed) \
+      echo "Installing minimal dependencies for $TRANSCRIPTION_MODE transcription mode..." && \
+      pip install --no-cache-dir python-dotenv>=1.0.0 boto3>=1.34.0 icad-tone-detection>=1.0.0; \
+    fi
 
-# Stage 2: Node.js build environment (Alpine)
-FROM node:18-alpine as node-build
+# Stage 2: Node.js build environment (Debian slim for compatibility)
+FROM node:18-slim as node-build
 
 WORKDIR /build
 
@@ -42,17 +72,16 @@ WORKDIR /build
 COPY package.json /build/
 RUN npm install --omit=dev --no-audit --no-fund
 
-# Stage 3: Final runtime image (minimal Alpine base)
-FROM alpine:3.19
+# Stage 3: Final runtime image (Node.js base with Python for compatibility)
+FROM node:18-slim
 
-# Install only runtime dependencies (no build tools)
-RUN apk add --no-cache \
-    nodejs \
-    npm \
+# Install Python 3 and ffmpeg runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    py3-pip \
+    python3-pip \
+    python3-venv \
     ffmpeg \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

@@ -23,6 +23,7 @@ class DockerComposeBuilder {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
+      transcriptionMode = 'local',
       timezone = 'America/New_York',
       enableGPU = false
     } = services;
@@ -37,12 +38,16 @@ class DockerComposeBuilder {
     }
 
     // Start with base scanner-map service
+    // Always build scanner-map (contains app code), but build args control dependencies
     const compose = {
       services: {
         'scanner-map': {
           build: {
             context: '.',
-            dockerfile: 'Dockerfile'
+            dockerfile: 'Dockerfile',
+            args: {
+              TRANSCRIPTION_MODE: transcriptionMode
+            }
           },
           container_name: 'scanner-map',
           restart: 'unless-stopped',

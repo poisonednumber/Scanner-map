@@ -1811,6 +1811,8 @@ class InstallerCore {
 
       if (startNow) {
         console.log(chalk.blue('\n🚀 Starting services...\n'));
+        console.log(chalk.gray('   Note: scanner-map image will be built if needed (contains app code)'));
+        console.log(chalk.gray('   Optional services (Ollama, iCAD) use pre-built images\n'));
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
           console.log(chalk.green('✓ Services started!\n'));

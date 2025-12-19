@@ -89,6 +89,7 @@ class DockerInstaller {
       enableICAD = false,
       enableTrunkRecorder = false,
       enableGPU = false,
+      transcriptionMode = 'local',
       timezone = 'America/New_York',
       ...envConfig
     } = config;
@@ -118,6 +119,7 @@ class DockerInstaller {
       enableICAD,
       enableTrunkRecorder,
       enableGPU,
+      transcriptionMode,
       timezone
     });
     
@@ -251,12 +253,16 @@ class DockerInstaller {
       // #endregion
 
       // Try to start services, but handle partial failures gracefully
-      // If TrunkRecorder image doesn't exist, start other services anyway
+      // If TrunkRecorder image doesn't exist (and TrunkRecorder was enabled), start other services anyway
       try {
         // #region agent log
         debugLog('docker-installer.js:209', 'attempting docker compose up', { composeCmd }, 'D');
         // #endregion
 
+        // Note: scanner-map image will be built automatically if it doesn't exist
+        // This is required because it contains the application code
+        // Build is optimized based on transcription mode (local vs remote/iCAD/OpenAI)
+        // Optional services (Ollama, iCAD) use pre-built images and don't require building
         execSync(`${composeCmd} up -d`, {
           cwd: this.projectRoot,
           stdio: 'pipe' // Use pipe to capture output
@@ -388,14 +394,16 @@ class DockerInstaller {
           }
         }
 
-        // Check if it's a TrunkRecorder image issue
-        if (errorOutput.includes('trunk-recorder') && 
+        // Check if it's a TrunkRecorder image issue (only if TrunkRecorder was enabled)
+        if (this.enabledServices?.trunkRecorder &&
+            errorOutput.includes('trunk-recorder') && 
             (errorOutput.includes('does not exist') || 
              errorOutput.includes('pull access denied') ||
              errorOutput.includes('repository does not exist'))) {
           // Try starting services without TrunkRecorder
-          console.log(chalk.yellow('\n⚠ TrunkRecorder image not found. Starting other services...'));
-          console.log(chalk.blue('   This may take a few minutes if images need to be built...'));
+          console.log(chalk.yellow('\n⚠ TrunkRecorder image not found.'));
+          console.log(chalk.blue('   Starting other services without TrunkRecorder...'));
+          console.log(chalk.gray('   You can build the TrunkRecorder image later if needed.'));
           try {
             // Build list of services to start (excluding trunk-recorder and already running ones)
             const servicesToStart = [];
@@ -463,7 +471,7 @@ class DockerInstaller {
             
             return { 
               success: true, 
-              warning: 'TrunkRecorder not started - image must be built first. Build it with: git clone https://github.com/TrunkRecorder/trunk-recorder.git && cd trunk-recorder && docker build -t trunk-recorder:latest .' 
+              warning: 'TrunkRecorder not started - image must be built first. Other services started successfully.'
             };
           } catch (err2) {
             // #region agent log
