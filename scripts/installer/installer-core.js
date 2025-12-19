@@ -181,8 +181,33 @@ class InstallerCore {
     }
     console.log('');
 
-    // Step 2: Choose installation type
-    this.printStep(2, 9, 'Choose installation method');
+    // Step 2: Choose installation mode
+    this.printStep(2, 10, 'Choose installation mode');
+    const { installMode } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'installMode',
+        message: 'Installation mode:',
+        choices: [
+          { 
+            name: '⚡ Quick Setup (Recommended) - Auto-configured with sensible defaults', 
+            value: 'quick',
+            short: 'Quick'
+          },
+          { 
+            name: '⚙️  Advanced Mode - Manual configuration of all options', 
+            value: 'advanced',
+            short: 'Advanced'
+          }
+        ],
+        default: 'quick'
+      }
+    ]);
+    const isAdvancedMode = installMode === 'advanced';
+    console.log(chalk.green(`✓ ${isAdvancedMode ? 'Advanced' : 'Quick'} mode selected\n`));
+
+    // Step 3: Choose installation type
+    this.printStep(3, isAdvancedMode ? 11 : 9, 'Choose installation method');
     const { installationType } = await inquirer.prompt([
       {
         type: 'list',
@@ -205,9 +230,11 @@ class InstallerCore {
     ]);
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
-    // Calculate total steps based on installation type
-    const totalSteps = installationType === 'docker' ? 9 : 8;
-    let currentStep = 3;
+    // Calculate total steps based on installation type and mode
+    const totalSteps = isAdvancedMode 
+      ? (installationType === 'docker' ? 11 : 10)
+      : (installationType === 'docker' ? 9 : 8);
+    let currentStep = 4;
 
     // Step 3: Check prerequisites and install missing dependencies
     this.printStep(currentStep++, totalSteps, 'Checking system requirements');
@@ -250,7 +277,15 @@ class InstallerCore {
     const postInstallConfig = await this.configurePostInstall(installationType, {});
     console.log('');
 
-    // Step 10: Review and install
+    // Step 10: Advanced configuration (only in advanced mode)
+    let advancedConfig = {};
+    if (isAdvancedMode) {
+      this.printStep(currentStep++, totalSteps, 'Advanced configuration');
+      advancedConfig = await this.configureAdvanced(installationType, serviceConfig);
+      console.log('');
+    }
+
+    // Step 11: Review and install
     this.printStep(currentStep++, totalSteps, 'Review and install');
     
     // Build final configuration with auto-configured URLs
@@ -259,11 +294,11 @@ class InstallerCore {
       // Installation type
       installationType,
       
-      // Core settings (auto-configured)
-      webserverPort: DEFAULTS.WEBSERVER_PORT,
-      botPort: DEFAULTS.BOT_PORT,
-      publicDomain: this.detectPublicDomain(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+      // Core settings (auto-configured or manual in advanced mode)
+      webserverPort: advancedConfig.webserverPort || DEFAULTS.WEBSERVER_PORT,
+      botPort: advancedConfig.botPort || DEFAULTS.BOT_PORT,
+      publicDomain: advancedConfig.publicDomain || this.detectPublicDomain(),
+      timezone: advancedConfig.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
       
       // Location
       ...locationConfig,
@@ -302,14 +337,36 @@ class InstallerCore {
       // Auto-generated API key for TrunkRecorder/SDRTrunk
       trunkRecorderApiKey: this.generateApiKey(),
       
-      // Geocoding (auto-configured)
-      geocodingProvider: 'nominatim',
+      // Geocoding (auto-configured or manual in advanced mode)
+      geocodingProvider: advancedConfig.geocodingProvider || 'nominatim',
+      googleMapsApiKey: advancedConfig.googleMapsApiKey || '',
+      locationiqApiKey: advancedConfig.locationiqApiKey || '',
       
-      // Defaults
-      storageMode: 'local',
-      enableAuth: false,
-      enableMappedTalkGroups: true,
-      mappedTalkGroups: '',
+      // Storage (advanced mode only)
+      storageMode: advancedConfig.storageMode || 'local',
+      s3Endpoint: advancedConfig.s3Endpoint || '',
+      s3BucketName: advancedConfig.s3BucketName || '',
+      s3AccessKeyId: advancedConfig.s3AccessKeyId || '',
+      s3SecretAccessKey: advancedConfig.s3SecretAccessKey || '',
+      
+      // Authentication (advanced mode only)
+      enableAuth: advancedConfig.enableAuth || false,
+      webserverPassword: advancedConfig.webserverPassword || '',
+      sessionDurationDays: advancedConfig.sessionDurationDays || 7,
+      maxSessionsPerUser: advancedConfig.maxSessionsPerUser || 5,
+      
+      // Talk Groups (advanced mode only)
+      enableMappedTalkGroups: advancedConfig.enableMappedTalkGroups !== undefined ? advancedConfig.enableMappedTalkGroups : true,
+      mappedTalkGroups: advancedConfig.mappedTalkGroups || '',
+      
+      // Two-Tone Detection (advanced mode only)
+      enableTwoToneMode: advancedConfig.enableTwoToneMode || false,
+      twoToneTalkGroups: advancedConfig.twoToneTalkGroups || '',
+      
+      // OpenAI Transcription (advanced mode only)
+      openaiTranscriptionPrompt: advancedConfig.openaiTranscriptionPrompt || '',
+      openaiTranscriptionModel: advancedConfig.openaiTranscriptionModel || 'whisper-1',
+      openaiTranscriptionTemperature: advancedConfig.openaiTranscriptionTemperature || 0,
       
       // Post-installation options
       openWebUI: postInstallConfig.openWebUI,
@@ -1294,6 +1351,275 @@ class InstallerCore {
     postInstallConfig.enableAutoUpdate = enableAutoUpdate;
 
     return postInstallConfig;
+  }
+
+  /**
+   * Configure advanced options (ports, authentication, storage, etc.)
+   */
+  async configureAdvanced(installationType, serviceConfig) {
+    console.log(chalk.gray('   Configure advanced settings manually.\n'));
+
+    const advanced = {};
+
+    // Ports
+    console.log(chalk.blue('   Network Configuration\n'));
+    const portAnswers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'webserverPort',
+        message: 'Web server port:',
+        default: DEFAULTS.WEBSERVER_PORT.toString(),
+        validate: (input) => {
+          const port = parseInt(input);
+          return (port > 0 && port < 65536) || 'Port must be between 1 and 65535';
+        },
+        filter: (input) => parseInt(input)
+      },
+      {
+        type: 'input',
+        name: 'botPort',
+        message: 'API port (for TrunkRecorder/SDRTrunk):',
+        default: DEFAULTS.BOT_PORT.toString(),
+        validate: (input) => {
+          const port = parseInt(input);
+          return (port > 0 && port < 65536) || 'Port must be between 1 and 65535';
+        },
+        filter: (input) => parseInt(input)
+      },
+      {
+        type: 'input',
+        name: 'publicDomain',
+        message: 'Public domain/IP (for audio links):',
+        default: this.detectPublicDomain(),
+        validate: (input) => input.trim().length > 0 || 'Domain/IP is required'
+      },
+      {
+        type: 'input',
+        name: 'timezone',
+        message: 'Timezone:',
+        default: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
+      }
+    ]);
+    Object.assign(advanced, portAnswers);
+    console.log('');
+
+    // Geocoding provider
+    console.log(chalk.blue('   Geocoding Configuration\n'));
+    const geocodingAnswers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'geocodingProvider',
+        message: 'Geocoding provider:',
+        choices: [
+          { name: 'Nominatim (Free, no API key)', value: 'nominatim' },
+          { name: 'LocationIQ (Free tier available)', value: 'locationiq' },
+          { name: 'Google Maps (Requires API key)', value: 'google' }
+        ],
+        default: 'nominatim'
+      }
+    ]);
+    Object.assign(advanced, geocodingAnswers);
+
+    if (geocodingAnswers.geocodingProvider === 'locationiq') {
+      const { locationiqApiKey } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'locationiqApiKey',
+          message: 'LocationIQ API key (get from locationiq.com):',
+          default: ''
+        }
+      ]);
+      advanced.locationiqApiKey = locationiqApiKey;
+    } else if (geocodingAnswers.geocodingProvider === 'google') {
+      const { googleMapsApiKey } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'googleMapsApiKey',
+          message: 'Google Maps API key (get from console.cloud.google.com):',
+          default: ''
+        }
+      ]);
+      advanced.googleMapsApiKey = googleMapsApiKey;
+    }
+    console.log('');
+
+    // Storage
+    console.log(chalk.blue('   Storage Configuration\n'));
+    const storageAnswers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'storageMode',
+        message: 'Storage mode:',
+        choices: [
+          { name: 'Local filesystem', value: 'local' },
+          { name: 'S3-compatible storage', value: 's3' }
+        ],
+        default: 'local'
+      }
+    ]);
+    Object.assign(advanced, storageAnswers);
+
+    if (storageAnswers.storageMode === 's3') {
+      const s3Answers = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 's3Endpoint',
+          message: 'S3 endpoint URL:',
+          default: 'https://s3.amazonaws.com',
+          validate: (input) => {
+            try {
+              new URL(input);
+              return true;
+            } catch {
+              return 'Enter a valid URL';
+            }
+          }
+        },
+        {
+          type: 'input',
+          name: 's3BucketName',
+          message: 'S3 bucket name:',
+          validate: (input) => input.trim().length > 0 || 'Bucket name is required'
+        },
+        {
+          type: 'input',
+          name: 's3AccessKeyId',
+          message: 'S3 access key ID:',
+          validate: (input) => input.trim().length > 0 || 'Access key is required'
+        },
+        {
+          type: 'password',
+          name: 's3SecretAccessKey',
+          message: 'S3 secret access key:',
+          mask: '*',
+          validate: (input) => input.trim().length > 0 || 'Secret key is required'
+        }
+      ]);
+      Object.assign(advanced, s3Answers);
+    }
+    console.log('');
+
+    // Authentication
+    console.log(chalk.blue('   Authentication Configuration\n'));
+    const authAnswers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableAuth',
+        message: 'Enable web interface authentication?',
+        default: false
+      }
+    ]);
+    Object.assign(advanced, authAnswers);
+
+    if (authAnswers.enableAuth) {
+      const authDetails = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'webserverPassword',
+          message: 'Admin password:',
+          mask: '*',
+          validate: (input) => input.length >= 8 || 'Password must be at least 8 characters'
+        },
+        {
+          type: 'input',
+          name: 'sessionDurationDays',
+          message: 'Session duration (days):',
+          default: '7',
+          validate: (input) => {
+            const days = parseInt(input);
+            return (days > 0 && days <= 365) || 'Must be between 1 and 365 days';
+          },
+          filter: (input) => parseInt(input)
+        },
+        {
+          type: 'input',
+          name: 'maxSessionsPerUser',
+          message: 'Max sessions per user:',
+          default: '5',
+          validate: (input) => {
+            const max = parseInt(input);
+            return (max > 0 && max <= 20) || 'Must be between 1 and 20';
+          },
+          filter: (input) => parseInt(input)
+        }
+      ]);
+      Object.assign(advanced, authDetails);
+    }
+    console.log('');
+
+    // Talk Groups
+    console.log(chalk.blue('   Talk Groups Configuration\n'));
+    const talkGroupAnswers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableMappedTalkGroups',
+        message: 'Enable mapped talk groups filtering?',
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'mappedTalkGroups',
+        message: 'Mapped talk groups (comma-separated IDs, leave empty for all):',
+        default: '',
+        when: (answers) => answers.enableMappedTalkGroups
+      }
+    ]);
+    Object.assign(advanced, talkGroupAnswers);
+    console.log('');
+
+    // Two-Tone Detection
+    console.log(chalk.blue('   Two-Tone Detection Configuration\n'));
+    const toneAnswers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableTwoToneMode',
+        message: 'Enable two-tone pager detection?',
+        default: false
+      },
+      {
+        type: 'input',
+        name: 'twoToneTalkGroups',
+        message: 'Talk groups for two-tone detection (comma-separated IDs):',
+        default: '',
+        when: (answers) => answers.enableTwoToneMode
+      }
+    ]);
+    Object.assign(advanced, toneAnswers);
+    console.log('');
+
+    // OpenAI Transcription (if using OpenAI)
+    if (serviceConfig.transcriptionMode === 'openai' || serviceConfig.aiProvider === 'openai') {
+      console.log(chalk.blue('   OpenAI Transcription Configuration\n'));
+      const openaiAnswers = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'openaiTranscriptionPrompt',
+          message: 'OpenAI transcription prompt (optional, for better accuracy):',
+          default: ''
+        },
+        {
+          type: 'input',
+          name: 'openaiTranscriptionModel',
+          message: 'OpenAI transcription model:',
+          default: 'whisper-1'
+        },
+        {
+          type: 'input',
+          name: 'openaiTranscriptionTemperature',
+          message: 'Transcription temperature (0-1):',
+          default: '0',
+          validate: (input) => {
+            const temp = parseFloat(input);
+            return (temp >= 0 && temp <= 1) || 'Temperature must be between 0 and 1';
+          },
+          filter: (input) => parseFloat(input)
+        }
+      ]);
+      Object.assign(advanced, openaiAnswers);
+      console.log('');
+    }
+
+    return advanced;
   }
 
   /**
