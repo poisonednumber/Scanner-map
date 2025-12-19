@@ -11,6 +11,7 @@
     "dev": "nodemon bot.js",
     "setup": "node scripts/installer/installer-core.js",
     "generate-trunkrecorder-key": "node scripts/generate-trunkrecorder-api-key.js",
+    "validate-installer": "node scripts/validate-installer-integration.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
