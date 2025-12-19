@@ -7,6 +7,15 @@ All notable changes to Scanner Map will be documented in this file.
 ### Radio Software Alternatives with Complete Auto-Configuration
 
 ### Added
+- **Auto-Restart After Node.js Installation**
+  - Installer automatically detects when Node.js/npm was just installed
+  - Prompts user to restart installer automatically when PATH needs updating
+  - Optional installer update from repository before restarting
+  - Graceful fallback to manual restart instructions if auto-restart fails
+- **Enhanced npm Detection**
+  - Better detection of npm availability before attempting installation
+  - Clear error messages when npm is not found in PATH
+  - Automatic detection of PATH-related issues after Node.js installation
 - **Radio Software Selection in Installer**
   - New installer step to select radio recording software
   - Options: TrunkRecorder, SDRTrunk, rdio-scanner, OP25, or None
