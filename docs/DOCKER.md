@@ -155,19 +155,17 @@ appdata/
 │   └── logs/          # Application logs
 ├── ollama/            # Ollama models
 ├── icad-transcribe/   # iCAD data
-└── trunk-recorder/
-    ├── trunk-recorder/
-    │   ├── config/        # TrunkRecorder config
-    │   └── recordings/    # Audio recordings
-    ├── sdrtrunk/
-    │   └── config/        # SDRTrunk config files
-    ├── rdio-scanner/
-    │   ├── config/        # rdio-scanner config
-    │   └── data/          # rdio-scanner data
-    └── op25/
-        ├── config/        # OP25 config
-        └── recordings/    # Audio recordings
-    └── recordings/    # Raw recordings
+├── trunk-recorder/
+│   ├── config/        # TrunkRecorder config
+│   └── recordings/    # Raw recordings
+├── sdrtrunk/
+│   └── config/        # SDRTrunk config files
+├── rdio-scanner/
+│   ├── config/        # rdio-scanner config
+│   └── data/          # rdio-scanner data
+└── op25/
+    ├── config/        # OP25 config
+    └── recordings/    # Audio recordings
 ```
 
 **Backup:** Simply backup the `appdata/` folder.
@@ -182,6 +180,8 @@ Service URLs from within Docker:
 - Scanner Map → Ollama: `http://ollama:11434`
 - Scanner Map → iCAD: `http://icad-transcribe:9912`
 - TrunkRecorder → Scanner Map: `http://scanner-map:3306`
+- rdio-scanner → Scanner Map: `http://scanner-map:3306`
+- OP25 → Scanner Map: `http://scanner-map:3306`
 
 Service URLs from host:
 - Scanner Map: `http://localhost:3001`
