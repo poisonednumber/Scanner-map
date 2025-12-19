@@ -1,4 +1,10 @@
+# ============================================
+# SCANNER-MAP .GITIGNORE
+# ============================================
+
+# ----------------
 # Dependencies
+# ----------------
 node_modules/
 .venv/
 venv/
@@ -6,18 +12,36 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Environment
+# ----------------
+# Environment & Secrets
+# ----------------
 .env
-.env.local
-.env.*.local
-.env.backup
-test-setup-defaults.env
+.env.*
+!.env.example
+*.local
+apikeys.json
 
-# Runtime data
+# ----------------
+# Runtime Data
+# ----------------
+# Data folder (created at runtime)
+data/
+!data/.gitkeep
+
+# Audio/recordings
+audio/
+recordings/
+
+# Application data
 appdata/
-*.log
+
+# Logs
 logs/
+*.log
 combined.log
 error.log
 
@@ -26,52 +50,91 @@ error.log
 *.sqlite
 *.sqlite3
 
-# Audio files
-audio/
-recordings/
-
-# IDE
+# ----------------
+# IDE & Editor
+# ----------------
 .vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
 .idea/
 *.swp
 *.swo
 *~
+*.sublime-workspace
+*.sublime-project
 
-# OS
+# ----------------
+# OS Files
+# ----------------
 .DS_Store
+.DS_Store?
+._*
 Thumbs.db
+ehthumbs.db
 desktop.ini
+$RECYCLE.BIN/
 
-# Docker
-.dockerignore
-
-# Test files
-test/
-*.test.js
-*.spec.js
-
-# Build artifacts
+# ----------------
+# Build & Distribution
+# ----------------
 dist/
 build/
 *.tar.gz
 *.zip
+*.tgz
 
-# Temporary files
+# ----------------
+# Docker
+# ----------------
+# Don't ignore docker-compose files, but ignore generated data
+docker-data/
+
+# ----------------
+# Testing & Debug
+# ----------------
+test/
+*.test.js
+*.spec.js
+coverage/
+.nyc_output/
+test-output/
+debug/
+*.debug.js
+*.debug.log
+
+# ----------------
+# Temporary Files
+# ----------------
 tmp/
 temp/
 *.tmp
-
-# Nested repository (if accidentally cloned)
-Scanner-map/
-
-# Test/development folders
-install-test/
-
-# Backup files
+*.temp
 *.bak
 *.backup
-*~
+*.orig
 
-# Auto-start scripts
+# ----------------
+# Development Artifacts
+# ----------------
+# Installer test outputs
+install-test/
+test-install/
+
+# Nested repo (if accidentally cloned)
+Scanner-map/
+
+# Generated scripts
 start-scanner-map.bat
+start-scanner-map.sh
 
+# Package manager locks (uncomment if you want to track)
+# package-lock.json
+
+# ----------------
+# Model/ML files (large)
+# ----------------
+*.pt
+*.pth
+*.onnx
+*.bin
+models/

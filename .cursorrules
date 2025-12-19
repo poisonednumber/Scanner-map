@@ -1,0 +1,81 @@
+# Scanner-Map Project Rules
+
+## Project Overview
+Scanner-Map is a real-time radio call mapping system with AI transcription, geocoding, and Discord bot integration. It processes audio from SDRTrunk/TrunkRecorder, transcribes it, extracts addresses, and displays calls on a web map.
+
+## Architecture
+- **bot.js**: Main entry point - orchestrates everything, handles Discord, processes audio uploads
+- **webserver.js**: Express server for the web UI and API endpoints
+- **geocoding.js**: Address extraction and geocoding (Google/LocationIQ)
+- **transcribe.py**: Python Whisper-based audio transcription
+- **tone_detect.py**: Two-tone pager detection
+- **public/**: Frontend (vanilla JS, no framework)
+- **scripts/installer/**: Cross-platform Node.js installer modules
+
+## Code Style & Conventions
+
+### JavaScript/Node.js
+- Use ES6+ features (async/await, arrow functions, destructuring)
+- Use `require()` for imports (CommonJS - not ES modules)
+- Use `node-fetch@2` (v2.x) for fetch - not native fetch
+- Error handling: wrap async operations in try/catch
+- Logging: use winston logger when available, console.log for simple scripts
+- Database: SQLite3 with callback-style API
+
+### Python
+- Use Python 3.10+
+- Follow PEP 8 style
+- Use python-dotenv for environment variables
+- Virtual environment expected at `.venv/`
+
+### Environment Variables
+- All config goes in `.env` file
+- Never hardcode API keys, tokens, or secrets
+- Reference `.env.example` for available options
+
+## File Patterns to NEVER Create
+- Don't create files in: `node_modules/`, `data/`, `audio/`, `logs/`
+- Don't create: `.env` (user must create from template)
+- Don't create: `apikeys.json` (auto-generated at runtime)
+- Don't create test files unless explicitly asked
+
+## File Patterns to NEVER Commit
+- `.env` and any `.env.*` files (except `.env.example`)
+- `data/` folder contents (runtime data)
+- `audio/` folder contents (user recordings)
+- `*.db` database files
+- `logs/` and `*.log` files
+- `apikeys.json`
+
+## Development Workflow
+1. Installer entry points: `install.bat` (Windows) or `install.sh` (Linux/Mac)
+2. These call `scripts/installer/installer-core.js` for the interactive setup
+3. Main app runs via `node bot.js` (starts everything)
+4. For development, can run `webserver.js` separately
+
+## Testing Locally
+- Create `.env` from template
+- Run `npm install`
+- For Python: create venv, install from `requirements.txt`
+- Run `node bot.js` to start all services
+
+## Common Tasks
+
+### Adding new environment variables
+1. Add to `.env.example` with documentation
+2. Update `scripts/installer/env-generator.js` to prompt for it
+3. Add handling in relevant module (bot.js, webserver.js, etc.)
+
+### Modifying the installer
+- Core logic: `scripts/installer/installer-core.js`
+- Docker setup: `scripts/installer/docker-installer.js`
+- Local setup: `scripts/installer/local-installer.js`
+- Environment config: `scripts/installer/env-generator.js`
+- Service config: `scripts/installer/service-config.js`
+
+### Frontend changes
+- Main app: `public/app.js`
+- Config: `public/config.js`
+- Styles: `public/styles.css`
+- Entry: `public/index.html`
+
