@@ -32,7 +32,9 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM Check Node.js version (require v18+)
-for /f "tokens=2 delims=v." %%i in ('node --version') do set NODE_MAJOR=%%i
+for /f "tokens=1 delims=." %%i in ('node --version') do set NODE_MAJOR=%%i
+REM Remove the 'v' prefix
+set NODE_MAJOR=%NODE_MAJOR:v=%
 
 REM Convert to number and compare
 set /a NODE_MAJOR_NUM=%NODE_MAJOR%
