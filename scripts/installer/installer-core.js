@@ -154,6 +154,11 @@ class InstallerCore {
    * Main installation flow
    */
   async run() {
+    // Check for installer updates first (non-blocking, don't await)
+    this.checkInstallerUpdates().catch(() => {
+      // Silently fail - don't block installer
+    });
+
     this.printHeader('Scanner Map Setup');
     console.log(chalk.gray('Welcome! This installer will guide you through setting up Scanner Map.'));
     console.log(chalk.gray('All service URLs and ports are auto-configured for you.\n'));
@@ -304,26 +309,26 @@ class InstallerCore {
       ...locationConfig,
       
       // Transcription (auto-configured URLs)
-      transcriptionMode: serviceConfig.transcriptionMode,
+      transcriptionMode: serviceConfig.transcriptionMode === 'icad-remote' ? 'icad' : serviceConfig.transcriptionMode,
       transcriptionDevice: serviceConfig.transcriptionDevice || 'cpu',
       whisperModel: serviceConfig.whisperModel || DEFAULTS.WHISPER_MODEL,
       fasterWhisperServerUrl: serviceConfig.transcriptionMode === 'remote' 
         ? (serviceConfig.remoteUrl || `http://localhost:${DEFAULTS.WHISPER_SERVER_PORT}`)
         : undefined,
       
-      // iCAD (auto-configured)
-      enableICAD: serviceConfig.transcriptionMode === 'icad',
-      icadUrl: urls.icad,
+      // iCAD (auto-configured or remote)
+      enableICAD: serviceConfig.transcriptionMode === 'icad' && serviceConfig.transcriptionMode !== 'icad-remote',
+      icadUrl: serviceConfig.icadUrl || (serviceConfig.transcriptionMode === 'icad-remote' ? serviceConfig.remoteICADUrl : (serviceConfig.transcriptionMode === 'icad' ? urls.icad : undefined)),
       icadProfile: DEFAULTS.ICAD_PROFILE,
       icadApiKey: this.generateApiKey(),
       
       // AI Provider (auto-configured URLs)
-      aiProvider: serviceConfig.aiProvider,
+      aiProvider: serviceConfig.aiProvider === 'ollama-remote' ? 'ollama' : serviceConfig.aiProvider,
       openaiApiKey: serviceConfig.openaiApiKey || '',
       openaiModel: serviceConfig.openaiModel || DEFAULTS.OPENAI_MODEL,
-      ollamaUrl: urls.ollama,
+      ollamaUrl: serviceConfig.ollamaUrl || (serviceConfig.aiProvider === 'ollama-remote' && serviceConfig.remoteOllamaUrl ? serviceConfig.remoteOllamaUrl : (serviceConfig.aiProvider === 'ollama' ? urls.ollama : undefined)),
       ollamaModel: serviceConfig.ollamaModel || DEFAULTS.OLLAMA_MODEL,
-      enableOllama: serviceConfig.aiProvider === 'ollama',
+      enableOllama: serviceConfig.aiProvider === 'ollama' && serviceConfig.aiProvider !== 'ollama-remote',
       
       // Integrations
       enableDiscord: integrationConfig.enableDiscord,
@@ -661,6 +666,11 @@ class InstallerCore {
         value: 'icad',
         short: 'iCAD'
       });
+      transcriptionChoices.push({ 
+        name: '🌐 Remote iCAD - Connect to remote iCAD server', 
+        value: 'icad-remote',
+        short: 'Remote iCAD'
+      });
     }
 
     transcriptionChoices.push({ 
@@ -760,6 +770,30 @@ class InstallerCore {
       ]);
       config.remoteUrl = remoteUrl;
     }
+    
+    // Remote iCAD URL
+    if (transcriptionMode === 'icad-remote') {
+      const { remoteICADUrl } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'remoteICADUrl',
+          message: 'Remote iCAD Transcribe server URL:',
+          default: 'http://localhost:9912',
+          validate: input => {
+            try {
+              new URL(input);
+              return true;
+            } catch {
+              return 'Enter a valid URL (e.g., http://remote-server:9912)';
+            }
+          }
+        }
+      ]);
+      config.icadUrl = remoteICADUrl;
+      config.transcriptionMode = 'icad'; // Use icad mode but with remote URL
+      config.enableICAD = false; // Don't start local iCAD container
+      console.log(chalk.gray(`\n   📝 Using remote iCAD at: ${remoteICADUrl}`));
+    }
 
     console.log('');
 
@@ -776,6 +810,11 @@ class InstallerCore {
         name: '🏠 Ollama - Free local AI, needs good hardware', 
         value: 'ollama',
         short: 'Ollama'
+      },
+      { 
+        name: '🌐 Remote Ollama - Connect to remote Ollama server', 
+        value: 'ollama-remote',
+        short: 'Remote Ollama'
       }
     ];
 
@@ -812,8 +851,43 @@ class InstallerCore {
         }
       ]);
       Object.assign(config, openaiAnswers);
+    } else if (aiProvider === 'ollama-remote') {
+      // Remote Ollama configuration
+      const { remoteOllamaUrl } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'remoteOllamaUrl',
+          message: 'Remote Ollama server URL:',
+          default: 'http://localhost:11434',
+          validate: input => {
+            try {
+              new URL(input);
+              return true;
+            } catch {
+              return 'Enter a valid URL (e.g., http://remote-server:11434)';
+            }
+          }
+        }
+      ]);
+      
+      const { ollamaModel } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'ollamaModel',
+          message: 'Ollama model name:',
+          default: DEFAULTS.OLLAMA_MODEL,
+          validate: input => input.trim().length > 0 || 'Model name is required'
+        }
+      ]);
+      
+      config.ollamaUrl = remoteOllamaUrl;
+      config.ollamaModel = ollamaModel;
+      config.enableOllama = false; // Don't start local Ollama container
+      
+      console.log(chalk.gray(`\n   📝 Using remote Ollama at: ${remoteOllamaUrl}`));
+      console.log(chalk.gray(`   📝 Model: ${ollamaModel}`));
     } else {
-      // Detect GPU and recommend Ollama model
+      // Local Ollama - Detect GPU and recommend Ollama model
       const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
       let vramGB = 8; // Default
       let recommendedOllama = DEFAULTS.OLLAMA_MODEL;
@@ -1299,8 +1373,9 @@ class InstallerCore {
       if (enableTrunkRecorder) {
         console.log(chalk.yellow('\n   ⚠️  TrunkRecorder notes:'));
         console.log(chalk.gray('   • USB passthrough only works on Linux'));
-        console.log(chalk.gray('   • Requires building the Docker image first'));
-        console.log(chalk.gray('   • See docs/RADIO-SOFTWARE.md for setup\n'));
+        console.log(chalk.gray('   • Image will be pulled from Docker Hub: robotastic/trunk-recorder:latest'));
+        console.log(chalk.gray('   • If pull fails, you can build locally (see docs)'));
+        console.log(chalk.gray('   • See docs/RADIO-SOFTWARE.md for detailed setup\n'));
       }
     } else {
       config.enableTrunkRecorder = false;
@@ -1657,7 +1732,11 @@ class InstallerCore {
       console.log(chalk.white(`     Device: ${formatValue(config.transcriptionDevice)}`));
       console.log(chalk.white(`     Model: ${formatValue(config.whisperModel)}`));
     } else if (config.transcriptionMode === 'icad') {
-      console.log(chalk.white(`     URL: ${formatValue(config.icadUrl)} (auto)`));
+      const icadDisplayUrl = config.icadUrl || (config.enableICAD ? 'http://icad-transcribe:9912' : 'Not configured');
+      const icadType = config.icadUrl && !config.icadUrl.includes('icad-transcribe') ? ' (remote)' : ' (auto)';
+      console.log(chalk.white(`     URL: ${formatValue(icadDisplayUrl)}${icadType}`));
+    } else if (config.transcriptionMode === 'remote') {
+      console.log(chalk.white(`     URL: ${formatValue(config.fasterWhisperServerUrl)} (remote)`));
     }
     console.log('');
 
@@ -1668,7 +1747,9 @@ class InstallerCore {
       console.log(chalk.white(`     Model: ${formatValue(config.openaiModel)}`));
       console.log(chalk.white(`     API Key: ${formatValue(config.openaiApiKey, true)}`));
     } else {
-      console.log(chalk.white(`     URL: ${formatValue(config.ollamaUrl)} (auto)`));
+      const ollamaDisplayUrl = config.ollamaUrl || 'http://ollama:11434';
+      const ollamaType = config.ollamaUrl && !config.ollamaUrl.includes('ollama:') && !config.ollamaUrl.includes('localhost') ? ' (remote)' : (config.enableOllama ? ' (auto)' : ' (remote)');
+      console.log(chalk.white(`     URL: ${formatValue(ollamaDisplayUrl)}${ollamaType}`));
       console.log(chalk.white(`     Model: ${formatValue(config.ollamaModel)}`));
     }
     console.log('');
@@ -1783,6 +1864,23 @@ class InstallerCore {
 
     console.log(chalk.gray('   See docs/RADIO-SOFTWARE.md for detailed setup.\n'));
 
+    // Data persistence info
+    if (installationType === 'docker') {
+      this.printHeader('Data Persistence');
+      console.log(chalk.white('   All data is stored in ./appdata/ directory:'));
+      console.log(chalk.gray('   • scanner-map/ - Database, audio files, logs'));
+      if (config.aiProvider === 'ollama' || config.enableOllama) {
+        console.log(chalk.gray('   • ollama/ - AI models (persistent across restarts)'));
+      }
+      if (config.transcriptionMode === 'icad' || config.enableICAD) {
+        console.log(chalk.gray('   • icad-transcribe/ - Models, config, database'));
+      }
+      if (config.enableTrunkRecorder) {
+        console.log(chalk.gray('   • trunk-recorder/ - Config and recordings'));
+      }
+      console.log(chalk.gray('\n   All volumes are properly mounted and persistent.\n'));
+    }
+
     // Port summary
     this.printHeader('Port Summary');
     console.log(chalk.gray('   ┌─────────────────────────────────────────────────┐'));
@@ -1817,8 +1915,8 @@ class InstallerCore {
         if (startResult.success) {
           console.log(chalk.green('✓ Services started!\n'));
           
-          // Automatically pull Ollama model if using Ollama
-          if (config.aiProvider === 'ollama' && config.ollamaModel) {
+          // Automatically pull Ollama model if using local Ollama (not remote)
+          if (config.aiProvider === 'ollama' && config.ollamaModel && config.enableOllama) {
             console.log(chalk.blue('📥 Pulling Ollama model (this may take a few minutes)...\n'));
             const pullResult = await this.dockerInstaller.pullOllamaModel(config.ollamaModel);
             if (!pullResult.success) {
@@ -1827,7 +1925,17 @@ class InstallerCore {
                 console.log(chalk.gray(`   Run manually: ${pullResult.manualCommand}`));
               }
             }
+          } else if (config.aiProvider === 'ollama' && !config.enableOllama) {
+            console.log(chalk.gray(`\n   ℹ️  Using remote Ollama at: ${config.ollamaUrl}`));
+            console.log(chalk.gray(`   ℹ️  Make sure model ${config.ollamaModel} is available on the remote server.\n`));
           }
+          
+          // Wait a moment for services to initialize
+          console.log(chalk.blue('   Waiting for services to initialize...\n'));
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          // Verify installation status
+          const verifyResult = await this.dockerInstaller.verifyInstallation(config);
           
           // Open web UI if requested
           if (config.openWebUI) {
@@ -1840,16 +1948,39 @@ class InstallerCore {
           }
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
-          console.log(chalk.gray('   Start manually: docker-compose up -d'));
-          if (config.aiProvider === 'ollama' && config.ollamaModel) {
-            console.log(chalk.gray(`   Then pull model: docker exec ollama ollama pull ${config.ollamaModel}`));
+          console.log(chalk.gray('\n   Troubleshooting steps:'));
+          console.log(chalk.gray('   1. Check Docker is running: docker ps'));
+          console.log(chalk.gray('   2. Check for port conflicts'));
+          console.log(chalk.gray('   3. Start manually: docker-compose up -d'));
+          if (config.enableTrunkRecorder) {
+            console.log(chalk.gray('   4. For TrunkRecorder, pull image first:'));
+            console.log(chalk.cyan('      docker pull robotastic/trunk-recorder:latest'));
           }
+          if (config.aiProvider === 'ollama' && config.ollamaModel) {
+            console.log(chalk.gray(`   5. Pull Ollama model: docker exec ollama ollama pull ${config.ollamaModel}`));
+          }
+          console.log('');
         }
       } else {
-        // Still show model pull command if not starting now
+        // Still show next steps if not starting now
+        console.log(chalk.blue('\n📋 Next Steps:\n'));
+        console.log(chalk.white('   1. Start services:'));
+        console.log(chalk.cyan('      docker-compose up -d\n'));
+        
+        if (config.enableTrunkRecorder) {
+          console.log(chalk.white('   2. Pull TrunkRecorder image (if not already pulled):'));
+          console.log(chalk.cyan('      docker pull robotastic/trunk-recorder:latest\n'));
+        }
+        
         if (config.aiProvider === 'ollama' && config.ollamaModel) {
-          console.log(chalk.white('\n   After starting services, pull the Ollama model:'));
-          console.log(chalk.cyan(`     docker exec ollama ollama pull ${config.ollamaModel}\n`));
+          console.log(chalk.white('   3. Pull Ollama model (after services start):'));
+          console.log(chalk.cyan(`      docker exec ollama ollama pull ${config.ollamaModel}\n`));
+        }
+        
+        if (config.transcriptionMode === 'icad' || config.enableICAD) {
+          console.log(chalk.white('   4. Access iCAD Transcribe to install models:'));
+          console.log(chalk.cyan(`      http://localhost:${DEFAULTS.ICAD_PORT}\n`));
+          console.log(chalk.gray('      Default login: admin / changeme123 (CHANGE THIS!)\n'));
         }
       }
     } else {
@@ -1887,7 +2018,38 @@ class InstallerCore {
       }
     }
 
+    // Final verification for Docker installations (even if services weren't started)
+    if (installationType === 'docker') {
+      const { verifyNow } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'verifyNow',
+          message: 'Run installation verification now?',
+          default: true
+        }
+      ]);
+
+      if (verifyNow) {
+        await this.dockerInstaller.verifyInstallation(config);
+      }
+    }
+
     console.log(chalk.green.bold('\n✨ Happy scanning! ✨\n'));
+  }
+
+  /**
+   * Check for installer updates (non-blocking, runs in background)
+   */
+  async checkInstallerUpdates() {
+    try {
+      const updateResult = await this.updateChecker.checkForUpdates();
+      if (updateResult.updateAvailable) {
+        console.log(chalk.yellow(`\n⚠️  Installer update available: v${updateResult.currentVersion} → v${updateResult.latestVersion}`));
+        console.log(chalk.gray(`   Download: ${updateResult.downloadUrl}\n`));
+      }
+    } catch (err) {
+      // Silently fail - don't block installer if update check fails
+    }
   }
 }
 

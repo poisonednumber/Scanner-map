@@ -1581,6 +1581,21 @@ input[type="time"] {
     background-color: var(--background-color);
     border: 1px solid var(--border-color);
     color: var(--text-color);
+}
+
+.config-description {
+    margin-bottom: 20px;
+    color: var(--text-color);
+    opacity: 0.8;
+    font-size: 0.9em;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 5px;
+    color: var(--text-color);
+    opacity: 0.6;
+    font-size: 0.85em;
     font-family: 'Share Tech Mono', monospace;
     border-radius: 4px;
     box-sizing: border-box; /* Include padding in width */

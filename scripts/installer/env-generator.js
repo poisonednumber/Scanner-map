@@ -79,6 +79,7 @@ class EnvGenerator {
     } = config;
 
     // Auto-configure URLs based on installation type
+    // If ollamaUrl is provided (remote), use it; otherwise auto-configure based on installation type
     const isDocker = installationType === 'docker';
     const finalOllamaUrl = ollamaUrl || (isDocker ? 'http://ollama:11434' : 'http://localhost:11434');
     const finalICADUrl = icadUrl || (isDocker ? 'http://icad-transcribe:9912' : 'http://localhost:9912');

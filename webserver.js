@@ -39,7 +39,11 @@ const {
   OPENAI_API_KEY,
   OPENAI_MODEL = 'gpt-4o-mini', // A good, fast, and cheap model for this task
   OLLAMA_URL = 'http://localhost:11434',
-  OLLAMA_MODEL = 'llama3.1:8b'
+  OLLAMA_MODEL = 'llama3.1:8b',
+  // --- Transcription Env Vars ---
+  TRANSCRIPTION_MODE = 'local',
+  ICAD_URL = '',
+  ICAD_API_KEY = ''
 } = process.env;
 
 // Validate required environment variables
@@ -100,6 +104,60 @@ app.get('/api/config/geocoding', (req, res) => {
       apiKey: LOCATIONIQ_API_KEY
     }
   });
+});
+
+// Add endpoints for Ollama and iCAD configuration
+app.get('/api/config/services', (req, res) => {
+  res.json({
+    ollama: {
+      url: OLLAMA_URL || 'http://localhost:11434',
+      model: OLLAMA_MODEL || 'llama3.1:8b',
+      enabled: AI_PROVIDER === 'ollama'
+    },
+    icad: {
+      url: ICAD_URL || '',
+      enabled: TRANSCRIPTION_MODE === 'icad'
+    }
+  });
+});
+
+// Update service URLs (writes to .env file)
+app.post('/api/config/services', async (req, res) => {
+  const { ollama, icad } = req.body;
+  const envPath = path.join(__dirname, '.env');
+  
+  try {
+    let envContent = '';
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+    }
+    
+    // Update or add Ollama URL
+    if (ollama && ollama.url !== undefined) {
+      const urlValue = ollama.url || '';
+      if (envContent.includes('OLLAMA_URL=')) {
+        envContent = envContent.replace(/OLLAMA_URL=.*/g, `OLLAMA_URL=${urlValue}`);
+      } else {
+        envContent += `\nOLLAMA_URL=${urlValue}\n`;
+      }
+    }
+    
+    // Update or add iCAD URL
+    if (icad && icad.url !== undefined) {
+      const urlValue = icad.url || '';
+      if (envContent.includes('ICAD_URL=')) {
+        envContent = envContent.replace(/ICAD_URL=.*/g, `ICAD_URL=${urlValue}`);
+      } else {
+        envContent += `\nICAD_URL=${urlValue}\n`;
+      }
+    }
+    
+    fs.writeFileSync(envPath, envContent, 'utf8');
+    res.json({ success: true, message: 'Configuration updated. Restart services for changes to take effect.' });
+  } catch (error) {
+    console.error('Error updating service config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Add endpoint to check if current user is admin

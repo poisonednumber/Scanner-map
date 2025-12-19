@@ -113,10 +113,13 @@ class ServiceConfig {
     const envPath = path.join(icadDir, '.env');
     const logDir = path.join(icadDir, 'log');
     const varDir = path.join(icadDir, 'var');
+    const modelsDir = path.join(icadDir, 'models');
 
+    // Ensure all directories exist
     await fs.ensureDir(icadDir);
     await fs.ensureDir(logDir);
     await fs.ensureDir(varDir);
+    await fs.ensureDir(modelsDir);
 
     // Generate API key if not provided
     const generatedApiKey = apiKey || this.generateApiKey();
@@ -177,29 +180,52 @@ API_KEY=${generatedApiKey}
   }
 
   /**
-   * Configure Ollama (for local installation)
+   * Configure Ollama
+   * @param {boolean} enabled - Whether Ollama is enabled
+   * @param {string} installationType - 'docker' or 'local'
+   * @returns {Promise<Object>} Configuration result
    */
   async configureOllama(enabled, installationType = 'docker') {
-    if (!enabled || installationType === 'docker') {
-      // Docker installation handles Ollama via docker-compose
-      return;
-    }
+    if (!enabled) return null;
 
-    // For local installation, just ensure directory exists
+    // Ensure directory exists for both Docker and local
+    // Docker uses this for volume mount, local uses it for model storage
     const ollamaDir = path.join(this.appdataPath, 'ollama');
     await fs.ensureDir(ollamaDir);
     
+    if (installationType === 'docker') {
+      // Docker installation handles Ollama via docker-compose
+      // Just ensure directory exists for volume mount
+      return { configured: true, path: ollamaDir, note: 'Docker service will be configured in docker-compose.yml' };
+    }
+
+    // For local installation, just ensure directory exists
     return { configured: true, path: ollamaDir };
   }
 
   /**
    * Create appdata directory structure
+   * Ensures all required directories exist for all services
    */
   async createAppdataStructure() {
     const directories = [
+      // Scanner Map core directories
       'scanner-map/data',
       'scanner-map/audio',
-      'scanner-map/logs'
+      'scanner-map/logs',
+      
+      // Ollama directories (for model storage)
+      'ollama',
+      
+      // iCAD Transcribe directories
+      'icad-transcribe',
+      'icad-transcribe/log',
+      'icad-transcribe/var',
+      'icad-transcribe/models',  // For persistent model storage
+      
+      // TrunkRecorder directories
+      'trunk-recorder/config',
+      'trunk-recorder/recordings'
     ];
 
     for (const dir of directories) {

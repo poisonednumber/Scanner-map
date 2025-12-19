@@ -482,6 +482,7 @@
           <a href="#" id="add-user-btn">Add User</a>
           <a href="#" id="view-users-btn">View Users</a>
           <a href="#" id="manage-sessions-btn">Manage Sessions</a>
+          <a href="#" id="service-config-btn">Service Configuration</a>
           <a href="#" id="call-purge-btn">Call Purge</a>
         </div>
       </div>
@@ -692,6 +693,32 @@
   <div id="live-feed-display">
   </div>
   <!-- END Live Feed Display Area -->
+
+  <!-- Service Configuration Modal -->
+  <div id="service-config-modal" class="modal">
+    <div class="modal-content">
+      <h2>Service Configuration</h2>
+      <p class="config-description">Configure remote service URLs for Ollama and iCAD Transcribe. Leave empty to use local Docker containers.</p>
+      
+      <div class="form-group">
+        <label for="ollama-url">Ollama URL:</label>
+        <input type="text" id="ollama-url" placeholder="http://localhost:11434 or http://remote-server:11434" />
+        <small>Leave empty to use local Docker container</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="icad-url">iCAD Transcribe URL:</label>
+        <input type="text" id="icad-url" placeholder="http://localhost:9912 or http://remote-server:9912" />
+        <small>Leave empty to use local Docker container</small>
+      </div>
+      
+      <div class="modal-buttons">
+        <button type="button" id="save-service-config-btn" class="confirm-btn">Save Configuration</button>
+        <button type="button" class="cancel-btn" onclick="document.getElementById('service-config-modal').style.display='none'">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <!-- END Service Configuration Modal -->
 
   <script src="config.js"></script>
   <script src="app.js" defer></script>

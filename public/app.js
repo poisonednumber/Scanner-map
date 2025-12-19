@@ -3588,10 +3588,21 @@ function setupUserManagement() {
         });
     }
     
+    // Service Configuration button click
+    const serviceConfigBtn = document.getElementById('service-config-btn');
+    if (serviceConfigBtn) {
+        serviceConfigBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showServiceConfigModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
     // Setup modal forms
     setupAddUserForm();
     setupModalCancelButtons();
     setupCallPurgeModal();
+    setupServiceConfigModal();
 }
 
 function showAddUserModal() {
@@ -5521,6 +5532,69 @@ function getSelectedTimeRange() {
             start: startTime.toISOString(),
             end: endTime.toISOString()
         };
+    }
+}
+
+// Service Configuration Functions
+function showServiceConfigModal() {
+    const modal = document.getElementById('service-config-modal');
+    if (modal) {
+        loadServiceConfig();
+        modal.style.display = 'block';
+    }
+}
+
+function loadServiceConfig() {
+    fetch('/api/config/services')
+        .then(response => response.json())
+        .then(data => {
+            const ollamaUrlInput = document.getElementById('ollama-url');
+            const icadUrlInput = document.getElementById('icad-url');
+            
+            if (ollamaUrlInput) {
+                ollamaUrlInput.value = data.ollama?.url || '';
+            }
+            if (icadUrlInput) {
+                icadUrlInput.value = data.icad?.url || '';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service config:', error);
+            showNotification('Error loading service configuration', 'error');
+        });
+}
+
+function setupServiceConfigModal() {
+    const saveBtn = document.getElementById('save-service-config-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            const icadUrl = document.getElementById('icad-url').value.trim();
+            
+            fetch('/api/config/services', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ollama: { url: ollamaUrl || undefined },
+                    icad: { url: icadUrl || undefined }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(data.message || 'Configuration saved. Restart services for changes to take effect.', 'success');
+                    document.getElementById('service-config-modal').style.display = 'none';
+                } else {
+                    showNotification(data.error || 'Error saving configuration', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error saving service config:', error);
+                showNotification('Error saving service configuration', 'error');
+            });
+        });
     }
 }
 

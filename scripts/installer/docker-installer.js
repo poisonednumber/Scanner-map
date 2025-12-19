@@ -94,7 +94,7 @@ class DockerInstaller {
       ...envConfig
     } = config;
 
-    // Create appdata structure
+    // Create appdata structure (ensures all directories exist before Docker mounts)
     await this.serviceConfig.createAppdataStructure();
 
     // Generate API keys for services that need them
@@ -103,6 +103,7 @@ class DockerInstaller {
     const trunkRecorderApiKey = enableTrunkRecorder ? uuidv4() : null;
 
     // Configure services with generated API keys
+    // This also ensures service-specific directories are created
     const serviceResults = {
       trunkRecorder: await this.serviceConfig.configureTrunkRecorder(enableTrunkRecorder, 'docker', trunkRecorderApiKey),
       icad: await this.serviceConfig.configureICAD(enableICAD, 'docker', icadApiKey),
@@ -114,13 +115,16 @@ class DockerInstaller {
     const finalTrunkRecorderApiKey = serviceResults.trunkRecorder?.apiKey || trunkRecorderApiKey;
 
     // Build docker-compose.yml
+    // Pass service URLs so compose builder knows if services are remote
     const composeResult = await this.composeBuilder.build({
-      enableOllama,
-      enableICAD,
+      enableOllama: enableOllama || !!envConfig.ollamaUrl,  // Enable if local or remote
+      enableICAD: enableICAD || !!envConfig.icadUrl,  // Enable if local or remote
       enableTrunkRecorder,
       enableGPU,
       transcriptionMode,
-      timezone
+      timezone,
+      ollamaUrl: envConfig.ollamaUrl,  // Pass remote URL if provided
+      icadUrl: envConfig.icadUrl  // Pass remote URL if provided
     });
     
     // Store enabled services for error handling
@@ -131,14 +135,17 @@ class DockerInstaller {
     };
 
     // Generate .env file with API keys
+    // Use provided ollamaUrl if it's a remote URL, otherwise use local Docker container URL
+    const finalOllamaUrl = envConfig.ollamaUrl || (enableOllama ? 'http://ollama:11434' : undefined);
+    
     const envPath = await this.envGenerator.generate({
       ...envConfig,
       installationType: 'docker',
       enableICAD,
-      icadUrl: enableICAD ? 'http://icad-transcribe:9912' : undefined,
+      icadUrl: envConfig.icadUrl || (enableICAD ? 'http://icad-transcribe:9912' : undefined),
       icadApiKey: finalICADApiKey,
       trunkRecorderApiKey: finalTrunkRecorderApiKey,
-      ollamaUrl: enableOllama ? 'http://ollama:11434' : undefined
+      ollamaUrl: finalOllamaUrl
     });
 
     return {
@@ -160,32 +167,57 @@ class DockerInstaller {
   getNextSteps(services) {
     const steps = [];
 
-    steps.push('1. API keys have been automatically generated and configured:');
-    steps.push('   - TrunkRecorder API key: Set in config.json and Scanner Map .env');
-    steps.push('   - iCAD Transcribe API key: Set in .env files');
-    steps.push('   - Review .env file for any additional API keys needed (OpenAI, geocoding, etc.)');
+    steps.push('✅ API keys have been automatically generated and configured:');
+    steps.push('   • TrunkRecorder API key: Set in config.json and Scanner Map .env');
+    steps.push('   • iCAD Transcribe API key: Set in .env files');
+    steps.push('   • Review .env file for any additional API keys needed (OpenAI, geocoding, etc.)');
+    
+    steps.push('');
+    steps.push('📦 All data directories have been created in ./appdata/:');
+    steps.push('   • scanner-map/ - Main application data');
+    if (services.enableOllama) {
+      steps.push('   • ollama/ - AI model storage (persistent)');
+    }
+    if (services.enableICAD) {
+      steps.push('   • icad-transcribe/ - Transcription service data and models');
+    }
+    if (services.enableTrunkRecorder) {
+      steps.push('   • trunk-recorder/ - Radio recording configuration and audio');
+    }
+    
+    steps.push('');
+    steps.push('🚀 To start services:');
+    steps.push('   docker-compose up -d');
+    
+    if (services.enableTrunkRecorder) {
+      steps.push('');
+      steps.push('📡 TrunkRecorder setup:');
+      steps.push('   1. Pull the image: docker pull robotastic/trunk-recorder:latest');
+      steps.push('   2. Configure your radio system in appdata/trunk-recorder/config/config.json');
+      steps.push('   3. API key is already configured automatically');
+    }
     
     if (services.enableOllama) {
-      steps.push('2. Ollama: After starting, pull the model: docker exec -it ollama ollama pull <model>');
+      steps.push('');
+      steps.push('🤖 Ollama setup:');
+      steps.push('   1. After services start, pull your model:');
+      steps.push('      docker exec ollama ollama pull <model-name>');
+      steps.push('   2. Models are stored persistently in ./appdata/ollama/');
     }
 
     if (services.enableICAD) {
-      steps.push('3. iCAD Transcribe: Change the default password in appdata/icad-transcribe/.env');
-      steps.push('   - Access web interface: http://localhost:9912');
-      steps.push('   - Install models via web interface');
-      steps.push('   - API key is already configured automatically');
+      steps.push('');
+      steps.push('🎤 iCAD Transcribe setup:');
+      steps.push('   1. Access web interface: http://localhost:9912');
+      steps.push('   2. Default login: admin / changeme123 (CHANGE THIS IMMEDIATELY!)');
+      steps.push('   3. Install models via the web interface');
+      steps.push('   4. Models are stored persistently in ./appdata/icad-transcribe/models/');
+      steps.push('   5. API key is already configured automatically');
     }
 
-    if (services.enableTrunkRecorder) {
-      steps.push('4. TrunkRecorder:');
-      steps.push('   - Docker image has been built automatically');
-      steps.push('   - Configure your radio system in appdata/trunk-recorder/config/config.json');
-      steps.push('   - API key is already configured automatically');
-    }
-
-    steps.push('5. Start services: docker-compose up -d');
-    steps.push('6. View logs: docker-compose logs -f scanner-map');
-    steps.push('7. Access web interface: http://localhost:3001');
+    steps.push('');
+    steps.push('🌐 Access Scanner Map: http://localhost:3001');
+    steps.push('📊 View logs: docker-compose logs -f scanner-map');
 
     return steps;
   }
@@ -781,9 +813,10 @@ class DockerInstaller {
         // Continue to pull if check fails
       }
 
-      // Pull the model
-      console.log(chalk.blue(`   Pulling Ollama model: ${modelName}...`));
-      console.log(chalk.gray('   This may take several minutes depending on your internet speed.\n'));
+      // Pull the model with progress display
+      console.log(chalk.blue(`\n   📥 Pulling Ollama model: ${modelName}`));
+      console.log(chalk.gray('   This may take several minutes depending on your internet speed.'));
+      console.log(chalk.gray('   Progress will be shown below:\n'));
       
       const pullProcess = spawn('docker', ['exec', '-i', 'ollama', 'ollama', 'pull', modelName], {
         stdio: 'inherit',
@@ -810,6 +843,314 @@ class DockerInstaller {
         manualCommand: `docker exec ollama ollama pull ${modelName}`
       };
     }
+  }
+
+  /**
+   * Verify Docker installation status - shows images, containers, and health
+   */
+  async verifyInstallation(config) {
+    const chalk = require('chalk');
+    
+    console.log(chalk.blue.bold('\n' + '='.repeat(60)));
+    console.log(chalk.blue.bold('📊 Docker Installation Status Verification'));
+    console.log(chalk.blue.bold('='.repeat(60) + '\n'));
+
+    const status = {
+      images: [],
+      containers: [],
+      volumes: [],
+      networks: [],
+      health: {},
+      issues: []
+    };
+
+    try {
+      // Check Docker images
+      this.printHeader('Docker Images');
+      try {
+        const imagesOutput = execSync('docker images --format "{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"', {
+          encoding: 'utf8',
+          cwd: this.projectRoot
+        });
+        
+        const imageLines = imagesOutput.trim().split('\n').filter(line => line.trim());
+        const relevantImages = [];
+        
+        // Expected images based on configuration
+        const expectedImages = ['scanner-map'];
+        if (config.enableOllama && !config.ollamaUrl) {
+          expectedImages.push('ollama');
+        }
+        if (config.enableICAD && !config.icadUrl) {
+          expectedImages.push('icad-transcribe');
+        }
+        if (config.enableTrunkRecorder) {
+          expectedImages.push('trunk-recorder');
+        }
+
+        if (imageLines.length === 0) {
+          console.log(chalk.yellow('   ⚠️  No Docker images found'));
+          status.issues.push('No Docker images found');
+        } else {
+          // Filter for relevant images
+          imageLines.forEach(line => {
+            const [image, size, created] = line.split('\t');
+            const isRelevant = expectedImages.some(expected => 
+              image.includes(expected.split('/')[0]) || image.includes(expected.split('/')[1] || '')
+            );
+            
+            if (isRelevant || image.includes('scanner-map') || image.includes('ollama') || 
+                image.includes('icad') || image.includes('trunk-recorder')) {
+              relevantImages.push({ image, size, created });
+              status.images.push({ image, size, created });
+            }
+          });
+
+          if (relevantImages.length === 0) {
+            console.log(chalk.yellow('   ⚠️  No relevant images found'));
+            console.log(chalk.gray('   Expected images: ' + expectedImages.join(', ')));
+          } else {
+            relevantImages.forEach(({ image, size, created }) => {
+              const isExpected = expectedImages.some(expected => 
+                image.includes(expected.split('/')[0]) || image.includes(expected.split('/')[1] || '')
+              );
+              const icon = isExpected ? '✓' : 'ℹ️';
+              const color = isExpected ? chalk.green : chalk.gray;
+              console.log(color(`   ${icon} ${image.padEnd(40)} ${size}`));
+            });
+          }
+        }
+      } catch (err) {
+        console.log(chalk.red(`   ✗ Error checking images: ${err.message}`));
+        status.issues.push(`Error checking images: ${err.message}`);
+      }
+
+      console.log('');
+
+      // Check Docker containers
+      this.printHeader('Container Status');
+      try {
+        const containersOutput = execSync('docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}"', {
+          encoding: 'utf8',
+          cwd: this.projectRoot
+        });
+        
+        const containerLines = containersOutput.trim().split('\n').filter(line => line.trim());
+        const relevantContainers = ['scanner-map'];
+        
+        if (config.enableOllama && !config.ollamaUrl) {
+          relevantContainers.push('ollama');
+        }
+        if (config.enableICAD && !config.icadUrl) {
+          relevantContainers.push('icad-transcribe');
+        }
+        if (config.enableTrunkRecorder) {
+          relevantContainers.push('trunk-recorder');
+        }
+
+        if (containerLines.length === 0) {
+          console.log(chalk.yellow('   ⚠️  No containers found'));
+          status.issues.push('No containers found');
+        } else {
+          const foundContainers = [];
+          containerLines.forEach(line => {
+            const [name, statusText, image, ports] = line.split('\t');
+            if (relevantContainers.includes(name)) {
+              foundContainers.push({ name, status: statusText, image, ports });
+              status.containers.push({ name, status: statusText, image, ports });
+            }
+          });
+
+          if (foundContainers.length === 0) {
+            console.log(chalk.yellow('   ⚠️  No relevant containers found'));
+            console.log(chalk.gray('   Expected containers: ' + relevantContainers.join(', ')));
+            status.issues.push('Expected containers not found');
+          } else {
+            foundContainers.forEach(({ name, status: statusText, image, ports }) => {
+              const isRunning = statusText.includes('Up');
+              const icon = isRunning ? '✓' : '⚠️';
+              const color = isRunning ? chalk.green : chalk.yellow;
+              const statusColor = isRunning ? chalk.green : chalk.yellow;
+              
+              console.log(color(`   ${icon} ${name.padEnd(20)} ${statusColor(statusText)}`));
+              if (ports && ports.trim()) {
+                console.log(chalk.gray(`      Ports: ${ports}`));
+              }
+              
+              if (!isRunning) {
+                status.issues.push(`Container ${name} is not running`);
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.log(chalk.red(`   ✗ Error checking containers: ${err.message}`));
+        status.issues.push(`Error checking containers: ${err.message}`);
+      }
+
+      console.log('');
+
+      // Check volumes
+      this.printHeader('Volume Mounts');
+      try {
+        const volumesOutput = execSync('docker volume ls --format "{{.Name}}\t{{.Driver}}"', {
+          encoding: 'utf8',
+          cwd: this.projectRoot
+        });
+        
+        // Also check appdata directory
+        const appdataPath = path.join(this.projectRoot, 'appdata');
+        if (fs.existsSync(appdataPath)) {
+          const appdataDirs = fs.readdirSync(appdataPath, { withFileTypes: true })
+            .filter(dirent => dirent.isDirectory())
+            .map(dirent => dirent.name);
+          
+          if (appdataDirs.length > 0) {
+            console.log(chalk.green('   ✓ appdata directory structure:'));
+            appdataDirs.forEach(dir => {
+              const dirPath = path.join(appdataPath, dir);
+              const exists = fs.existsSync(dirPath);
+              const icon = exists ? '✓' : '✗';
+              const color = exists ? chalk.green : chalk.red;
+              console.log(color(`      ${icon} ./appdata/${dir}/`));
+              status.volumes.push(`./appdata/${dir}/`);
+            });
+          } else {
+            console.log(chalk.yellow('   ⚠️  appdata directory is empty'));
+            status.issues.push('appdata directory is empty');
+          }
+        } else {
+          console.log(chalk.yellow('   ⚠️  appdata directory not found'));
+          status.issues.push('appdata directory not found');
+        }
+      } catch (err) {
+        console.log(chalk.red(`   ✗ Error checking volumes: ${err.message}`));
+        status.issues.push(`Error checking volumes: ${err.message}`);
+      }
+
+      console.log('');
+
+      // Check service health
+      this.printHeader('Service Health');
+      try {
+        // Check scanner-map container
+        try {
+          execSync('docker exec scanner-map node -e "require(\'http\').get(\'http://localhost:3001/api/test\', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"', {
+            stdio: 'ignore',
+            timeout: 5000
+          });
+          console.log(chalk.green('   ✓ scanner-map: Healthy (API responding)'));
+          status.health['scanner-map'] = 'healthy';
+        } catch (err) {
+          console.log(chalk.yellow('   ⚠️  scanner-map: Not responding (may still be starting)'));
+          status.health['scanner-map'] = 'starting';
+        }
+
+        // Check Ollama if enabled locally
+        if (config.enableOllama && !config.ollamaUrl) {
+          try {
+            execSync('docker exec ollama ollama list', {
+              stdio: 'ignore',
+              timeout: 5000
+            });
+            console.log(chalk.green('   ✓ ollama: Healthy (API responding)'));
+            status.health['ollama'] = 'healthy';
+          } catch (err) {
+            console.log(chalk.yellow('   ⚠️  ollama: Not responding (may still be starting)'));
+            status.health['ollama'] = 'starting';
+          }
+        } else if (config.ollamaUrl) {
+          console.log(chalk.blue(`   ℹ️  ollama: Using remote URL (${config.ollamaUrl})`));
+          status.health['ollama'] = 'remote';
+        }
+
+        // Check iCAD if enabled locally
+        if (config.enableICAD && !config.icadUrl) {
+          try {
+            execSync('curl -f http://localhost:9912/api/health 2>/dev/null || echo "not-ready"', {
+              stdio: 'ignore',
+              timeout: 5000
+            });
+            console.log(chalk.green('   ✓ icad-transcribe: Healthy (web interface accessible)'));
+            status.health['icad-transcribe'] = 'healthy';
+          } catch (err) {
+            console.log(chalk.yellow('   ⚠️  icad-transcribe: Not responding (may still be starting)'));
+            status.health['icad-transcribe'] = 'starting';
+          }
+        } else if (config.icadUrl) {
+          console.log(chalk.blue(`   ℹ️  icad-transcribe: Using remote URL (${config.icadUrl})`));
+          status.health['icad-transcribe'] = 'remote';
+        }
+
+        // Check TrunkRecorder if enabled
+        if (config.enableTrunkRecorder) {
+          try {
+            execSync('docker exec trunk-recorder echo "test" 2>/dev/null', {
+              stdio: 'ignore',
+              timeout: 5000
+            });
+            console.log(chalk.green('   ✓ trunk-recorder: Container running'));
+            status.health['trunk-recorder'] = 'healthy';
+          } catch (err) {
+            console.log(chalk.yellow('   ⚠️  trunk-recorder: Container not running or not ready'));
+            status.health['trunk-recorder'] = 'starting';
+          }
+        }
+      } catch (err) {
+        console.log(chalk.red(`   ✗ Error checking service health: ${err.message}`));
+        status.issues.push(`Error checking service health: ${err.message}`);
+      }
+
+      console.log('');
+
+      // Summary
+      this.printHeader('Installation Summary');
+      const totalIssues = status.issues.length;
+      const runningContainers = status.containers.filter(c => c.status.includes('Up')).length;
+      const totalExpectedContainers = status.containers.length;
+
+      if (totalIssues === 0 && runningContainers === totalExpectedContainers) {
+        console.log(chalk.green.bold('   ✅ All systems operational!'));
+        console.log(chalk.green(`   ✓ ${runningContainers}/${totalExpectedContainers} containers running`));
+        console.log(chalk.green(`   ✓ ${status.images.length} images available`));
+        console.log(chalk.green(`   ✓ ${status.volumes.length} volumes mounted`));
+      } else {
+        console.log(chalk.yellow.bold(`   ⚠️  Installation complete with ${totalIssues} issue(s)`));
+        console.log(chalk.yellow(`   ${runningContainers}/${totalExpectedContainers} containers running`));
+        if (totalIssues > 0) {
+          console.log(chalk.red(`   ${totalIssues} issue(s) detected:`));
+          status.issues.forEach(issue => {
+            console.log(chalk.red(`      • ${issue}`));
+          });
+        }
+      }
+
+      console.log('');
+      console.log(chalk.blue.bold('='.repeat(60)));
+      console.log('');
+
+      return {
+        success: totalIssues === 0,
+        status,
+        issues: status.issues
+      };
+    } catch (err) {
+      console.log(chalk.red(`\n   ✗ Error during verification: ${err.message}\n`));
+      return {
+        success: false,
+        error: err.message,
+        status
+      };
+    }
+  }
+
+  /**
+   * Helper to print section headers
+   */
+  printHeader(title) {
+    const chalk = require('chalk');
+    console.log(chalk.cyan.bold(`\n${title}:`));
+    console.log(chalk.gray('─'.repeat(50)));
   }
 }
 

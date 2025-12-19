@@ -2,6 +2,52 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.5] - 2024-12-20
+
+### Installer Enhancements & Docker Improvements
+
+### Added
+- **Docker Installation Status Verification Page**
+  - Comprehensive status check at end of installer
+  - Verifies Docker images, container status, volume mounts, and service health
+  - Shows detailed summary with color-coded status indicators
+  - Handles edge cases (services starting, remote services, missing components)
+- **Remote Service Configuration**
+  - Remote Ollama URL configuration option in installer (similar to iCAD)
+  - Remote iCAD URL configuration option in installer
+  - Both services can now be configured to use external/remote instances
+  - Web UI configuration page for runtime service URL updates
+- **Progress Display for Model Pulling**
+  - Real-time progress output when pulling Ollama models
+  - Shows download progress and status during model installation
+- **Installer Auto-Update Check**
+  - Non-blocking update check on installer startup
+  - Notifies users when new installer versions are available
+  - Provides download links for updates
+
+### Changed
+- **Installer Polish Pass**
+  - Ensured all Docker volume mounts are properly configured for optional services
+  - Improved installer messaging and user guidance
+  - Better handling of remote vs local service configurations
+  - Enhanced data persistence information and next steps
+- **Docker Compose Builder**
+  - Updated to handle remote Ollama/iCAD URLs (doesn't start local containers if remote URL provided)
+  - Improved volume mount configuration for iCAD model persistence
+  - Updated TrunkRecorder image reference to use pre-built image
+- **Service Configuration**
+  - Added API endpoints for runtime service URL configuration
+  - Added Service Configuration modal in web UI
+  - Improved service detection and health checking
+
+### Fixed
+- Docker containers now properly load pulled images for iCAD and Ollama
+- TrunkRecorder image now starts correctly
+- Volume mounts verified and properly configured for all optional services
+- Remote service configuration properly prevents local container startup
+
+---
+
 ## [3.0.2] - 2024-12-20
 
 ### Installer & Startup Script Improvements
