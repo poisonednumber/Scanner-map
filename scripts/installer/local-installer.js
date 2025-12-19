@@ -97,6 +97,10 @@ class LocalInstaller {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
+      enableRdioScanner = false,
+      enableOP25 = false,
+      enableSDRTrunk = false,
+      radioSoftware = 'none',
       ...envConfig
     } = config;
 
@@ -113,12 +117,36 @@ class LocalInstaller {
     // Create appdata structure
     await this.serviceConfig.createAppdataStructure();
 
+    // Generate a single API key for radio software (shared across all)
+    const { v4: uuidv4 } = require('uuid');
+    const radioApiKey = (enableTrunkRecorder || enableRdioScanner || enableOP25 || enableSDRTrunk || radioSoftware !== 'none') 
+      ? uuidv4() 
+      : null;
+
     // Configure services
     const serviceResults = {
-      trunkRecorder: await this.serviceConfig.configureTrunkRecorder(enableTrunkRecorder, 'local'),
+      trunkRecorder: (enableTrunkRecorder || radioSoftware === 'trunk-recorder')
+        ? await this.serviceConfig.configureTrunkRecorder(true, 'local', radioApiKey)
+        : null,
+      sdrtrunk: (enableSDRTrunk || radioSoftware === 'sdrtrunk')
+        ? await this.serviceConfig.configureSDRTrunk(true, 'local', radioApiKey)
+        : null,
+      rdioScanner: (enableRdioScanner || radioSoftware === 'rdio-scanner')
+        ? await this.serviceConfig.configureRdioScanner(true, 'local', radioApiKey)
+        : null,
+      op25: (enableOP25 || radioSoftware === 'op25')
+        ? await this.serviceConfig.configureOP25(true, 'local', radioApiKey)
+        : null,
       icad: await this.serviceConfig.configureICAD(enableICAD, 'local'),
       ollama: await this.serviceConfig.configureOllama(enableOllama, 'local')
     };
+
+    // Extract API key from service results
+    const finalRadioApiKey = serviceResults.trunkRecorder?.apiKey || 
+                             serviceResults.sdrtrunk?.apiKey || 
+                             serviceResults.rdioScanner?.apiKey || 
+                             serviceResults.op25?.apiKey || 
+                             radioApiKey;
 
     // Generate .env file with local URLs
     const envPath = await this.envGenerator.generate({
@@ -126,7 +154,10 @@ class LocalInstaller {
       installationType: 'local',
       enableICAD,
       icadUrl: enableICAD ? 'http://localhost:9912' : undefined,
-      ollamaUrl: enableOllama ? 'http://localhost:11434' : undefined
+      ollamaUrl: enableOllama ? 'http://localhost:11434' : undefined,
+      trunkRecorderApiKey: finalRadioApiKey,
+      radioApiKey: finalRadioApiKey,
+      radioSoftware: radioSoftware
     });
 
     return {
@@ -136,7 +167,11 @@ class LocalInstaller {
       nextSteps: this.getNextSteps({
         enableOllama,
         enableICAD,
-        enableTrunkRecorder
+        enableTrunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+        enableRdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+        enableOP25: enableOP25 || radioSoftware === 'op25',
+        enableSDRTrunk: enableSDRTrunk || radioSoftware === 'sdrtrunk',
+        radioSoftware: radioSoftware
       })
     };
   }
@@ -165,12 +200,33 @@ class LocalInstaller {
       steps.push('   - Ensure iCAD is running on http://localhost:9912');
     }
 
-    if (services.enableTrunkRecorder) {
+    if (services.enableTrunkRecorder || services.radioSoftware === 'trunk-recorder') {
       steps.push('4. Install TrunkRecorder:');
       steps.push('   - See: https://github.com/TrunkRecorder/trunk-recorder');
       steps.push('   - Install and configure TrunkRecorder');
       steps.push('   - Configure radio system in appdata/trunk-recorder/config/config.json');
-      steps.push('   - API key will be auto-generated on first Scanner Map startup');
+      steps.push('   - API key is already configured automatically');
+    }
+    
+    if (services.enableSDRTrunk || services.radioSoftware === 'sdrtrunk') {
+      steps.push('4. SDRTrunk setup:');
+      steps.push('   - Configuration file generated: appdata/sdrtrunk/config/streaming-config.json');
+      steps.push('   - Import this config into SDRTrunk desktop app');
+      steps.push('   - See docs/RADIO-SOFTWARE.md for detailed instructions');
+    }
+    
+    if (services.enableRdioScanner || services.radioSoftware === 'rdio-scanner') {
+      steps.push('4. rdio-scanner setup:');
+      steps.push('   - Configuration file generated: appdata/rdio-scanner/config/config.json');
+      steps.push('   - Downstream server is already configured');
+      steps.push('   - See docs/RADIO-SOFTWARE.md for detailed instructions');
+    }
+    
+    if (services.enableOP25 || services.radioSoftware === 'op25') {
+      steps.push('4. OP25 setup:');
+      steps.push('   - Configuration file generated: appdata/op25/config/config.json');
+      steps.push('   - Upload server is already configured');
+      steps.push('   - See docs/RADIO-SOFTWARE.md for detailed instructions');
     }
 
     steps.push('5. Start Scanner Map: npm start');
@@ -302,6 +358,8 @@ node bot.js
 }
 
 module.exports = LocalInstaller;
+
+
 
 
 

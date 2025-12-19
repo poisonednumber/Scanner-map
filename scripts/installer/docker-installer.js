@@ -88,6 +88,10 @@ class DockerInstaller {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
+      enableRdioScanner = false,
+      enableOP25 = false,
+      enableSDRTrunk = false,
+      radioSoftware = 'none',
       enableGPU = false,
       transcriptionMode = 'local',
       timezone = 'America/New_York',
@@ -100,26 +104,48 @@ class DockerInstaller {
     // Generate API keys for services that need them
     const { v4: uuidv4 } = require('uuid');
     const icadApiKey = enableICAD ? uuidv4() : null;
-    const trunkRecorderApiKey = enableTrunkRecorder ? uuidv4() : null;
+    
+    // Generate a single API key for radio software (shared across all)
+    const radioApiKey = (enableTrunkRecorder || enableRdioScanner || enableOP25 || enableSDRTrunk || radioSoftware !== 'none') 
+      ? uuidv4() 
+      : null;
 
     // Configure services with generated API keys
     // This also ensures service-specific directories are created
     const serviceResults = {
-      trunkRecorder: await this.serviceConfig.configureTrunkRecorder(enableTrunkRecorder, 'docker', trunkRecorderApiKey),
+      trunkRecorder: (enableTrunkRecorder || radioSoftware === 'trunk-recorder')
+        ? await this.serviceConfig.configureTrunkRecorder(true, 'docker', radioApiKey)
+        : null,
+      sdrtrunk: (enableSDRTrunk || radioSoftware === 'sdrtrunk')
+        ? await this.serviceConfig.configureSDRTrunk(true, 'docker', radioApiKey)
+        : null,
+      rdioScanner: (enableRdioScanner || radioSoftware === 'rdio-scanner')
+        ? await this.serviceConfig.configureRdioScanner(true, 'docker', radioApiKey)
+        : null,
+      op25: (enableOP25 || radioSoftware === 'op25')
+        ? await this.serviceConfig.configureOP25(true, 'docker', radioApiKey)
+        : null,
       icad: await this.serviceConfig.configureICAD(enableICAD, 'docker', icadApiKey),
       ollama: await this.serviceConfig.configureOllama(enableOllama, 'docker')
     };
 
     // Extract API keys from service results (in case they were already set)
     const finalICADApiKey = serviceResults.icad?.apiKey || icadApiKey;
-    const finalTrunkRecorderApiKey = serviceResults.trunkRecorder?.apiKey || trunkRecorderApiKey;
+    const finalRadioApiKey = serviceResults.trunkRecorder?.apiKey || 
+                             serviceResults.sdrtrunk?.apiKey || 
+                             serviceResults.rdioScanner?.apiKey || 
+                             serviceResults.op25?.apiKey || 
+                             radioApiKey;
 
     // Build docker-compose.yml
     // Pass service URLs so compose builder knows if services are remote
     const composeResult = await this.composeBuilder.build({
       enableOllama: enableOllama || !!envConfig.ollamaUrl,  // Enable if local or remote
       enableICAD: enableICAD || !!envConfig.icadUrl,  // Enable if local or remote
-      enableTrunkRecorder,
+      enableTrunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+      enableRdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+      enableOP25: enableOP25 || radioSoftware === 'op25',
+      radioSoftware: radioSoftware,
       enableGPU,
       transcriptionMode,
       timezone,
@@ -131,7 +157,11 @@ class DockerInstaller {
     this.enabledServices = {
       ollama: enableOllama,
       icad: enableICAD,
-      trunkRecorder: enableTrunkRecorder
+      trunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+      rdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+      op25: enableOP25 || radioSoftware === 'op25',
+      sdrtrunk: enableSDRTrunk || radioSoftware === 'sdrtrunk',
+      radioSoftware: radioSoftware
     };
 
     // Generate .env file with API keys
@@ -144,7 +174,9 @@ class DockerInstaller {
       enableICAD,
       icadUrl: envConfig.icadUrl || (enableICAD ? 'http://icad-transcribe:9912' : undefined),
       icadApiKey: finalICADApiKey,
-      trunkRecorderApiKey: finalTrunkRecorderApiKey,
+      trunkRecorderApiKey: finalRadioApiKey,
+      radioApiKey: finalRadioApiKey,
+      radioSoftware: radioSoftware,
       ollamaUrl: finalOllamaUrl
     });
 
@@ -156,7 +188,11 @@ class DockerInstaller {
       nextSteps: this.getNextSteps({
         enableOllama,
         enableICAD,
-        enableTrunkRecorder
+        enableTrunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+        enableRdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+        enableOP25: enableOP25 || radioSoftware === 'op25',
+        enableSDRTrunk: enableSDRTrunk || radioSoftware === 'sdrtrunk',
+        radioSoftware: radioSoftware
       })
     };
   }
@@ -168,7 +204,9 @@ class DockerInstaller {
     const steps = [];
 
     steps.push('✅ API keys have been automatically generated and configured:');
-    steps.push('   • TrunkRecorder API key: Set in config.json and Scanner Map .env');
+    if (services.radioSoftware && services.radioSoftware !== 'none') {
+      steps.push(`   • ${services.radioSoftware} API key: Set in config files and Scanner Map .env`);
+    }
     steps.push('   • iCAD Transcribe API key: Set in .env files');
     steps.push('   • Review .env file for any additional API keys needed (OpenAI, geocoding, etc.)');
     
@@ -181,20 +219,57 @@ class DockerInstaller {
     if (services.enableICAD) {
       steps.push('   • icad-transcribe/ - Transcription service data and models');
     }
-    if (services.enableTrunkRecorder) {
+    if (services.enableTrunkRecorder || services.radioSoftware === 'trunk-recorder') {
       steps.push('   • trunk-recorder/ - Radio recording configuration and audio');
+    }
+    if (services.enableSDRTrunk || services.radioSoftware === 'sdrtrunk') {
+      steps.push('   • sdrtrunk/ - Configuration files (for desktop app)');
+    }
+    if (services.enableRdioScanner || services.radioSoftware === 'rdio-scanner') {
+      steps.push('   • rdio-scanner/ - Configuration and data');
+    }
+    if (services.enableOP25 || services.radioSoftware === 'op25') {
+      steps.push('   • op25/ - Configuration and recordings');
     }
     
     steps.push('');
     steps.push('🚀 To start services:');
     steps.push('   docker-compose up -d');
     
-    if (services.enableTrunkRecorder) {
+    if (services.enableTrunkRecorder || services.radioSoftware === 'trunk-recorder') {
       steps.push('');
       steps.push('📡 TrunkRecorder setup:');
       steps.push('   1. Pull the image: docker pull robotastic/trunk-recorder:latest');
       steps.push('   2. Configure your radio system in appdata/trunk-recorder/config/config.json');
       steps.push('   3. API key is already configured automatically');
+    }
+    
+    if (services.enableSDRTrunk || services.radioSoftware === 'sdrtrunk') {
+      steps.push('');
+      steps.push('📡 SDRTrunk setup:');
+      steps.push('   1. Configuration file generated: appdata/sdrtrunk/config/streaming-config.json');
+      steps.push('   2. Import this config into SDRTrunk desktop app');
+      steps.push('   3. API key is already configured automatically');
+      steps.push('   4. See docs/RADIO-SOFTWARE.md for detailed instructions');
+    }
+    
+    if (services.enableRdioScanner || services.radioSoftware === 'rdio-scanner') {
+      steps.push('');
+      steps.push('🌐 rdio-scanner setup:');
+      steps.push('   1. Pull the image: docker pull rdioscanner/rdio-scanner:latest');
+      steps.push('   2. Configuration file generated: appdata/rdio-scanner/config/config.json');
+      steps.push('   3. Downstream server is already configured');
+      steps.push('   4. Access web interface: http://localhost:3000');
+      steps.push('   5. See docs/RADIO-SOFTWARE.md for detailed instructions');
+    }
+    
+    if (services.enableOP25 || services.radioSoftware === 'op25') {
+      steps.push('');
+      steps.push('🔧 OP25 setup:');
+      steps.push('   1. Pull the image: docker pull op25/op25:latest');
+      steps.push('   2. Configuration file generated: appdata/op25/config/config.json');
+      steps.push('   3. Upload server is already configured');
+      steps.push('   4. See docs/RADIO-SOFTWARE.md for detailed instructions');
     }
     
     if (services.enableOllama) {
@@ -228,6 +303,36 @@ class DockerInstaller {
   async startServices() {
     const chalk = require('chalk');
     try {
+      // Ensure TrunkRecorder config exists if TrunkRecorder is enabled
+      if (this.enabledServices?.trunkRecorder) {
+        const configPath = path.join(this.projectRoot, 'appdata', 'trunk-recorder', 'config', 'config.json');
+        const fs = require('fs-extra');
+        
+        // Check if config exists and is valid
+        let needsConfig = false;
+        if (!(await fs.pathExists(configPath))) {
+          needsConfig = true;
+        } else {
+          try {
+            const content = await fs.readFile(configPath, 'utf8');
+            if (!content || content.trim().length === 0) {
+              needsConfig = true;
+            } else {
+              // Try to parse as JSON
+              JSON.parse(content);
+            }
+          } catch (err) {
+            needsConfig = true;
+          }
+        }
+        
+        // Create config if needed
+        if (needsConfig) {
+          console.log(chalk.yellow('   ⚠️  TrunkRecorder config.json missing or invalid, creating default...'));
+          await this.serviceConfig.configureTrunkRecorder(true, 'docker');
+          console.log(chalk.green('   ✓ TrunkRecorder config.json created'));
+        }
+      }
       // #region agent log
       debugLog('docker-installer.js:165', 'startServices entry', { projectRoot: this.projectRoot, enabledServices: this.enabledServices }, 'D');
       // #endregion

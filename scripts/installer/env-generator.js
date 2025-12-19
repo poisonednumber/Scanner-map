@@ -75,7 +75,9 @@ class EnvGenerator {
       icadApiKey = '',
       
       // TrunkRecorder API key (auto-generated)
-      trunkRecorderApiKey = ''
+      trunkRecorderApiKey = '',
+      radioApiKey = '',
+      radioSoftware = 'none'
     } = config;
 
     // Auto-configure URLs based on installation type
@@ -198,14 +200,27 @@ STORAGE_MODE=${storageMode}
     await fs.ensureDir(path.dirname(this.envPath));
     await fs.writeFile(this.envPath, envContent, 'utf8');
 
+    // Add radio software configuration
+    if (radioSoftware && radioSoftware !== 'none') {
+      envContent += `
+# --- Radio Software ---
+# Selected radio recording software: ${radioSoftware}
+# Options: trunk-recorder, sdrtrunk, rdio-scanner, op25, none
+RADIO_SOFTWARE=${radioSoftware}
+`;
+    }
+    
+    // Use radioApiKey if provided, otherwise fall back to trunkRecorderApiKey for backward compatibility
+    const finalRadioApiKey = radioApiKey || trunkRecorderApiKey;
+
     // Also save the API key to a file for easy reference
-    if (trunkRecorderApiKey) {
+    if (finalRadioApiKey) {
       const dataDir = path.join(this.projectRoot, 'data');
       await fs.ensureDir(dataDir);
       
       // Save API key file
       const apiKeyFile = path.join(dataDir, 'apikeys.json');
-      const hashedKey = require('crypto').createHash('sha256').update(trunkRecorderApiKey).digest('hex');
+      const hashedKey = require('crypto').createHash('sha256').update(finalRadioApiKey).digest('hex');
       const apiKeys = [{
         key: hashedKey,
         name: 'Auto-generated',
@@ -215,11 +230,14 @@ STORAGE_MODE=${storageMode}
 
       // Save plaintext key for reference
       const keyRefFile = path.join(dataDir, 'api-key.txt');
+      const softwareName = radioSoftware && radioSoftware !== 'none' 
+        ? radioSoftware.charAt(0).toUpperCase() + radioSoftware.slice(1).replace('-', ' ')
+        : 'SDRTrunk, TrunkRecorder, or any rdio-scanner compatible software';
       await fs.writeFile(keyRefFile, `Scanner Map API Key
 ====================
-Use this key in SDRTrunk, TrunkRecorder, or any rdio-scanner compatible software.
+Use this key in ${softwareName}.
 
-API Key: ${trunkRecorderApiKey}
+API Key: ${finalRadioApiKey}
 
 Endpoint: http://localhost:${botPort}/api/call-upload
 

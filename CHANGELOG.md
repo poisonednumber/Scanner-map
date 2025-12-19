@@ -2,6 +2,65 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.7] - 2024-12-20
+
+### Radio Software Alternatives with Complete Auto-Configuration
+
+### Added
+- **Radio Software Selection in Installer**
+  - New installer step to select radio recording software
+  - Options: TrunkRecorder, SDRTrunk, rdio-scanner, OP25, or None
+  - All options fully auto-configured with API keys and URLs
+- **SDRTrunk Support**
+  - Auto-generates streaming configuration file
+  - Config file: `appdata/sdrtrunk/config/streaming-config.json`
+  - Ready to import into SDRTrunk desktop app
+  - API key and upload URL pre-configured
+- **rdio-scanner Support**
+  - Docker container support (if image available)
+  - Auto-generates downstream server configuration
+  - Config file: `appdata/rdio-scanner/config/config.json`
+  - Web interface accessible at http://localhost:3000
+- **OP25 Support**
+  - Docker container support (if image available)
+  - Auto-generates upload server configuration
+  - Config file: `appdata/op25/config/config.json`
+  - Command-line decoder integration
+- **Unified API Key Management**
+  - Single API key shared across all radio software options
+  - Auto-generated and configured in all config files
+  - Stored in `.env` as `RADIO_SOFTWARE` and `RADIO_API_KEY`
+- **Enhanced Documentation**
+  - Updated `docs/RADIO-SOFTWARE.md` with all alternatives
+  - Auto-configuration instructions for each option
+  - Docker setup instructions where applicable
+
+### Changed
+- **Installer Flow**
+  - Replaced TrunkRecorder enable/disable with radio software selection
+  - All radio software options now have complete auto-configuration
+  - Improved user guidance and next steps for each option
+- **Docker Compose Builder**
+  - Added rdio-scanner and OP25 Docker service definitions
+  - Updated volume mounts for all radio software options
+  - Enhanced service detection and health checking
+- **Service Configuration**
+  - New methods: `configureSDRTrunk()`, `configureRdioScanner()`, `configureOP25()`
+  - All methods handle empty/invalid config files gracefully
+  - Automatic API key injection into all config files
+- **Directory Structure**
+  - Added `appdata/sdrtrunk/config/` for SDRTrunk configs
+  - Added `appdata/rdio-scanner/config/` for rdio-scanner configs
+  - Added `appdata/op25/config/` for OP25 configs
+  - All directories auto-created by installer
+
+### Fixed
+- TrunkRecorder config.json creation now handles empty files
+- Improved config file validation and recreation logic
+- Better error handling for invalid JSON configs
+
+---
+
 ## [3.0.6] - 2024-12-20
 
 ### Testing Release

@@ -8,13 +8,14 @@ Connect your radio software to Scanner Map to receive and process calls.
 
 ## Supported Software
 
-| Software | Type | Notes |
-|----------|------|-------|
-| **SDRTrunk** | Trunked radio decoder | Desktop application |
-| **TrunkRecorder** | Trunked radio recorder | Linux/Docker |
-| **rdio-scanner** | Web-based scanner | Can forward to Scanner Map |
+| Software | Type | Notes | Auto-Configured |
+|----------|------|-------|----------------|
+| **TrunkRecorder** | Trunked radio recorder | Linux/Docker | ✅ Yes (Docker + Config) |
+| **SDRTrunk** | Trunked radio decoder | Desktop application | ✅ Yes (Config file) |
+| **rdio-scanner** | Web-based scanner | Web-based, Docker available | ✅ Yes (Docker + Config) |
+| **OP25** | Command-line decoder | Linux/Docker | ✅ Yes (Docker + Config) |
 
-All use the **rdio-scanner compatible API** for uploading calls.
+All use the **rdio-scanner compatible API** for uploading calls. The installer can auto-configure all of these options.
 
 ---
 
@@ -71,14 +72,33 @@ npm start
 
 ## SDRTrunk Setup
 
-### Step 1: Configure Streaming
+SDRTrunk is a desktop application for decoding trunked radio systems.
+
+### Auto-Configuration (Installer)
+
+If you selected SDRTrunk during installation:
+
+1. **Configuration file is auto-generated** in `appdata/sdrtrunk/config/streaming-config.json`
+2. **Import the config into SDRTrunk:**
+   - Open SDRTrunk
+   - Go to **View** → **Playlist Editor**
+   - Click the **Streaming** tab
+   - Click **Import** and select `appdata/sdrtrunk/config/streaming-config.json`
+3. **Enable streaming** for your desired systems/talkgroups
+4. **API key is already configured** in the imported config
+
+### Manual Configuration
+
+If you prefer to configure manually:
+
+#### Step 1: Configure Streaming
 
 1. Open SDRTrunk
 2. Go to **View** → **Playlist Editor**
 3. Click the **Streaming** tab
 4. Click **New** → **Broadcastify Calls (rdio-scanner)**
 
-### Step 2: Configure Settings
+#### Step 2: Configure Settings
 
 | Setting | Value |
 |---------|-------|
@@ -86,10 +106,10 @@ npm start
 | **Host** | `localhost` (or your server IP) |
 | **Port** | `3306` |
 | **Path** | `/api/call-upload` |
-| **API Key** | Your API key from apikeys.json |
+| **API Key** | Your API key from `data/api-key.txt` or `appdata/scanner-map/data/api-key.txt` |
 | **System ID** | `1` (or any number) |
 
-### Step 3: Enable Streaming
+#### Step 3: Enable Streaming
 
 1. Select the broadcast configuration
 2. Enable it for the desired system/talkgroups
@@ -102,17 +122,43 @@ SDRTrunk may want the full URL:
 http://localhost:3306/api/call-upload
 ```
 
+**For Docker networking (if SDRTrunk is on host, Scanner Map in Docker):**
+```
+http://host.docker.internal:3306/api/call-upload
+```
+
 ---
 
 ## TrunkRecorder Setup
 
-### Step 1: Edit config.json
+TrunkRecorder is a Linux/Docker-based trunked radio recorder.
+
+### Docker Installation (Auto-Configured)
+
+If you selected TrunkRecorder during installation:
+
+1. **Configuration is auto-generated** in `appdata/trunk-recorder/config/config.json`
+2. **API key is already configured** automatically
+3. **Start the container:**
+   ```bash
+   docker-compose up -d trunk-recorder
+   ```
+4. **Configure your radio system** in `appdata/trunk-recorder/config/config.json`:
+   - Add your SDR sources
+   - Configure your trunked radio systems
+   - Upload server is already set up
+
+### Manual Configuration
+
+If you're running TrunkRecorder manually:
+
+#### Step 1: Edit config.json
 
 Location:
 - **Docker:** `appdata/trunk-recorder/config/config.json`
 - **Local:** Your TrunkRecorder install directory
 
-### Step 2: Add Upload Configuration
+#### Step 2: Add Upload Configuration
 
 Add to your `config.json`:
 
@@ -121,7 +167,8 @@ Add to your `config.json`:
   "sources": [...],
   "systems": [...],
   "uploadServer": {
-    "server": "http://scanner-map:3306/api/call-upload",
+    "type": "rdio-scanner",
+    "url": "http://scanner-map:3306/api/call-upload",
     "apiKey": "your-api-key"
   }
 }
@@ -129,15 +176,15 @@ Add to your `config.json`:
 
 **For Docker networking:**
 ```json
-"server": "http://scanner-map:3306/api/call-upload"
+"url": "http://scanner-map:3306/api/call-upload"
 ```
 
 **For local/remote:**
 ```json
-"server": "http://localhost:3306/api/call-upload"
+"url": "http://localhost:3306/api/call-upload"
 ```
 
-### Step 3: Restart TrunkRecorder
+#### Step 3: Restart TrunkRecorder
 
 ```bash
 # Docker
@@ -156,25 +203,39 @@ services:
   trunk-recorder:
     image: robotastic/trunk-recorder:latest
     volumes:
-      - ./appdata/trunk-recorder/config:/app/config
-      - ./appdata/trunk-recorder/recordings:/app/recordings
-    depends_on:
-      - scanner-map
+      - ./appdata/trunk-recorder/config:/config
+      - ./appdata/trunk-recorder/recordings:/recordings
     networks:
       - scanner-network
 ```
 
-The API key is auto-configured when using the installer.
+The API key and upload server are auto-configured when using the installer.
 
 ---
 
-## rdio-scanner Forwarding
+## rdio-scanner Setup
+
+rdio-scanner is a web-based scanner that can forward calls to Scanner Map.
+
+### Docker Installation (Auto-Configured)
+
+If you selected rdio-scanner during installation:
+
+1. **Configuration is auto-generated** in `appdata/rdio-scanner/config/config.json`
+2. **Start the container:**
+   ```bash
+   docker-compose up -d rdio-scanner
+   ```
+3. **Access web interface:** http://localhost:3000
+4. **Downstream server is already configured** to forward to Scanner Map
+
+### Manual Installation
 
 If you're already running rdio-scanner, you can forward calls to Scanner Map.
 
-### Configuration
+#### Configuration
 
-In rdio-scanner's config, add Scanner Map as a downstream server:
+In rdio-scanner's config (`appdata/rdio-scanner/config/config.json`), add Scanner Map as a downstream server:
 
 ```json
 {
@@ -186,6 +247,46 @@ In rdio-scanner's config, add Scanner Map as a downstream server:
   ]
 }
 ```
+
+**For Docker networking:**
+```json
+{
+  "downstream": [
+    {
+      "url": "http://scanner-map:3306/api/call-upload",
+      "apiKey": "your-scanner-map-api-key"
+    }
+  ]
+}
+```
+
+The installer auto-generates this configuration with the correct API key.
+
+---
+
+## OP25 Setup
+
+OP25 is a command-line trunked radio decoder.
+
+### Docker Installation (Auto-Configured)
+
+If you selected OP25 during installation:
+
+1. **Configuration is auto-generated** in `appdata/op25/config/config.json`
+2. **Start the container:**
+   ```bash
+   docker-compose up -d op25
+   ```
+3. **Upload server is already configured** to send calls to Scanner Map
+
+### Manual Installation
+
+1. **Install OP25** on your system
+2. **Use the generated config** from `appdata/op25/config/config.json`
+3. **Configure your radio system** in OP25
+4. **Upload server settings** are already configured with the API key
+
+The installer auto-generates the upload server configuration with the correct API key.
 
 ---
 

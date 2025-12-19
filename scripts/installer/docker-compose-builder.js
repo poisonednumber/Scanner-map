@@ -23,6 +23,9 @@ class DockerComposeBuilder {
       enableOllama = false,
       enableICAD = false,
       enableTrunkRecorder = false,
+      enableRdioScanner = false,
+      enableOP25 = false,
+      radioSoftware = 'none',
       transcriptionMode = 'local',
       timezone = 'America/New_York',
       enableGPU = false,
@@ -159,7 +162,7 @@ class DockerComposeBuilder {
 
     // Add TrunkRecorder service if enabled
     // Note: TrunkRecorder can use pre-built image from Docker Hub or be built locally
-    if (enableTrunkRecorder) {
+    if (enableTrunkRecorder || radioSoftware === 'trunk-recorder') {
       compose.services['trunk-recorder'] = {
         // Try to use pre-built image first, fallback to local build
         // Pre-built: robotastic/trunk-recorder:latest (from Docker Hub)
@@ -173,6 +176,7 @@ class DockerComposeBuilder {
         ],
         volumes: [
           './appdata/trunk-recorder/config:/config',
+          './appdata/trunk-recorder/config/config.json:/app/config.json',  // Also mount to /app/config.json if image expects it there
           './appdata/trunk-recorder/recordings:/recordings'
         ],
         environment: [
@@ -187,6 +191,59 @@ class DockerComposeBuilder {
       // Don't add TrunkRecorder to depends_on - it may not be available yet
       // Users can start it separately after pulling/building the image
       // dependsOn.push('trunk-recorder');
+    }
+
+    // Add rdio-scanner service if enabled
+    if (enableRdioScanner || radioSoftware === 'rdio-scanner') {
+      compose.services['rdio-scanner'] = {
+        // rdio-scanner Docker image (community maintained)
+        // Note: Check Docker Hub for available images (e.g., rdioscanner/rdio-scanner:latest)
+        image: 'rdioscanner/rdio-scanner:latest',
+        container_name: 'rdio-scanner',
+        restart: 'unless-stopped',
+        ports: [
+          '3000:3000'  // rdio-scanner web interface port
+        ],
+        volumes: [
+          './appdata/rdio-scanner/config:/app/config',
+          './appdata/rdio-scanner/data:/app/data'
+        ],
+        environment: [
+          `TZ=${timezone}`
+        ],
+        networks: [
+          'scanner-network'
+        ],
+        pull_policy: 'missing'
+      };
+      // rdio-scanner doesn't need to depend on scanner-map
+    }
+
+    // Add OP25 service if enabled
+    if (enableOP25 || radioSoftware === 'op25') {
+      compose.services['op25'] = {
+        // OP25 Docker image (community maintained)
+        // Note: Check Docker Hub for available images (e.g., op25/op25:latest)
+        image: 'op25/op25:latest',
+        container_name: 'op25',
+        restart: 'unless-stopped',
+        privileged: true,
+        devices: [
+          '/dev/bus/usb:/dev/bus/usb'
+        ],
+        volumes: [
+          './appdata/op25/config:/app/config',
+          './appdata/op25/recordings:/app/recordings'
+        ],
+        environment: [
+          `TZ=${timezone}`
+        ],
+        networks: [
+          'scanner-network'
+        ],
+        pull_policy: 'missing'
+      };
+      // OP25 doesn't need to depend on scanner-map
     }
 
     // Add depends_on to scanner-map if any services are enabled
@@ -218,7 +275,10 @@ class DockerComposeBuilder {
 # Services enabled:
 ${enableOllama ? (ollamaUrl ? `# - Ollama (Remote) - ${ollamaUrl}` : '# - Ollama (Local AI) - Models stored in ./appdata/ollama/') : ''}
 ${enableICAD ? (icadUrl ? `# - iCAD Transcribe (Remote) - ${icadUrl}` : '# - iCAD Transcribe (Advanced Transcription) - Models stored in ./appdata/icad-transcribe/models/') : ''}
-${enableTrunkRecorder ? '# - TrunkRecorder (Radio Recording) - Pull image: docker pull robotastic/trunk-recorder:latest' : ''}
+${enableTrunkRecorder || radioSoftware === 'trunk-recorder' ? '# - TrunkRecorder (Radio Recording) - Pull image: docker pull robotastic/trunk-recorder:latest' : ''}
+${enableRdioScanner || radioSoftware === 'rdio-scanner' ? '# - rdio-scanner (Web-based Scanner) - Pull image: docker pull rdioscanner/rdio-scanner:latest' : ''}
+${enableOP25 || radioSoftware === 'op25' ? '# - OP25 (Command-line Decoder) - Pull image: docker pull op25/op25:latest' : ''}
+${radioSoftware === 'sdrtrunk' ? '# - SDRTrunk (Desktop App) - Config file generated in ./appdata/sdrtrunk/config/' : ''}
 ${gpuConfig ? '# - GPU acceleration enabled (NVIDIA)' : ''}
 #
 # Data Persistence:
@@ -226,7 +286,10 @@ ${gpuConfig ? '# - GPU acceleration enabled (NVIDIA)' : ''}
 # - scanner-map/ - Database, audio files, logs
 ${enableOllama ? '# - ollama/ - AI models (persistent)' : ''}
 ${enableICAD ? '# - icad-transcribe/ - Models, config, database (all persistent)' : ''}
-${enableTrunkRecorder ? '# - trunk-recorder/ - Config and recordings' : ''}
+${enableTrunkRecorder || radioSoftware === 'trunk-recorder' ? '# - trunk-recorder/ - Config and recordings' : ''}
+${enableRdioScanner || radioSoftware === 'rdio-scanner' ? '# - rdio-scanner/ - Config and data' : ''}
+${enableOP25 || radioSoftware === 'op25' ? '# - op25/ - Config and recordings' : ''}
+${radioSoftware === 'sdrtrunk' ? '# - sdrtrunk/ - Config files (for desktop app)' : ''}
 #
 # To remove all data: rm -rf ./appdata
 # To backup: Copy ./appdata directory
@@ -245,7 +308,11 @@ ${enableTrunkRecorder ? '# - trunk-recorder/ - Config and recordings' : ''}
       services: {
         ollama: enableOllama,
         icad: enableICAD,
-        trunkRecorder: enableTrunkRecorder
+        trunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+        rdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+        op25: enableOP25 || radioSoftware === 'op25',
+        sdrtrunk: radioSoftware === 'sdrtrunk',
+        radioSoftware: radioSoftware
       }
     };
 
@@ -254,7 +321,11 @@ ${enableTrunkRecorder ? '# - trunk-recorder/ - Config and recordings' : ''}
       services: {
         ollama: enableOllama,
         icad: enableICAD,
-        trunkRecorder: enableTrunkRecorder
+        trunkRecorder: enableTrunkRecorder || radioSoftware === 'trunk-recorder',
+        rdioScanner: enableRdioScanner || radioSoftware === 'rdio-scanner',
+        op25: enableOP25 || radioSoftware === 'op25',
+        sdrtrunk: radioSoftware === 'sdrtrunk',
+        radioSoftware: radioSoftware
       }
     };
   }

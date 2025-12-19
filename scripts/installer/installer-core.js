@@ -1358,27 +1358,80 @@ class InstallerCore {
       Object.assign(config, discordAnswers);
     }
 
-    // TrunkRecorder (Docker only - needs USB passthrough which only works on Linux)
-    if (installationType === 'docker') {
-      const { enableTrunkRecorder } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'enableTrunkRecorder',
-          message: 'Enable TrunkRecorder? (Requires Linux + SDR hardware)',
-          default: false
-        }
-      ]);
-      config.enableTrunkRecorder = enableTrunkRecorder;
+    // Radio Software Selection
+    console.log(chalk.gray('   Choose which radio recording software to use (or skip for manual setup).\n'));
+    
+    const radioChoices = [
+      { 
+        name: '📻 TrunkRecorder - Docker container, Linux only (USB passthrough)', 
+        value: 'trunk-recorder',
+        short: 'TrunkRecorder'
+      },
+      { 
+        name: '📡 SDRTrunk - Desktop app, all platforms (config file generated)', 
+        value: 'sdrtrunk',
+        short: 'SDRTrunk'
+      },
+      { 
+        name: '🌐 rdio-scanner - Web-based scanner (Docker + config)', 
+        value: 'rdio-scanner',
+        short: 'rdio-scanner'
+      },
+      { 
+        name: '🔧 OP25 - Command-line decoder (Docker + config)', 
+        value: 'op25',
+        short: 'OP25'
+      },
+      { 
+        name: '⏭️  Skip - Configure manually later', 
+        value: 'none',
+        short: 'None'
+      }
+    ];
 
-      if (enableTrunkRecorder) {
-        console.log(chalk.yellow('\n   ⚠️  TrunkRecorder notes:'));
+    const { radioSoftware } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'radioSoftware',
+        message: 'Radio recording software:',
+        choices: radioChoices,
+        default: 'none'
+      }
+    ]);
+
+    config.radioSoftware = radioSoftware;
+    
+    // Set enable flags for backward compatibility
+    config.enableTrunkRecorder = radioSoftware === 'trunk-recorder';
+    config.enableSDRTrunk = radioSoftware === 'sdrtrunk';
+    config.enableRdioScanner = radioSoftware === 'rdio-scanner';
+    config.enableOP25 = radioSoftware === 'op25';
+
+    if (radioSoftware !== 'none') {
+      console.log(chalk.gray(`\n   📝 ${radioChoices.find(c => c.value === radioSoftware)?.short} will be auto-configured`));
+      
+      if (radioSoftware === 'trunk-recorder') {
+        console.log(chalk.yellow('   ⚠️  TrunkRecorder notes:'));
         console.log(chalk.gray('   • USB passthrough only works on Linux'));
         console.log(chalk.gray('   • Image will be pulled from Docker Hub: robotastic/trunk-recorder:latest'));
-        console.log(chalk.gray('   • If pull fails, you can build locally (see docs)'));
-        console.log(chalk.gray('   • See docs/RADIO-SOFTWARE.md for detailed setup\n'));
+        if (installationType !== 'docker') {
+          console.log(chalk.gray('   • Docker installation recommended for TrunkRecorder'));
+        }
+      } else if (radioSoftware === 'sdrtrunk') {
+        console.log(chalk.gray('   • Configuration file will be generated'));
+        console.log(chalk.gray('   • Import config into SDRTrunk desktop app'));
+      } else if (radioSoftware === 'rdio-scanner') {
+        if (installationType === 'docker') {
+          console.log(chalk.gray('   • Docker container will be started'));
+        }
+        console.log(chalk.gray('   • Configuration file will be generated'));
+      } else if (radioSoftware === 'op25') {
+        if (installationType === 'docker') {
+          console.log(chalk.gray('   • Docker container will be started'));
+        }
+        console.log(chalk.gray('   • Configuration file will be generated'));
       }
-    } else {
-      config.enableTrunkRecorder = false;
+      console.log(chalk.gray('   • See docs/RADIO-SOFTWARE.md for detailed setup\n'));
     }
 
     return config;
@@ -1770,7 +1823,10 @@ class InstallerCore {
     // Integrations
     console.log(chalk.white.bold('   🔗 Integrations'));
     console.log(chalk.white(`     Discord: ${formatValue(config.enableDiscord)}`));
-    console.log(chalk.white(`     TrunkRecorder: ${formatValue(config.enableTrunkRecorder)}`));
+    console.log(chalk.white(`     Radio Software: ${config.radioSoftware === 'none' ? 'None (manual setup)' : config.radioSoftware}`));
+    if (config.radioSoftware !== 'none') {
+      console.log(chalk.gray(`       (Config files generated in appdata/${config.radioSoftware}/config/)`));
+    }
     console.log('');
   }
 
@@ -1850,12 +1906,18 @@ class InstallerCore {
     // API endpoints
     this.printHeader('API Endpoints');
 
-    console.log(chalk.white('   📡 Audio Upload (SDRTrunk/TrunkRecorder):'));
+    const radioSoftwareName = config.radioSoftware && config.radioSoftware !== 'none' 
+      ? config.radioSoftware.charAt(0).toUpperCase() + config.radioSoftware.slice(1).replace('-', ' ')
+      : 'SDRTrunk/TrunkRecorder';
+    console.log(chalk.white(`   📡 Audio Upload (${radioSoftwareName}):`));
     console.log(chalk.cyan(`      http://localhost:${config.botPort}/api/call-upload\n`));
 
-    console.log(chalk.white('   🔑 API Key:'));
-    console.log(chalk.cyan(`      ${config.trunkRecorderApiKey}`));
-    console.log(chalk.gray('      (Saved to data/api-key.txt)\n'));
+    if (config.radioSoftware && config.radioSoftware !== 'none') {
+      console.log(chalk.white('   🔑 API Key:'));
+      const apiKey = config.radioApiKey || config.trunkRecorderApiKey || 'Auto-generated on first run';
+      console.log(chalk.cyan(`      ${apiKey}`));
+      console.log(chalk.gray('      (Saved to data/api-key.txt)\n'));
+    }
 
     if (config.transcriptionMode === 'icad' || config.enableICAD) {
       console.log(chalk.white('   🎤 iCAD Transcribe API:'));
@@ -1875,8 +1937,17 @@ class InstallerCore {
       if (config.transcriptionMode === 'icad' || config.enableICAD) {
         console.log(chalk.gray('   • icad-transcribe/ - Models, config, database'));
       }
-      if (config.enableTrunkRecorder) {
+      if (config.enableTrunkRecorder || config.radioSoftware === 'trunk-recorder') {
         console.log(chalk.gray('   • trunk-recorder/ - Config and recordings'));
+      }
+      if (config.enableSDRTrunk || config.radioSoftware === 'sdrtrunk') {
+        console.log(chalk.gray('   • sdrtrunk/ - Config files (for desktop app)'));
+      }
+      if (config.enableRdioScanner || config.radioSoftware === 'rdio-scanner') {
+        console.log(chalk.gray('   • rdio-scanner/ - Config and data'));
+      }
+      if (config.enableOP25 || config.radioSoftware === 'op25') {
+        console.log(chalk.gray('   • op25/ - Config and recordings'));
       }
       console.log(chalk.gray('\n   All volumes are properly mounted and persistent.\n'));
     }
@@ -1952,9 +2023,21 @@ class InstallerCore {
           console.log(chalk.gray('   1. Check Docker is running: docker ps'));
           console.log(chalk.gray('   2. Check for port conflicts'));
           console.log(chalk.gray('   3. Start manually: docker-compose up -d'));
-          if (config.enableTrunkRecorder) {
+          if (config.enableTrunkRecorder || config.radioSoftware === 'trunk-recorder') {
             console.log(chalk.gray('   4. For TrunkRecorder, pull image first:'));
             console.log(chalk.cyan('      docker pull robotastic/trunk-recorder:latest'));
+          }
+          if (config.enableRdioScanner || config.radioSoftware === 'rdio-scanner') {
+            console.log(chalk.gray('   4. For rdio-scanner, pull image first:'));
+            console.log(chalk.cyan('      docker pull rdioscanner/rdio-scanner:latest'));
+          }
+          if (config.enableOP25 || config.radioSoftware === 'op25') {
+            console.log(chalk.gray('   4. For OP25, pull image first:'));
+            console.log(chalk.cyan('      docker pull op25/op25:latest'));
+          }
+          if (config.enableSDRTrunk || config.radioSoftware === 'sdrtrunk') {
+            console.log(chalk.gray('   4. SDRTrunk config file generated in appdata/sdrtrunk/config/'));
+            console.log(chalk.gray('      Import into SDRTrunk desktop app'));
           }
           if (config.aiProvider === 'ollama' && config.ollamaModel) {
             console.log(chalk.gray(`   5. Pull Ollama model: docker exec ollama ollama pull ${config.ollamaModel}`));
@@ -1967,9 +2050,21 @@ class InstallerCore {
         console.log(chalk.white('   1. Start services:'));
         console.log(chalk.cyan('      docker-compose up -d\n'));
         
-        if (config.enableTrunkRecorder) {
+        if (config.enableTrunkRecorder || config.radioSoftware === 'trunk-recorder') {
           console.log(chalk.white('   2. Pull TrunkRecorder image (if not already pulled):'));
           console.log(chalk.cyan('      docker pull robotastic/trunk-recorder:latest\n'));
+        }
+        if (config.enableRdioScanner || config.radioSoftware === 'rdio-scanner') {
+          console.log(chalk.white('   2. Pull rdio-scanner image (if not already pulled):'));
+          console.log(chalk.cyan('      docker pull rdioscanner/rdio-scanner:latest\n'));
+        }
+        if (config.enableOP25 || config.radioSoftware === 'op25') {
+          console.log(chalk.white('   2. Pull OP25 image (if not already pulled):'));
+          console.log(chalk.cyan('      docker pull op25/op25:latest\n'));
+        }
+        if (config.enableSDRTrunk || config.radioSoftware === 'sdrtrunk') {
+          console.log(chalk.white('   2. SDRTrunk config file generated in appdata/sdrtrunk/config/'));
+          console.log(chalk.gray('      Import streaming-config.json into SDRTrunk desktop app\n'));
         }
         
         if (config.aiProvider === 'ollama' && config.ollamaModel) {

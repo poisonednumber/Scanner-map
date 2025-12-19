@@ -69,31 +69,72 @@ class ServiceConfig {
       }
     };
 
-    // Only create if doesn't exist (don't overwrite user config)
+    // Always ensure config.json exists and is valid JSON
+    // If file doesn't exist, is empty, or is invalid, create/update it
+    let shouldCreate = false;
+    let shouldUpdate = false;
+    
     if (!(await fs.pathExists(configPath))) {
+      shouldCreate = true;
+    } else {
+      // Check if file is empty or invalid
+      try {
+        const fileContent = await fs.readFile(configPath, 'utf8');
+        if (!fileContent || fileContent.trim().length === 0) {
+          // File exists but is empty - recreate it
+          shouldCreate = true;
+        } else {
+          const existing = await fs.readJSON(configPath);
+          // Check if it needs the API key update
+          if (existing.uploadServer && 
+              (existing.uploadServer.apiKey === 'YOUR_API_KEY_HERE' || 
+               existing.uploadServer.apiKey === 'AUTO_GENERATE_ON_STARTUP' ||
+               !existing.uploadServer.apiKey)) {
+            shouldUpdate = true;
+          } else if (!existing.uploadServer) {
+            // Missing uploadServer section
+            shouldUpdate = true;
+          }
+        }
+      } catch (err) {
+        // File exists but is invalid JSON - recreate it
+        console.warn(`Warning: TrunkRecorder config.json is invalid, recreating: ${err.message}`);
+        shouldCreate = true;
+      }
+    }
+
+    if (shouldCreate) {
       await fs.writeJSON(configPath, config, { spaces: 2 });
       return { created: true, path: configPath, apiKey: generatedApiKey };
     }
 
-    // If exists, check if it needs the API key update
-    try {
-      const existing = await fs.readJSON(configPath);
-      if (existing.uploadServer && 
-          (existing.uploadServer.apiKey === 'YOUR_API_KEY_HERE' || 
-           existing.uploadServer.apiKey === 'AUTO_GENERATE_ON_STARTUP' ||
-           !existing.uploadServer.apiKey)) {
+    if (shouldUpdate) {
+      try {
+        const existing = await fs.readJSON(configPath);
+        if (!existing.uploadServer) {
+          existing.uploadServer = {};
+        }
         existing.uploadServer.apiKey = generatedApiKey;
         existing.uploadServer.url = uploadUrl;
+        existing.uploadServer.type = 'rdio-scanner';
         await fs.writeJSON(configPath, existing, { spaces: 2 });
         return { updated: true, path: configPath, apiKey: generatedApiKey };
+      } catch (err) {
+        // If update fails, recreate the file
+        console.warn(`Warning: Could not update TrunkRecorder config, recreating: ${err.message}`);
+        await fs.writeJSON(configPath, config, { spaces: 2 });
+        return { recreated: true, path: configPath, apiKey: generatedApiKey };
       }
-      // If API key already exists and is valid, return it
+    }
+
+    // File exists and is valid - return existing API key if present
+    try {
+      const existing = await fs.readJSON(configPath);
       if (existing.uploadServer && existing.uploadServer.apiKey) {
         return { exists: true, path: configPath, apiKey: existing.uploadServer.apiKey };
       }
     } catch (err) {
-      // If JSON is invalid, we'll let the user fix it
-      console.warn(`Warning: Could not update TrunkRecorder config: ${err.message}`);
+      // Shouldn't happen, but handle it
     }
 
     return { exists: true, path: configPath, apiKey: generatedApiKey };
@@ -204,6 +245,256 @@ API_KEY=${generatedApiKey}
   }
 
   /**
+   * Configure SDRTrunk
+   * @param {boolean} enabled - Whether SDRTrunk is enabled
+   * @param {string} installationType - 'docker' or 'local'
+   * @param {string} apiKey - Optional pre-generated API key. If not provided, will generate one.
+   * @returns {Promise<Object>} Configuration result with apiKey if generated
+   */
+  async configureSDRTrunk(enabled, installationType = 'local', apiKey = null) {
+    if (!enabled) return null;
+
+    const configDir = path.join(this.appdataPath, 'sdrtrunk', 'config');
+    const configPath = path.join(configDir, 'streaming-config.json');
+    
+    await fs.ensureDir(configDir);
+
+    // Generate API key if not provided
+    const generatedApiKey = apiKey || this.generateApiKey();
+
+    // Determine upload URL based on installation type
+    const uploadUrl = installationType === 'docker'
+      ? 'http://scanner-map:3306/api/call-upload'
+      : 'http://localhost:3306/api/call-upload';
+
+    // Parse URL to get host and port
+    const urlObj = new URL(uploadUrl);
+    const host = urlObj.hostname;
+    const port = parseInt(urlObj.port || '3306');
+    const path = urlObj.pathname;
+
+    const config = {
+      name: 'Scanner Map',
+      type: 'rdio-scanner',
+      host: host,
+      port: port,
+      path: path,
+      apiKey: generatedApiKey,
+      systemId: 1
+    };
+
+    // Always ensure config exists and is valid
+    let shouldCreate = false;
+    
+    if (!(await fs.pathExists(configPath))) {
+      shouldCreate = true;
+    } else {
+      try {
+        const fileContent = await fs.readFile(configPath, 'utf8');
+        if (!fileContent || fileContent.trim().length === 0) {
+          shouldCreate = true;
+        } else {
+          const existing = await fs.readJSON(configPath);
+          // Update API key and URL if needed
+          if (existing.apiKey !== generatedApiKey || existing.host !== host || existing.port !== port) {
+            existing.apiKey = generatedApiKey;
+            existing.host = host;
+            existing.port = port;
+            existing.path = path;
+            await fs.writeJSON(configPath, existing, { spaces: 2 });
+            return { updated: true, path: configPath, apiKey: generatedApiKey };
+          }
+        }
+      } catch (err) {
+        console.warn(`Warning: SDRTrunk config is invalid, recreating: ${err.message}`);
+        shouldCreate = true;
+      }
+    }
+
+    if (shouldCreate) {
+      await fs.writeJSON(configPath, config, { spaces: 2 });
+      return { created: true, path: configPath, apiKey: generatedApiKey };
+    }
+
+    return { exists: true, path: configPath, apiKey: generatedApiKey };
+  }
+
+  /**
+   * Configure rdio-scanner
+   * @param {boolean} enabled - Whether rdio-scanner is enabled
+   * @param {string} installationType - 'docker' or 'local'
+   * @param {string} apiKey - Optional pre-generated API key. If not provided, will generate one.
+   * @returns {Promise<Object>} Configuration result with apiKey if generated
+   */
+  async configureRdioScanner(enabled, installationType = 'docker', apiKey = null) {
+    if (!enabled) return null;
+
+    const configDir = path.join(this.appdataPath, 'rdio-scanner', 'config');
+    const configPath = path.join(configDir, 'config.json');
+    
+    await fs.ensureDir(configDir);
+
+    // Generate API key if not provided
+    const generatedApiKey = apiKey || this.generateApiKey();
+
+    // Determine upload URL based on installation type
+    const uploadUrl = installationType === 'docker'
+      ? 'http://scanner-map:3306/api/call-upload'
+      : 'http://localhost:3306/api/call-upload';
+
+    const config = {
+      downstream: [
+        {
+          url: uploadUrl,
+          apiKey: generatedApiKey
+        }
+      ]
+    };
+
+    // Always ensure config exists and is valid
+    let shouldCreate = false;
+    let shouldUpdate = false;
+    
+    if (!(await fs.pathExists(configPath))) {
+      shouldCreate = true;
+    } else {
+      try {
+        const fileContent = await fs.readFile(configPath, 'utf8');
+        if (!fileContent || fileContent.trim().length === 0) {
+          shouldCreate = true;
+        } else {
+          const existing = await fs.readJSON(configPath);
+          // Check if downstream config needs update
+          if (!existing.downstream || !Array.isArray(existing.downstream) || existing.downstream.length === 0) {
+            shouldUpdate = true;
+          } else {
+            const downstream = existing.downstream[0];
+            if (downstream.url !== uploadUrl || downstream.apiKey !== generatedApiKey) {
+              shouldUpdate = true;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Warning: rdio-scanner config is invalid, recreating: ${err.message}`);
+        shouldCreate = true;
+      }
+    }
+
+    if (shouldCreate) {
+      await fs.writeJSON(configPath, config, { spaces: 2 });
+      return { created: true, path: configPath, apiKey: generatedApiKey };
+    }
+
+    if (shouldUpdate) {
+      try {
+        const existing = await fs.readJSON(configPath);
+        if (!existing.downstream) {
+          existing.downstream = [];
+        }
+        // Update or add Scanner Map downstream
+        const existingIndex = existing.downstream.findIndex(d => d.url && d.url.includes('scanner-map'));
+        if (existingIndex >= 0) {
+          existing.downstream[existingIndex] = { url: uploadUrl, apiKey: generatedApiKey };
+        } else {
+          existing.downstream.push({ url: uploadUrl, apiKey: generatedApiKey });
+        }
+        await fs.writeJSON(configPath, existing, { spaces: 2 });
+        return { updated: true, path: configPath, apiKey: generatedApiKey };
+      } catch (err) {
+        console.warn(`Warning: Could not update rdio-scanner config, recreating: ${err.message}`);
+        await fs.writeJSON(configPath, config, { spaces: 2 });
+        return { recreated: true, path: configPath, apiKey: generatedApiKey };
+      }
+    }
+
+    return { exists: true, path: configPath, apiKey: generatedApiKey };
+  }
+
+  /**
+   * Configure OP25
+   * @param {boolean} enabled - Whether OP25 is enabled
+   * @param {string} installationType - 'docker' or 'local'
+   * @param {string} apiKey - Optional pre-generated API key. If not provided, will generate one.
+   * @returns {Promise<Object>} Configuration result with apiKey if generated
+   */
+  async configureOP25(enabled, installationType = 'docker', apiKey = null) {
+    if (!enabled) return null;
+
+    const configDir = path.join(this.appdataPath, 'op25', 'config');
+    const configPath = path.join(configDir, 'config.json');
+    
+    await fs.ensureDir(configDir);
+
+    // Generate API key if not provided
+    const generatedApiKey = apiKey || this.generateApiKey();
+
+    // Determine upload URL based on installation type
+    const uploadUrl = installationType === 'docker'
+      ? 'http://scanner-map:3306/api/call-upload'
+      : 'http://localhost:3306/api/call-upload';
+
+    // OP25 typically uses a JSON config with upload server settings
+    const config = {
+      uploadServer: {
+        url: uploadUrl,
+        apiKey: generatedApiKey,
+        type: 'rdio-scanner'
+      }
+    };
+
+    // Always ensure config exists and is valid
+    let shouldCreate = false;
+    let shouldUpdate = false;
+    
+    if (!(await fs.pathExists(configPath))) {
+      shouldCreate = true;
+    } else {
+      try {
+        const fileContent = await fs.readFile(configPath, 'utf8');
+        if (!fileContent || fileContent.trim().length === 0) {
+          shouldCreate = true;
+        } else {
+          const existing = await fs.readJSON(configPath);
+          // Check if uploadServer needs update
+          if (!existing.uploadServer) {
+            shouldUpdate = true;
+          } else if (existing.uploadServer.url !== uploadUrl || existing.uploadServer.apiKey !== generatedApiKey) {
+            shouldUpdate = true;
+          }
+        }
+      } catch (err) {
+        console.warn(`Warning: OP25 config is invalid, recreating: ${err.message}`);
+        shouldCreate = true;
+      }
+    }
+
+    if (shouldCreate) {
+      await fs.writeJSON(configPath, config, { spaces: 2 });
+      return { created: true, path: configPath, apiKey: generatedApiKey };
+    }
+
+    if (shouldUpdate) {
+      try {
+        const existing = await fs.readJSON(configPath);
+        if (!existing.uploadServer) {
+          existing.uploadServer = {};
+        }
+        existing.uploadServer.url = uploadUrl;
+        existing.uploadServer.apiKey = generatedApiKey;
+        existing.uploadServer.type = 'rdio-scanner';
+        await fs.writeJSON(configPath, existing, { spaces: 2 });
+        return { updated: true, path: configPath, apiKey: generatedApiKey };
+      } catch (err) {
+        console.warn(`Warning: Could not update OP25 config, recreating: ${err.message}`);
+        await fs.writeJSON(configPath, config, { spaces: 2 });
+        return { recreated: true, path: configPath, apiKey: generatedApiKey };
+      }
+    }
+
+    return { exists: true, path: configPath, apiKey: generatedApiKey };
+  }
+
+  /**
    * Create appdata directory structure
    * Ensures all required directories exist for all services
    */
@@ -225,7 +516,16 @@ API_KEY=${generatedApiKey}
       
       // TrunkRecorder directories
       'trunk-recorder/config',
-      'trunk-recorder/recordings'
+      'trunk-recorder/recordings',
+      
+      // SDRTrunk directories
+      'sdrtrunk/config',
+      
+      // rdio-scanner directories
+      'rdio-scanner/config',
+      
+      // OP25 directories
+      'op25/config'
     ];
 
     for (const dir of directories) {
