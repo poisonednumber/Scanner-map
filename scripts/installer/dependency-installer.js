@@ -266,13 +266,106 @@ class DependencyInstaller {
    * Install Docker on Windows
    */
   async installDockerWindows() {
-    console.log(chalk.yellow('For Windows, Docker Desktop must be installed manually.'));
-    console.log(chalk.blue('Opening Docker Desktop download page...'));
+    console.log(chalk.blue('Installing Docker Desktop on Windows...'));
+
+    // Try winget first (Windows 10/11)
+    try {
+      execSync('winget --version', { stdio: 'ignore' });
+      console.log(chalk.blue('   Using winget to install Docker Desktop...'));
+      console.log(chalk.yellow('   This may take several minutes. Please wait...'));
+      
+      try {
+        execSync('winget install Docker.DockerDesktop --silent --accept-package-agreements --accept-source-agreements', { 
+          stdio: 'inherit',
+          timeout: 600000 // 10 minutes
+        });
+        
+        // Wait for installation to complete
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Try to start Docker Desktop
+        try {
+          execSync('start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"', { stdio: 'ignore' });
+          console.log(chalk.blue('   Starting Docker Desktop...'));
+          console.log(chalk.yellow('   Please wait for Docker Desktop to start (this may take a minute).'));
+          
+          // Wait for Docker to start
+          let attempts = 0;
+          while (attempts < 30) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (this.isDockerDaemonRunning()) {
+              return { success: true };
+            }
+            attempts++;
+          }
+          
+          return {
+            success: false,
+            error: 'Docker Desktop installed but daemon not running. Please start Docker Desktop manually.'
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: 'Docker Desktop installed but could not be started. Please start it manually.'
+          };
+        }
+      } catch (err) {
+        // winget install failed, try other methods
+      }
+    } catch (err) {
+      // winget not available
+    }
+
+    // Try chocolatey
+    try {
+      execSync('choco --version', { stdio: 'ignore' });
+      console.log(chalk.blue('   Using Chocolatey to install Docker Desktop...'));
+      console.log(chalk.yellow('   This may take several minutes. Please wait...'));
+      
+      try {
+        execSync('choco install docker-desktop -y', { 
+          stdio: 'inherit',
+          timeout: 600000
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        try {
+          execSync('start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"', { stdio: 'ignore' });
+          console.log(chalk.blue('   Starting Docker Desktop...'));
+          
+          let attempts = 0;
+          while (attempts < 30) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (this.isDockerDaemonRunning()) {
+              return { success: true };
+            }
+            attempts++;
+          }
+          
+          return {
+            success: false,
+            error: 'Docker Desktop installed but daemon not running. Please start Docker Desktop manually.'
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: 'Docker Desktop installed but could not be started. Please start it manually.'
+          };
+        }
+      } catch (err) {
+        // choco install failed
+      }
+    } catch (err) {
+      // chocolatey not available
+    }
+
+    // Fallback to manual installation
+    console.log(chalk.yellow('   Automatic installation not available.'));
+    console.log(chalk.blue('   Opening Docker Desktop download page...'));
 
     try {
-      // Try to open the download page
-      const { exec } = require('child_process');
-      exec('start https://www.docker.com/products/docker-desktop/');
+      execSync('start https://www.docker.com/products/docker-desktop/', { stdio: 'ignore' });
     } catch (err) {
       // Ignore if we can't open browser
     }
@@ -631,8 +724,67 @@ class DependencyInstaller {
    * Install Node.js on Windows
    */
   async installNodejsWindows() {
-    console.log(chalk.yellow('For Windows, Node.js must be installed via the official installer.'));
-    console.log(chalk.blue('Opening Node.js download page...'));
+    console.log(chalk.blue('Installing Node.js on Windows...'));
+
+    // Try winget first
+    try {
+      execSync('winget --version', { stdio: 'ignore' });
+      console.log(chalk.blue('   Using winget to install Node.js LTS...'));
+      
+      try {
+        execSync('winget install OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements', { 
+          stdio: 'inherit',
+          timeout: 300000 // 5 minutes
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        if (this.isNodeInstalled()) {
+          return { success: true };
+        } else {
+          return {
+            success: false,
+            error: 'Node.js installed but not found in PATH. You may need to restart your terminal.'
+          };
+        }
+      } catch (err) {
+        // winget install failed
+      }
+    } catch (err) {
+      // winget not available
+    }
+
+    // Try chocolatey
+    try {
+      execSync('choco --version', { stdio: 'ignore' });
+      console.log(chalk.blue('   Using Chocolatey to install Node.js LTS...'));
+      
+      try {
+        execSync('choco install nodejs-lts -y', { 
+          stdio: 'inherit',
+          timeout: 300000
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        if (this.isNodeInstalled()) {
+          return { success: true };
+        } else {
+          return {
+            success: false,
+            error: 'Node.js installed but not found in PATH. You may need to restart your terminal.'
+          };
+        }
+      } catch (err) {
+        // choco install failed
+      }
+    } catch (err) {
+      // chocolatey not available
+    }
+
+    // Fallback to manual installation
+    console.log(chalk.yellow('   Automatic installation not available.'));
+    console.log(chalk.blue('   Opening Node.js download page...'));
 
     try {
       execSync('start https://nodejs.org/', { stdio: 'ignore' });
@@ -843,8 +995,73 @@ class DependencyInstaller {
     console.log(chalk.blue('\nInstalling Python 3...'));
 
     if (this.isWindows) {
-      console.log(chalk.yellow('For Windows, Python must be installed via the official installer.'));
-      console.log(chalk.blue('Opening Python download page...'));
+      // Try winget first
+      try {
+        execSync('winget --version', { stdio: 'ignore' });
+        console.log(chalk.blue('   Using winget to install Python 3...'));
+        
+        try {
+          execSync('winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements', { 
+            stdio: 'inherit',
+            timeout: 300000
+          });
+          
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Check if Python is now available
+          try {
+            execSync('python --version', { stdio: 'ignore' });
+            return { success: true };
+          } catch (err) {
+            try {
+              execSync('python3 --version', { stdio: 'ignore' });
+              return { success: true };
+            } catch (err2) {
+              return {
+                success: false,
+                error: 'Python installed but not found in PATH. You may need to restart your terminal.'
+              };
+            }
+          }
+        } catch (err) {
+          // winget install failed
+        }
+      } catch (err) {
+        // winget not available
+      }
+
+      // Try chocolatey
+      try {
+        execSync('choco --version', { stdio: 'ignore' });
+        console.log(chalk.blue('   Using Chocolatey to install Python 3...'));
+        
+        try {
+          execSync('choco install python3 -y', { 
+            stdio: 'inherit',
+            timeout: 300000
+          });
+          
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          try {
+            execSync('python --version', { stdio: 'ignore' });
+            return { success: true };
+          } catch (err) {
+            return {
+              success: false,
+              error: 'Python installed but not found in PATH. You may need to restart your terminal.'
+            };
+          }
+        } catch (err) {
+          // choco install failed
+        }
+      } catch (err) {
+        // chocolatey not available
+      }
+
+      // Fallback to manual installation
+      console.log(chalk.yellow('   Automatic installation not available.'));
+      console.log(chalk.blue('   Opening Python download page...'));
       try {
         execSync('start https://www.python.org/downloads/', { stdio: 'ignore' });
       } catch (err) {

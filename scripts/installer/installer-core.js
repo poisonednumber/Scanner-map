@@ -134,8 +134,8 @@ class InstallerCore {
     ]);
     console.log(chalk.green(`✓ ${installationType === 'docker' ? 'Docker' : 'Local'} installation selected\n`));
 
-    // Step 2: Check prerequisites
-    this.printStep(2, 6, 'Checking system requirements');
+    // Step 2: Check prerequisites and install missing dependencies
+    this.printStep(2, 7, 'Checking system requirements');
     const prereqResult = await this.checkPrerequisites(installationType);
     if (!prereqResult.success) {
       process.exit(1);
@@ -143,22 +143,27 @@ class InstallerCore {
     console.log(chalk.green('✓ All prerequisites met\n'));
 
     // Step 3: Location setup (for geocoding)
-    this.printStep(3, 6, 'Configure your location');
+    this.printStep(3, 7, 'Configure your location');
     const locationConfig = await this.configureLocation();
     console.log('');
 
     // Step 4: Choose services and transcription
-    this.printStep(4, 6, 'Configure transcription and AI');
+    this.printStep(4, 7, 'Configure transcription and AI');
     const serviceConfig = await this.configureServices(installationType);
     console.log('');
 
-    // Step 5: Optional integrations
-    this.printStep(5, 6, 'Optional integrations');
+    // Step 5: Optional dependencies (based on selected services)
+    this.printStep(5, 7, 'Optional dependencies');
+    const optionalDeps = await this.configureOptionalDependencies(installationType, serviceConfig);
+    console.log('');
+
+    // Step 6: Optional integrations
+    this.printStep(6, 7, 'Optional integrations');
     const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 6: Review and install
-    this.printStep(6, 6, 'Review and install');
+    // Step 7: Review and install
+    this.printStep(7, 7, 'Review and install');
     
     // Build final configuration with auto-configured URLs
     const urls = SERVICE_URLS[installationType];
@@ -504,6 +509,237 @@ class InstallerCore {
     }
 
     return config;
+  }
+
+  /**
+   * Configure optional dependencies based on selected services
+   */
+  async configureOptionalDependencies(installationType, serviceConfig) {
+    console.log(chalk.gray('   Install optional dependencies to improve compatibility.\n'));
+
+    const options = [];
+    const results = {};
+
+    // Python for local transcription
+    if (installationType === 'local' && serviceConfig.transcriptionMode === 'local') {
+      const hasPython = await this.dependencyInstaller.isPythonInstalled();
+      if (!hasPython) {
+        options.push({
+          name: '🐍 Python 3 - Required for local Whisper transcription',
+          value: 'python',
+          required: true
+        });
+      }
+    }
+
+    // Visual Studio Build Tools for Windows (for native modules)
+    if (process.platform === 'win32') {
+      const hasBuildTools = await this.checkBuildTools();
+      if (!hasBuildTools) {
+        options.push({
+          name: '🔧 Visual Studio Build Tools - Helps build native modules (optional)',
+          value: 'buildtools',
+          required: false
+        });
+      }
+    }
+
+    // Git (if not installed, though it should be checked earlier)
+    const hasGit = this.dependencyInstaller.isInstalled('git');
+    if (!hasGit) {
+      options.push({
+        name: '📦 Git - Version control (usually already installed)',
+        value: 'git',
+        required: false
+      });
+    }
+
+    if (options.length === 0) {
+      console.log(chalk.green('   ✓ All optional dependencies are already installed.\n'));
+      return { installed: [] };
+    }
+
+    const { toInstall } = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'toInstall',
+        message: 'Select optional dependencies to install:',
+        choices: options.map(opt => ({
+          name: opt.name,
+          value: opt.value,
+          checked: opt.required
+        })),
+        validate: (input) => {
+          const required = options.filter(o => o.required).map(o => o.value);
+          const missing = required.filter(r => !input.includes(r));
+          if (missing.length > 0) {
+            return `Required dependencies must be installed: ${missing.join(', ')}`;
+          }
+          return true;
+        }
+      }
+    ]);
+
+    if (toInstall.length === 0) {
+      return { installed: [] };
+    }
+
+    console.log('');
+    const installed = [];
+
+    for (const dep of toInstall) {
+      if (dep === 'python') {
+        console.log(chalk.blue('   Installing Python 3...'));
+        const result = await this.dependencyInstaller.installPython();
+        if (result.success) {
+          installed.push('Python 3');
+          console.log(chalk.green('   ✓ Python 3 installed\n'));
+        } else {
+          console.log(chalk.yellow(`   ⚠ Could not install Python: ${result.error}\n`));
+        }
+      } else if (dep === 'buildtools') {
+        console.log(chalk.blue('   Installing Visual Studio Build Tools...'));
+        const result = await this.installBuildTools();
+        if (result.success) {
+          installed.push('Visual Studio Build Tools');
+          console.log(chalk.green('   ✓ Build Tools installed\n'));
+        } else {
+          console.log(chalk.yellow(`   ⚠ Could not install Build Tools: ${result.error}\n`));
+        }
+      } else if (dep === 'git') {
+        console.log(chalk.blue('   Installing Git...'));
+        const result = await this.installGit();
+        if (result.success) {
+          installed.push('Git');
+          console.log(chalk.green('   ✓ Git installed\n'));
+        } else {
+          console.log(chalk.yellow(`   ⚠ Could not install Git: ${result.error}\n`));
+        }
+      }
+    }
+
+    return { installed };
+  }
+
+  /**
+   * Check if Visual Studio Build Tools are installed
+   */
+  async checkBuildTools() {
+    try {
+      const { execSync } = require('child_process');
+      // Check for vswhere (Visual Studio installer)
+      execSync('vswhere -latest', { stdio: 'ignore' });
+      return true;
+    } catch (err) {
+      // Check common installation paths
+      const fs = require('fs');
+      const paths = [
+        'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools',
+        'C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools',
+        'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community',
+        'C:\\Program Files\\Microsoft Visual Studio\\2019\\Community'
+      ];
+      return paths.some(p => fs.existsSync(p));
+    }
+  }
+
+  /**
+   * Install Visual Studio Build Tools on Windows
+   */
+  async installBuildTools() {
+    if (process.platform !== 'win32') {
+      return { success: false, error: 'Build Tools only available on Windows' };
+    }
+
+    const chalk = require('chalk');
+    const { execSync } = require('child_process');
+
+    // Try winget first (Windows 10/11)
+    try {
+      execSync('winget --version', { stdio: 'ignore' });
+      console.log(chalk.blue('   Using winget to install Build Tools...'));
+      execSync('winget install Microsoft.VisualStudio.2022.BuildTools --silent --accept-package-agreements --accept-source-agreements', { stdio: 'inherit' });
+      return { success: true };
+    } catch (err) {
+      // Try chocolatey
+      try {
+        execSync('choco --version', { stdio: 'ignore' });
+        console.log(chalk.blue('   Using Chocolatey to install Build Tools...'));
+        execSync('choco install visualstudio2022buildtools -y', { stdio: 'inherit' });
+        return { success: true };
+      } catch (err2) {
+        // Fallback to manual installation
+        console.log(chalk.yellow('   Opening Build Tools download page...'));
+        try {
+          execSync('start https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022', { stdio: 'ignore' });
+        } catch (err3) {
+          // Ignore
+        }
+        return {
+          success: false,
+          error: 'Please install Visual Studio Build Tools manually from visualstudio.microsoft.com'
+        };
+      }
+    }
+  }
+
+  /**
+   * Install Git
+   */
+  async installGit() {
+    const chalk = require('chalk');
+    const { execSync } = require('child_process');
+
+    if (process.platform === 'win32') {
+      // Try winget
+      try {
+        execSync('winget --version', { stdio: 'ignore' });
+        execSync('winget install Git.Git --silent', { stdio: 'inherit' });
+        return { success: true };
+      } catch (err) {
+        // Try chocolatey
+        try {
+          execSync('choco --version', { stdio: 'ignore' });
+          execSync('choco install git -y', { stdio: 'inherit' });
+          return { success: true };
+        } catch (err2) {
+          // Fallback
+          try {
+            execSync('start https://git-scm.com/downloads/win', { stdio: 'ignore' });
+          } catch (err3) {
+            // Ignore
+          }
+          return {
+            success: false,
+            error: 'Please install Git manually from git-scm.com'
+          };
+        }
+      }
+    } else if (process.platform === 'darwin') {
+      // macOS - try Homebrew
+      try {
+        execSync('brew --version', { stdio: 'ignore' });
+        execSync('brew install git', { stdio: 'inherit' });
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: 'Please install Git manually or install Homebrew first'
+        };
+      }
+    } else {
+      // Linux
+      try {
+        execSync('sudo apt-get update', { stdio: 'inherit' });
+        execSync('sudo apt-get install -y git', { stdio: 'inherit' });
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: `Git installation failed: ${err.message}`
+        };
+      }
+    }
   }
 
   /**
