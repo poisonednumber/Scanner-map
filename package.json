@@ -1,6 +1,6 @@
 {
   "name": "scanner-map",
-  "version": "3.0.8",
+  "version": "3.0.9",
   "description": "Real-time mapping system for radio calls with AI transcription and geocoding",
   "main": "bot.js",
   "bin": {
@@ -10,6 +10,7 @@
     "start": "node bot.js",
     "dev": "nodemon bot.js",
     "setup": "node scripts/installer/installer-core.js",
+    "test-installer": "node scripts/test-installer-configs.js",
     "generate-trunkrecorder-key": "node scripts/generate-trunkrecorder-api-key.js",
     "validate-installer": "node scripts/validate-installer-integration.js",
     "test": "echo \"Error: no test specified\" && exit 1"

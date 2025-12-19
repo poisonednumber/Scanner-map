@@ -2,6 +2,55 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.9] - 2024-12-20
+
+### Installer Logging and Comprehensive Testing
+
+### Added
+- **Installer Logging System**
+  - Complete logging of all installer activities to `logs/installer-YYYY-MM-DD-TIMESTAMP.log`
+  - Automatic capture of console output (log, error, warn) while preserving display
+  - Sanitization of sensitive data (API keys, tokens, passwords) in logs
+  - Timestamp tracking and installation duration measurement
+  - Log file path displayed at end of installation
+  - Error details logged for troubleshooting
+
+- **Comprehensive Configuration Testing**
+  - New test suite (`scripts/test-installer-configs.js`) to validate all configuration combinations
+  - Tests 10+ different configuration scenarios covering:
+    - Docker and Local installations
+    - All transcription modes (local, remote, openai, icad, icad-remote)
+    - All AI providers (openai, ollama, ollama-remote, none)
+    - All radio software options (trunk-recorder, sdrtrunk, rdio-scanner, op25, none)
+    - Advanced configurations (S3 storage, custom ports, authentication)
+  - Validates .env file generation, docker-compose.yml generation, and service config files
+  - Configuration consistency validation
+  - Test results saved to JSON for analysis
+  - Run with `npm run test-installer`
+
+### Fixed
+- **RADIO_SOFTWARE Environment Variable**
+  - Fixed issue where `RADIO_SOFTWARE` was not being written to `.env` file
+  - Now correctly included in generated environment files
+
+- **Variable Shadowing Bug**
+  - Fixed "Cannot access 'path' before initialization" error in service-config.js
+  - Renamed local variable to avoid shadowing imported `path` module
+
+### Enhanced
+- **Installer Error Handling**
+  - Improved error logging with context
+  - Log file path displayed on errors for easier troubleshooting
+  - Better error messages with stack traces in logs
+
+### Changed
+- **Installer Flow**
+  - All installer steps now logged with timestamps
+  - Configuration logged (with sensitive data redacted) before installation
+  - Installation results logged with success/failure status
+
+---
+
 ## [3.0.8] - 2024-12-20
 
 ### Installer Fixes and Improvements

@@ -19,6 +19,7 @@ const WhisperDownloader = require('./whisper-downloader');
 const AutoStart = require('./auto-start');
 const UpdateChecker = require('./update-checker');
 const PathSelector = require('./path-selector');
+const InstallerLogger = require('./installer-logger');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -71,6 +72,7 @@ class InstallerCore {
     this.whisperDownloader = new WhisperDownloader(projectRoot);
     this.autoStart = new AutoStart(projectRoot);
     this.updateChecker = new UpdateChecker(projectRoot);
+    this.logger = new InstallerLogger(projectRoot);
   }
 
   /**
@@ -83,6 +85,7 @@ class InstallerCore {
     this.whisperDownloader = new WhisperDownloader(newRoot);
     this.autoStart = new AutoStart(newRoot);
     this.updateChecker = new UpdateChecker(newRoot);
+    this.logger = new InstallerLogger(newRoot);
   }
 
   /**
@@ -106,6 +109,7 @@ class InstallerCore {
    */
   printStep(step, total, description) {
     console.log(chalk.cyan(`[${step}/${total}]`) + ' ' + chalk.white(description));
+    this.logger.logStep(step, total, description);
   }
 
   /**
@@ -154,6 +158,13 @@ class InstallerCore {
    * Main installation flow
    */
   async run() {
+    // Initialize logging
+    this.logger.log('info', 'Installer started', {
+      projectRoot: this.projectRoot,
+      nodeVersion: process.version,
+      platform: process.platform
+    });
+
     // Check for installer updates first (non-blocking, don't await)
     this.checkInstallerUpdates().catch(() => {
       // Silently fail - don't block installer
@@ -385,6 +396,9 @@ class InstallerCore {
 
     await this.showSummary(config);
     
+    // Log configuration (sanitized)
+    this.logger.logConfig(config);
+    
     const { confirm } = await inquirer.prompt([
       {
         type: 'confirm',
@@ -423,6 +437,7 @@ class InstallerCore {
 
     if (!result.success) {
       console.log(chalk.red(`\n❌ Setup failed: ${result.error}`));
+      this.logger.logError(new Error(result.error), 'Installation');
       
       // If npm install failed due to PATH issue, offer to restart
       if (result.needsRestart || (result.details && result.details.includes('restart'))) {
@@ -519,8 +534,19 @@ class InstallerCore {
       process.exit(1);
     }
 
+    // Log installation result
+    this.logger.logInstallationResult(result);
+    
     // Show success
     await this.showSuccess(config, installationType, result);
+    
+    // Finalize log
+    const logPath = this.logger.finalize();
+    if (logPath) {
+      // Show relative path for better readability
+      const relativePath = path.relative(this.projectRoot, logPath);
+      console.log(chalk.gray(`\n📝 Installer log saved to: ${relativePath}`));
+    }
   }
 
   /**
@@ -2354,11 +2380,21 @@ if (require.main === module) {
   const projectRoot = process.cwd();
   const installer = new InstallerCore(projectRoot);
   installer.run().catch(err => {
+    // Log error before exiting
+    installer.logger.logError(err, 'Installer run');
+    const logPath = installer.logger.finalize();
+    
     if (err.code === 'ERR_USE_AFTER_CLOSE' || err.message?.includes('readline')) {
       console.error(chalk.red('\n❌ This installer requires an interactive terminal.'));
     } else {
       console.error(chalk.red('\n❌ Setup error:'), err.message || err);
     }
+    
+    if (logPath) {
+      const relativePath = path.relative(projectRoot, logPath);
+      console.error(chalk.gray(`\n📝 Error details logged to: ${relativePath}`));
+    }
+    
     process.exit(1);
   });
 }

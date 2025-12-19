@@ -196,11 +196,7 @@ MAPPED_TALK_GROUPS=${mappedTalkGroups}
 STORAGE_MODE=${storageMode}
 `;
 
-    // Write .env file
-    await fs.ensureDir(path.dirname(this.envPath));
-    await fs.writeFile(this.envPath, envContent, 'utf8');
-
-    // Add radio software configuration
+    // Add radio software configuration before writing
     if (radioSoftware && radioSoftware !== 'none') {
       envContent += `
 # --- Radio Software ---
@@ -209,6 +205,10 @@ STORAGE_MODE=${storageMode}
 RADIO_SOFTWARE=${radioSoftware}
 `;
     }
+
+    // Write .env file
+    await fs.ensureDir(path.dirname(this.envPath));
+    await fs.writeFile(this.envPath, envContent, 'utf8');
     
     // Use radioApiKey if provided, otherwise fall back to trunkRecorderApiKey for backward compatibility
     const finalRadioApiKey = radioApiKey || trunkRecorderApiKey;

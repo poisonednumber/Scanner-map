@@ -271,14 +271,14 @@ API_KEY=${generatedApiKey}
     const urlObj = new URL(uploadUrl);
     const host = urlObj.hostname;
     const port = parseInt(urlObj.port || '3306');
-    const path = urlObj.pathname;
+    const urlPath = urlObj.pathname;
 
     const config = {
       name: 'Scanner Map',
       type: 'rdio-scanner',
       host: host,
       port: port,
-      path: path,
+      path: urlPath,
       apiKey: generatedApiKey,
       systemId: 1
     };
