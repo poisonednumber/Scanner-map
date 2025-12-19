@@ -2,6 +2,30 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.11] - 2024-12-20
+
+### Installer Parity and Verification
+
+### Fixed
+- **Linux Installer Parity**
+  - Added missing `--ignore-optional` flag to npm install commands in Linux installer
+  - Added Node.js v23+ warning to Linux installer (matches Windows)
+  - Added Node.js v23+ mention in error troubleshooting messages
+  - Ensured all npm install commands use identical flags across both platforms
+
+### Enhanced
+- **Installer Consistency**
+  - Both Windows and Linux installers now have identical functionality
+  - All prerequisite checks, dependency installation, and error handling are equivalent
+  - Added comments explaining npm install flags in Linux installer
+
+### Added
+- **Installer Comparison Documentation**
+  - Created `INSTALLER_COMPARISON.md` documenting feature parity between installers
+  - Verification checklist for all installer features
+
+---
+
 ## [3.0.10] - 2024-12-20
 
 ### TrunkRecorder Configuration Fix

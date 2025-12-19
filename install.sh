@@ -74,6 +74,13 @@ check_prerequisites() {
     if command_exists node; then
         local node_version=$(node --version | sed 's/v//' | cut -d. -f1)
         if [[ $node_version -ge 18 ]]; then
+            # Warn about very new Node.js versions
+            if [[ $node_version -ge 23 ]]; then
+                print_warning "Node.js v$node_version detected. This is a very new version."
+                echo "        Some native modules may not have prebuilt binaries yet."
+                echo "        If you encounter build errors, consider using Node.js LTS (v22 or v20)."
+                echo ""
+            fi
             print_success "Node.js $(node --version)"
         else
             print_error "Node.js version 18+ required (found $(node --version))"
@@ -180,7 +187,9 @@ install_dependencies() {
             fi
         fi
         
-        if ! npm install --no-audit --no-fund; then
+        # Use --ignore-optional to skip native modules that fail to build
+        # Use --no-audit --no-fund to speed up installation
+        if ! npm install --ignore-optional --no-audit --no-fund 2>&1; then
             print_error "Failed to install npm dependencies"
             echo ""
             
@@ -207,6 +216,7 @@ install_dependencies() {
                 echo "  1. Delete node_modules folder and try again"
                 echo "  2. Run: npm cache clean --force"
                 echo "  3. Check your internet connection"
+                echo "  4. If using Node.js v23+, try Node.js v22 LTS instead"
                 exit 1
             fi
         fi
@@ -272,7 +282,7 @@ update_and_restart() {
                         if [[ -d "node_modules" ]]; then
                             rm -rf node_modules
                         fi
-                        if npm install --no-audit --no-fund; then
+                        if npm install --ignore-optional --no-audit --no-fund; then
                             print_success "Dependencies rebuilt successfully"
                         else
                             print_warning "Dependency rebuild had issues, but continuing..."
