@@ -1,23 +1,23 @@
 // app.js
 
 // Global variables
-// Map variables - now managed by MapModule
-let map, markerGroups;
-const markers = {};
-let allMarkers = {}; // Store all markers for filtering
+// Map variables - now managed by MapModule (map and markerGroups are accessed via MapModule)
+// Note: map, markerGroups, markers, and allMarkers are declared in map.js, so we just reference them here
+var map, markerGroups, markers, allMarkers; // Will be set from MapModule (using var to avoid redeclaration error)
+// markers and allMarkers are managed by map.js module
+// currentMapMode, dayLayer, nightLayer, satelliteLayer, and toggleModeButton are declared in map.js
 let timeRangeHours; // Time range from config
-let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
-let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
 
 // Map module reference (will be set after map.js loads)
 let MapModule = null;
 let socket; // Socket.IO
 let currentSearchTerm = ''; // Current search term
-const wavesurfers = {}; // Store WaveSurfer instances
-let audioContext = null; // Initialize explicitly as null
+// wavesurfers, audioContext, and globalVolumeLevel are declared in audio.js (which loads first)
+// We can reference them here since they're declared with var (globally accessible)
+
 let heatmapLayer; // Heatmap layer
 let heatmapIntensity; // Intensity for heatmap
-let toggleModeButton; // Button to toggle map modes
+// toggleModeButton is declared in map.js
 let liveAudioStream = null;
 let isLiveStreamPlaying = false;
 let audioContainer = null;
@@ -25,7 +25,8 @@ let currentSessionToken = null;
 let selectedCategory = null;
 let timestampUpdateInterval = null;
 let isNewCallAudioMuted = false;
-let isTrackingNewCalls = true; // Default to true so tracking is enabled by defaultlet additionalWavesurfers = {};
+let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
+let additionalWavesurfers = {};
 const talkgroupPageLimit = 30; // How many calls to fetch per page
 let currentTalkgroupOffset = 0;
 let isLoadingMoreTalkgroupCalls = false;
@@ -44,8 +45,7 @@ let talkgroupPollingInterval = null; // Interval ID for polling
 let talkgroupModalAutoplay = true; // Default autoplay to true
 let lastCallTimestampInModal = null; // Track the newest timestamp shown in modal
 
-// NEW: Global Volume Level
-let globalVolumeLevel = 0.5; // Default to 50% volume
+// globalVolumeLevel is declared in audio.js (which loads first)
 
 // NEW: Variable to store original mute state
 let originalMuteStateBeforeModal = false;
@@ -3619,12 +3619,23 @@ function setupUserManagement() {
         });
     }
     
+    // Settings button click
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showSettingsModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
     // Setup modal forms
     setupAddUserForm();
     setupModalCancelButtons();
     setupCallPurgeModal();
     setupServiceConfigModal();
     setupQuickStartModal();
+    setupSettingsModal();
 }
 
 function showAddUserModal() {
@@ -3941,31 +3952,69 @@ function setupSidebarToggle() {
 
 document.addEventListener('DOMContentLoaded', initializeApp); // Re-add DOMContentLoaded listener
 
-// Register service worker
+// Register service worker with automatic cache clearing
 if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-                console.log('[Service Worker] Registered successfully:', registration.scope);
-                
-                // Check for updates
-                registration.addEventListener('updatefound', () => {
-                    const newWorker = registration.installing;
-                    console.log('[Service Worker] New worker found, installing...');
-                    newWorker.addEventListener('statechange', () => {
-                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                            // New service worker available
-                            console.log('[Service Worker] New version available');
-                            if (window.showInfoToast) {
-                                window.showInfoToast('New version available. Refresh to update.', 0);
-                            }
-                        }
-                    });
-                });
-            })
-            .catch((error) => {
-                console.error('[Service Worker] Registration failed:', error);
+    window.addEventListener('load', async () => {
+        try {
+            // First, unregister all old service workers and clear old caches
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            for (const registration of registrations) {
+                // Unregister old service workers
+                await registration.unregister();
+                console.log('[Service Worker] Unregistered old service worker');
+            }
+            
+            // Clear all old caches
+            if ('caches' in window) {
+                const cacheNames = await caches.keys();
+                for (const cacheName of cacheNames) {
+                    // Only delete old caches (not the current one)
+                    if (cacheName !== 'scanner-map-v3.1.0') {
+                        await caches.delete(cacheName);
+                        console.log('[Service Worker] Deleted old cache:', cacheName);
+                    }
+                }
+            }
+            
+            // Now register the new service worker
+            const registration = await navigator.serviceWorker.register('/sw.js', {
+                updateViaCache: 'none' // Always check for updates
             });
+            
+            console.log('[Service Worker] Registered successfully:', registration.scope);
+            
+            // Force update check on registration
+            await registration.update();
+            
+            // Check for updates periodically
+            registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                console.log('[Service Worker] New worker found, installing...');
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed') {
+                        if (navigator.serviceWorker.controller) {
+                            // New service worker available, activate it immediately
+                            console.log('[Service Worker] New version available, activating...');
+                            newWorker.postMessage({ type: 'SKIP_WAITING' });
+                            // Reload page to use new service worker
+                            window.location.reload();
+                        } else {
+                            // First time installation
+                            console.log('[Service Worker] Installed successfully');
+                        }
+                    }
+                });
+            });
+            
+            // Listen for controller change (new service worker activated)
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                console.log('[Service Worker] New controller activated, reloading...');
+                window.location.reload();
+            });
+            
+        } catch (error) {
+            console.error('[Service Worker] Registration failed:', error);
+        }
     });
 }
 
@@ -4009,6 +4058,23 @@ function initializeApp() {
     // Set up periodic admin status check
     setInterval(checkAdminStatus, 30000); // Check every 30 seconds
     
+    // Helper function to check and show Quick Start modal
+    const checkAndShowQuickStart = () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('quickstart') === '1') {
+            const modal = document.getElementById('quick-start-modal');
+            if (modal && typeof showQuickStartModal === 'function') {
+                console.log('[App] Auto-opening Quick Start modal from URL parameter');
+                showQuickStartModal();
+                // Remove the query parameter from URL (clean URL)
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return true;
+            }
+            return false;
+        }
+        return true; // Not a quickstart URL, nothing to do
+    };
+    
     fetch('/api/sessions/current')
         .then(response => response.json())
         .then(data => {
@@ -4016,19 +4082,40 @@ function initializeApp() {
             setupSessionManagement();
             // Re-check admin status after session setup
             checkAdminStatus();
+            
+            // Try to show Quick Start modal after session setup completes
+            if (!checkAndShowQuickStart()) {
+                // If modal not ready, wait a bit and retry
+                setTimeout(checkAndShowQuickStart, 500);
+            }
         })
         .catch(error => {
             console.error('Error getting current session:', error);
             setupSessionManagement();
+            
+            // Try to show Quick Start modal even if session fetch failed
+            if (!checkAndShowQuickStart()) {
+                setTimeout(checkAndShowQuickStart, 500);
+            }
         });
     
     loadCalls(timeRangeHours);
+    
+    // Also try to show Quick Start modal after a delay (in case session fetch is slow)
+    setTimeout(() => {
+        checkAndShowQuickStart();
+    }, 2000);
 }
 // Function to load and display summary
 function loadSummary() {
   fetch('/summary.json')
     .then(response => {
       if (!response.ok) {
+        // Summary file doesn't exist yet (404) - this is normal on first run
+        if (response.status === 404) {
+          // Return a rejected promise with a special marker so we can handle it silently
+          return Promise.reject({ status: 404, is404: true });
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       return response.json();
@@ -4105,6 +4192,11 @@ function loadSummary() {
 
     })
     .catch(error => {
+      // Silently ignore 404 errors (summary file doesn't exist yet - normal on first run)
+      if (error.is404 || (error.status === 404)) {
+        return; // Don't log or display anything for 404
+      }
+      // Only log other errors
       console.error('Error loading or processing summary:', error);
       const ticker = document.querySelector('.ticker');
       if (ticker) {
@@ -5673,6 +5765,543 @@ function closeQuickStartModal() {
     }
 }
 
+// Settings Modal Functions
+function showSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) {
+        // Reset to first tab
+        switchSettingsTab('general');
+        // Load current settings
+        loadAllSettings();
+        modal.style.display = 'block';
+    }
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function switchSettingsTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.settings-tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    // Remove active from all tabs
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    // Show selected tab content
+    const tabContent = document.getElementById(`settings-${tabName}-tab`);
+    const tabButton = document.querySelector(`.settings-tab[data-tab="${tabName}"]`);
+    if (tabContent) {
+        tabContent.classList.add('active');
+    }
+    if (tabButton) {
+        tabButton.classList.add('active');
+    }
+    
+    // Load tab-specific data
+    if (tabName === 'api-keys') {
+        loadAPIKeysDisplay();
+    } else if (tabName === 'services') {
+        loadSettingsServiceStatus();
+    } else if (tabName === 'models') {
+        loadSettingsModelRecommendations();
+        loadSettingsInstalledModels();
+    }
+}
+
+// Load all settings from server
+function loadAllSettings() {
+    fetch('/api/settings')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.settings) {
+                const s = data.settings;
+                
+                // General settings
+                if (s.webserverPort) document.getElementById('settings-webserver-port').value = s.webserverPort;
+                if (s.botPort) document.getElementById('settings-bot-port').value = s.botPort;
+                if (s.publicDomain) document.getElementById('settings-public-domain').value = s.publicDomain;
+                if (s.timezone) document.getElementById('settings-timezone').value = s.timezone;
+                if (s.authEnabled !== undefined) document.getElementById('settings-auth-enabled').checked = s.authEnabled;
+                
+                // Map settings
+                if (s.mapCenter) {
+                    document.getElementById('settings-map-center-lat').value = s.mapCenter.lat || '';
+                    document.getElementById('settings-map-center-lng').value = s.mapCenter.lng || '';
+                }
+                if (s.mapZoom) document.getElementById('settings-map-zoom').value = s.mapZoom;
+                if (s.defaultTimeRange) document.getElementById('settings-default-time-range').value = s.defaultTimeRange;
+                if (s.trackNewCalls !== undefined) document.getElementById('settings-track-new-calls').checked = s.trackNewCalls;
+                
+                // Audio settings
+                if (s.globalVolume !== undefined) {
+                    document.getElementById('settings-global-volume').value = s.globalVolume;
+                    document.getElementById('settings-volume-display').textContent = Math.round(s.globalVolume * 100) + '%';
+                }
+                if (s.muteNewCalls !== undefined) document.getElementById('settings-mute-new-calls').checked = s.muteNewCalls;
+                if (s.autoplayEnabled !== undefined) document.getElementById('settings-autoplay-enabled').checked = s.autoplayEnabled;
+                
+                // Geocoding settings
+                if (s.geocodingProvider) document.getElementById('settings-geocoding-provider').value = s.geocodingProvider;
+                if (s.geocodingCity) document.getElementById('settings-geocoding-city').value = s.geocodingCity;
+                if (s.geocodingState) document.getElementById('settings-geocoding-state').value = s.geocodingState;
+                if (s.geocodingCountry) document.getElementById('settings-geocoding-country').value = s.geocodingCountry;
+                if (s.geocodingCounties) document.getElementById('settings-geocoding-counties').value = s.geocodingCounties;
+                
+                // Transcription settings - only show if enabled
+                if (s.transcriptionEnabled !== false) {
+                    if (s.transcriptionMode) {
+                        const transcriptionRadio = document.querySelector(`input[name="transcription-mode"][value="${s.transcriptionMode}"]`);
+                        if (transcriptionRadio) {
+                            transcriptionRadio.checked = true;
+                            document.getElementById('settings-transcription-mode').value = s.transcriptionMode;
+                        }
+                        updateTranscriptionSettingsVisibility();
+                    }
+                    if (s.icadUrl) {
+                        document.getElementById('settings-icad-url').value = s.icadUrl;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-icad-url')) {
+                            document.getElementById('settings-services-icad-url').value = s.icadUrl;
+                        }
+                        // Extract port from URL if present, or use provided port
+                        const port = s.icadPort || (s.icadUrl.match(/:(\d+)/) ? s.icadUrl.match(/:(\d+)/)[1] : '9912');
+                        if (document.getElementById('settings-icad-port')) {
+                            document.getElementById('settings-icad-port').value = port;
+                        }
+                    }
+                    if (s.fasterWhisperUrl) {
+                        document.getElementById('settings-faster-whisper-url').value = s.fasterWhisperUrl;
+                        // Extract port from URL if present, or use provided port
+                        const port = s.fasterWhisperPort || (s.fasterWhisperUrl.match(/:(\d+)/) ? s.fasterWhisperUrl.match(/:(\d+)/)[1] : '8000');
+                        if (document.getElementById('settings-faster-whisper-port')) {
+                            document.getElementById('settings-faster-whisper-port').value = port;
+                        }
+                    }
+                } else {
+                    // Hide transcription tab if disabled
+                    const transcriptionTab = document.querySelector('.settings-tab[data-tab="transcription"]');
+                    if (transcriptionTab) transcriptionTab.style.display = 'none';
+                }
+                
+                // AI settings - only show if enabled
+                if (s.aiEnabled !== false) {
+                    if (s.aiProvider) {
+                        const aiRadio = document.querySelector(`input[name="ai-provider"][value="${s.aiProvider}"]`);
+                        if (aiRadio) {
+                            aiRadio.checked = true;
+                            document.getElementById('settings-ai-provider').value = s.aiProvider;
+                        }
+                        updateAISettingsVisibility();
+                    }
+                    if (s.ollamaUrl) {
+                        document.getElementById('settings-ollama-url').value = s.ollamaUrl;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-ollama-url')) {
+                            document.getElementById('settings-services-ollama-url').value = s.ollamaUrl;
+                        }
+                        // Extract port from URL if present, or use provided port
+                        const port = s.ollamaPort || (s.ollamaUrl.match(/:(\d+)/) ? s.ollamaUrl.match(/:(\d+)/)[1] : '11434');
+                        if (document.getElementById('settings-ollama-port')) {
+                            document.getElementById('settings-ollama-port').value = port;
+                        }
+                    }
+                    if (s.ollamaModel) {
+                        document.getElementById('settings-ollama-model').value = s.ollamaModel;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-ollama-model')) {
+                            document.getElementById('settings-services-ollama-model').value = s.ollamaModel;
+                        }
+                    }
+                    if (s.openaiModel) document.getElementById('settings-openai-model').value = s.openaiModel;
+                } else {
+                    // Hide AI tab if disabled
+                    const aiTab = document.querySelector('.settings-tab[data-tab="ai"]');
+                    if (aiTab) aiTab.style.display = 'none';
+                }
+                
+                // Discord settings
+                if (s.discordEnabled !== undefined) {
+                    document.getElementById('settings-discord-enabled').checked = s.discordEnabled;
+                    updateDiscordSettingsVisibility();
+                }
+                if (s.discordChannel) document.getElementById('settings-discord-channel').value = s.discordChannel;
+                if (s.discordAISummaries !== undefined) document.getElementById('settings-discord-ai-summaries').checked = s.discordAISummaries;
+                
+                // Storage settings
+                if (s.storageMode) {
+                    document.getElementById('settings-storage-mode').value = s.storageMode;
+                    updateStorageSettingsVisibility();
+                }
+                if (s.s3Endpoint) document.getElementById('settings-s3-endpoint').value = s.s3Endpoint;
+                if (s.s3Bucket) document.getElementById('settings-s3-bucket').value = s.s3Bucket;
+                if (s.s3Region) document.getElementById('settings-s3-region').value = s.s3Region;
+                
+                // Display settings
+                if (s.heatmapIntensity) {
+                    document.getElementById('settings-heatmap-intensity').value = s.heatmapIntensity;
+                    document.getElementById('settings-heatmap-intensity-display').textContent = s.heatmapIntensity;
+                }
+                if (s.heatmapEnabled !== undefined) document.getElementById('settings-heatmap-enabled').checked = s.heatmapEnabled;
+                if (s.maxMarkers) document.getElementById('settings-max-markers').value = s.maxMarkers;
+                if (s.clusterMarkers !== undefined) document.getElementById('settings-cluster-markers').checked = s.clusterMarkers;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading settings:', error);
+        });
+}
+
+function updateTranscriptionSettingsVisibility() {
+    const selectedRadio = document.querySelector('input[name="transcription-mode"]:checked');
+    const mode = selectedRadio ? selectedRadio.value : 'local';
+    
+    // Update hidden input
+    const hiddenInput = document.getElementById('settings-transcription-mode');
+    if (hiddenInput) hiddenInput.value = mode;
+    
+    // Show/hide settings sections
+    document.getElementById('transcription-icad-settings').style.display = mode === 'icad' ? 'block' : 'none';
+    document.getElementById('transcription-faster-whisper-settings').style.display = mode === 'faster-whisper' ? 'block' : 'none';
+    
+    // Update iCAD web UI link
+    if (mode === 'icad') {
+        updateICADWebUILink();
+    }
+}
+
+function updateAISettingsVisibility() {
+    const selectedRadio = document.querySelector('input[name="ai-provider"]:checked');
+    const provider = selectedRadio ? selectedRadio.value : 'ollama';
+    
+    // Update hidden input
+    const hiddenInput = document.getElementById('settings-ai-provider');
+    if (hiddenInput) hiddenInput.value = provider;
+    
+    // Show/hide settings sections
+    document.getElementById('ai-openai-settings').style.display = provider === 'openai' ? 'block' : 'none';
+    document.getElementById('ai-ollama-settings').style.display = provider === 'ollama' ? 'block' : 'none';
+}
+
+function updateICADWebUILink() {
+    const urlInput = document.getElementById('settings-icad-url');
+    const portInput = document.getElementById('settings-icad-port');
+    const linkBtn = document.getElementById('icad-webui-link-btn');
+    const linkContainer = document.getElementById('icad-webui-link');
+    
+    if (urlInput && portInput && linkBtn && linkContainer) {
+        const url = urlInput.value || 'http://localhost';
+        const port = portInput.value || '9912';
+        
+        // Extract base URL (remove port if present)
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        const webUIUrl = `${baseUrl}:${port}`;
+        
+        linkBtn.href = webUIUrl;
+        linkContainer.style.display = 'block';
+    }
+}
+
+function updateDiscordSettingsVisibility() {
+    const enabled = document.getElementById('settings-discord-enabled').checked;
+    document.getElementById('discord-settings-content').style.display = enabled ? 'block' : 'none';
+}
+
+function updateStorageSettingsVisibility() {
+    const mode = document.getElementById('settings-storage-mode').value;
+    document.getElementById('storage-s3-settings').style.display = mode === 's3' ? 'block' : 'none';
+}
+
+function loadAPIKeysDisplay() {
+    fetch('/api/settings/api-keys')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const keysList = document.getElementById('api-keys-list');
+                if (keysList) {
+                    keysList.innerHTML = Object.entries(data.keys || {}).map(([name, value]) => {
+                        const masked = value ? value.substring(0, 4) + '...' + value.substring(value.length - 4) : 'Not set';
+                        return `<div><strong>${name}:</strong> ${masked}</div>`;
+                    }).join('');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading API keys:', error);
+        });
+}
+
+// Settings save functions
+function saveGeneralSettings() {
+    const settings = {
+        webserverPort: parseInt(document.getElementById('settings-webserver-port').value),
+        botPort: parseInt(document.getElementById('settings-bot-port').value),
+        publicDomain: document.getElementById('settings-public-domain').value,
+        timezone: document.getElementById('settings-timezone').value,
+        authEnabled: document.getElementById('settings-auth-enabled').checked
+    };
+    saveSettings('general', settings);
+}
+
+function saveMapSettings() {
+    const settings = {
+        mapCenter: {
+            lat: parseFloat(document.getElementById('settings-map-center-lat').value),
+            lng: parseFloat(document.getElementById('settings-map-center-lng').value)
+        },
+        mapZoom: parseInt(document.getElementById('settings-map-zoom').value),
+        defaultTimeRange: parseInt(document.getElementById('settings-default-time-range').value),
+        trackNewCalls: document.getElementById('settings-track-new-calls').checked
+    };
+    saveSettings('map', settings);
+}
+
+function saveAudioSettings() {
+    const settings = {
+        globalVolume: parseFloat(document.getElementById('settings-global-volume').value),
+        muteNewCalls: document.getElementById('settings-mute-new-calls').checked,
+        autoplayEnabled: document.getElementById('settings-autoplay-enabled').checked
+    };
+    saveSettings('audio', settings);
+}
+
+function saveGeocodingSettings() {
+    const settings = {
+        geocodingProvider: document.getElementById('settings-geocoding-provider').value,
+        geocodingCity: document.getElementById('settings-geocoding-city').value,
+        geocodingState: document.getElementById('settings-geocoding-state').value,
+        geocodingCountry: document.getElementById('settings-geocoding-country').value,
+        geocodingCounties: document.getElementById('settings-geocoding-counties').value
+    };
+    saveSettings('geocoding', settings);
+}
+
+function saveTranscriptionSettings() {
+    const selectedRadio = document.querySelector('input[name="transcription-mode"]:checked');
+    const mode = selectedRadio ? selectedRadio.value : 'local';
+    
+    const settings = {
+        transcriptionMode: mode
+    };
+    
+    // Only include settings for the selected mode
+    if (mode === 'icad') {
+        const url = document.getElementById('settings-icad-url').value || 'http://localhost';
+        const port = document.getElementById('settings-icad-port').value || '9912';
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.icadUrl = `${baseUrl}:${port}`;
+        const apiKey = document.getElementById('settings-icad-api-key').value;
+        if (apiKey) settings.icadApiKey = apiKey;
+    } else if (mode === 'faster-whisper') {
+        const url = document.getElementById('settings-faster-whisper-url').value || 'http://localhost';
+        const port = document.getElementById('settings-faster-whisper-port').value || '8000';
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.fasterWhisperUrl = `${baseUrl}:${port}`;
+    }
+    
+    saveSettings('transcription', settings);
+}
+
+function saveServicesSettings() {
+    const settings = {
+        ollamaUrl: document.getElementById('settings-services-ollama-url').value,
+        ollamaModel: document.getElementById('settings-services-ollama-model').value,
+        icadUrl: document.getElementById('settings-services-icad-url').value
+    };
+    const icadKey = document.getElementById('settings-services-icad-api-key').value;
+    if (icadKey) settings.icadApiKey = icadKey;
+    
+    saveSettings('services', settings);
+}
+
+function saveAISettings() {
+    const selectedRadio = document.querySelector('input[name="ai-provider"]:checked');
+    const provider = selectedRadio ? selectedRadio.value : 'ollama';
+    
+    const settings = {
+        aiProvider: provider
+    };
+    
+    // Only include settings for the selected provider
+    if (provider === 'openai') {
+        settings.openaiModel = document.getElementById('settings-openai-model').value;
+        const openaiKey = document.getElementById('settings-openai-api-key').value;
+        if (openaiKey) settings.openaiApiKey = openaiKey;
+    } else if (provider === 'ollama') {
+        const url = document.getElementById('settings-ollama-url').value || 'http://localhost';
+        const port = document.getElementById('settings-ollama-port').value || '11434';
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.ollamaUrl = `${baseUrl}:${port}`;
+        settings.ollamaModel = document.getElementById('settings-ollama-model').value;
+    }
+    
+    saveSettings('ai', settings);
+}
+
+function saveDiscordSettings() {
+    const settings = {
+        discordEnabled: document.getElementById('settings-discord-enabled').checked,
+        discordChannel: document.getElementById('settings-discord-channel').value,
+        discordAISummaries: document.getElementById('settings-discord-ai-summaries').checked
+    };
+    const token = document.getElementById('settings-discord-token').value;
+    if (token) settings.discordToken = token;
+    saveSettings('discord', settings);
+}
+
+function saveStorageSettings() {
+    const settings = {
+        storageMode: document.getElementById('settings-storage-mode').value,
+        s3Endpoint: document.getElementById('settings-s3-endpoint').value,
+        s3Bucket: document.getElementById('settings-s3-bucket').value,
+        s3Region: document.getElementById('settings-s3-region').value
+    };
+    const accessKey = document.getElementById('settings-s3-access-key').value;
+    const secretKey = document.getElementById('settings-s3-secret-key').value;
+    if (accessKey) settings.s3AccessKey = accessKey;
+    if (secretKey) settings.s3SecretKey = secretKey;
+    saveSettings('storage', settings);
+}
+
+function saveDisplaySettings() {
+    const settings = {
+        heatmapIntensity: parseInt(document.getElementById('settings-heatmap-intensity').value),
+        heatmapEnabled: document.getElementById('settings-heatmap-enabled').checked,
+        maxMarkers: parseInt(document.getElementById('settings-max-markers').value),
+        clusterMarkers: document.getElementById('settings-cluster-markers').checked
+    };
+    saveSettings('display', settings);
+}
+
+function saveAPIKeys() {
+    const keys = {};
+    const googleKey = document.getElementById('settings-google-maps-key').value;
+    const locationiqKey = document.getElementById('settings-locationiq-key').value;
+    if (googleKey) keys.googleMapsKey = googleKey;
+    if (locationiqKey) keys.locationiqKey = locationiqKey;
+    if (Object.keys(keys).length === 0) {
+        showNotification('No API keys to save', 'info');
+        return;
+    }
+    saveSettings('api-keys', keys);
+}
+
+function saveSettings(category, settings) {
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, settings })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(`${category} settings saved successfully`, 'success');
+                loadAllSettings();
+            } else {
+                showNotification(data.error || `Error saving ${category} settings`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error saving ${category} settings:`, error);
+            showNotification(`Error saving ${category} settings`, 'error');
+        });
+}
+
+function setupSettingsModal() {
+    // Settings tab switching
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.dataset.tab;
+            switchSettingsTab(tabName);
+        });
+    });
+    
+    // Transcription mode radio buttons
+    document.querySelectorAll('input[name="transcription-mode"]').forEach(radio => {
+        radio.addEventListener('change', updateTranscriptionSettingsVisibility);
+    });
+    
+    // AI provider radio buttons
+    document.querySelectorAll('input[name="ai-provider"]').forEach(radio => {
+        radio.addEventListener('change', updateAISettingsVisibility);
+    });
+    
+    // iCAD URL/Port changes - update web UI link
+    const icadUrl = document.getElementById('settings-icad-url');
+    const icadPort = document.getElementById('settings-icad-port');
+    if (icadUrl) icadUrl.addEventListener('input', updateICADWebUILink);
+    if (icadPort) icadPort.addEventListener('input', updateICADWebUILink);
+    
+    // Discord enabled change
+    const discordEnabled = document.getElementById('settings-discord-enabled');
+    if (discordEnabled) {
+        discordEnabled.addEventListener('change', updateDiscordSettingsVisibility);
+    }
+    
+    // Storage mode change
+    const storageMode = document.getElementById('settings-storage-mode');
+    if (storageMode) {
+        storageMode.addEventListener('change', updateStorageSettingsVisibility);
+    }
+    
+    // Volume slider
+    const volumeSlider = document.getElementById('settings-global-volume');
+    if (volumeSlider) {
+        volumeSlider.addEventListener('input', function() {
+            const display = document.getElementById('settings-volume-display');
+            if (display) display.textContent = Math.round(this.value * 100) + '%';
+        });
+    }
+    
+    // Heatmap intensity slider
+    const heatmapSlider = document.getElementById('settings-heatmap-intensity');
+    if (heatmapSlider) {
+        heatmapSlider.addEventListener('input', function() {
+            const display = document.getElementById('settings-heatmap-intensity-display');
+            if (display) display.textContent = this.value;
+        });
+    }
+    
+    // Show API keys checkbox
+    const showAPIKeys = document.getElementById('settings-show-api-keys');
+    if (showAPIKeys) {
+        showAPIKeys.addEventListener('change', function() {
+            const display = document.getElementById('api-keys-display');
+            if (display) {
+                display.style.display = this.checked ? 'block' : 'none';
+                if (this.checked) {
+                    loadAPIKeysDisplay();
+                }
+            }
+        });
+    }
+    
+    // Save buttons
+    const saveButtons = {
+        'save-general-settings-btn': saveGeneralSettings,
+        'save-services-settings-btn': saveServicesSettings,
+        'save-map-settings-btn': saveMapSettings,
+        'save-audio-settings-btn': saveAudioSettings,
+        'save-geocoding-settings-btn': saveGeocodingSettings,
+        'save-transcription-settings-btn': saveTranscriptionSettings,
+        'save-ai-settings-btn': saveAISettings,
+        'save-discord-settings-btn': saveDiscordSettings,
+        'save-storage-settings-btn': saveStorageSettings,
+        'save-display-settings-btn': saveDisplaySettings,
+        'save-api-keys-btn': saveAPIKeys
+    };
+    
+    Object.entries(saveButtons).forEach(([id, handler]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('click', handler);
+    });
+}
+
 function switchQuickStartTab(tabName) {
     // Hide all tab contents
     document.querySelectorAll('.quick-start-tab-content').forEach(content => {
@@ -5691,6 +6320,22 @@ function switchQuickStartTab(tabName) {
     const tabButton = document.querySelector(`.quick-start-tab[data-tab="${tabName}"]`);
     if (tabButton) {
         tabButton.classList.add('active');
+    }
+    
+    // Start/stop service status auto-refresh based on tab
+    if (tabName === 'system') {
+        loadServiceStatus(); // Load immediately
+        startServiceStatusAutoRefresh();
+    } else if (tabName === 'models') {
+        // Load model recommendations and installed models for Models tab
+        if (typeof loadQuickStartModelRecommendations === 'function') {
+            loadQuickStartModelRecommendations();
+        }
+        if (typeof loadQuickStartInstalledModels === 'function') {
+            loadQuickStartInstalledModels();
+        }
+    } else {
+        stopServiceStatusAutoRefresh();
     }
 }
 
@@ -5767,6 +6412,42 @@ function setupQuickStartModal() {
     if (installPythonBtn) {
         installPythonBtn.addEventListener('click', function() {
             installDependency('python');
+        });
+    }
+    
+    // Service installation buttons
+    const installOllamaLocalBtn = document.getElementById('install-ollama-local-btn');
+    if (installOllamaLocalBtn) {
+        installOllamaLocalBtn.addEventListener('click', function() {
+            installService('ollama', false);
+        });
+    }
+    
+    const installOllamaDockerBtn = document.getElementById('install-ollama-docker-btn');
+    if (installOllamaDockerBtn) {
+        installOllamaDockerBtn.addEventListener('click', function() {
+            installService('ollama', true);
+        });
+    }
+    
+    const installFasterWhisperBtn = document.getElementById('install-faster-whisper-btn');
+    if (installFasterWhisperBtn) {
+        installFasterWhisperBtn.addEventListener('click', function() {
+            installService('faster-whisper', false);
+        });
+    }
+    
+    const installIcadLocalBtn = document.getElementById('install-icad-local-btn');
+    if (installIcadLocalBtn) {
+        installIcadLocalBtn.addEventListener('click', function() {
+            installService('icad-transcribe', false);
+        });
+    }
+    
+    const installIcadDockerBtn = document.getElementById('install-icad-docker-btn');
+    if (installIcadDockerBtn) {
+        installIcadDockerBtn.addEventListener('click', function() {
+            installService('icad-transcribe', true);
         });
     }
     
@@ -6148,22 +6829,91 @@ function loadGPUStatus() {
                 const gpuCheckbox = document.getElementById('gpu-enabled-checkbox');
                 const toolkitSection = document.getElementById('nvidia-toolkit-section');
                 
-                if (data.available) {
-                    if (statusText) statusText.textContent = '✓ NVIDIA GPU Detected';
+                if (data.available && data.primary) {
+                    const brand = data.primary.brand || 'nvidia';
+                    const brandName = brand.charAt(0).toUpperCase() + brand.slice(1);
+                    if (statusText) statusText.textContent = `✓ ${brandName} GPU Detected`;
                     if (statusText) statusText.style.color = '#00ff00';
-                    if (gpuName) gpuName.textContent = `GPU: ${data.name || 'Unknown'}`;
-                    if (toolkitSection && !data.toolkitInstalled) {
+                    if (gpuName) gpuName.textContent = `GPU: ${data.primary.name || 'Unknown'}`;
+                    if (toolkitSection && brand === 'nvidia' && !data.toolkitInstalled) {
                         toolkitSection.style.display = 'block';
+                    } else if (toolkitSection) {
+                        toolkitSection.style.display = 'none';
+                    }
+                    
+                    // Update service install buttons based on compatibility
+                    if (data.serviceCompatibility) {
+                        updateServiceButtons(data.serviceCompatibility);
                     }
                 } else {
-                    if (statusText) statusText.textContent = '✗ No NVIDIA GPU Detected';
+                    if (statusText) statusText.textContent = '✗ No GPU Detected';
                     if (statusText) statusText.style.color = '#ff0000';
+                    if (toolkitSection) toolkitSection.style.display = 'none';
                 }
             }
         })
         .catch(error => {
             console.error('Error loading GPU status:', error);
         });
+}
+
+function updateServiceButtons(compatibility) {
+    // Disable/enable service install buttons based on GPU compatibility
+    const ollamaDockerBtn = document.getElementById('install-ollama-docker-btn');
+    const ollamaLocalBtn = document.getElementById('install-ollama-local-btn');
+    const icadDockerBtn = document.getElementById('install-icad-docker-btn');
+    const icadLocalBtn = document.getElementById('install-icad-local-btn');
+    const fasterWhisperBtn = document.getElementById('install-faster-whisper-local-btn');
+    
+    if (ollamaDockerBtn && compatibility.ollama) {
+        if (!compatibility.ollama.docker) {
+            ollamaDockerBtn.disabled = true;
+            ollamaDockerBtn.title = compatibility.ollama.reason || 'Not supported with current GPU';
+        } else {
+            ollamaDockerBtn.disabled = false;
+            ollamaDockerBtn.title = '';
+        }
+    }
+    
+    if (ollamaLocalBtn && compatibility.ollama) {
+        if (!compatibility.ollama.local) {
+            ollamaLocalBtn.disabled = true;
+            ollamaLocalBtn.title = compatibility.ollama.reason || 'Not supported with current GPU';
+        } else {
+            ollamaLocalBtn.disabled = false;
+            ollamaLocalBtn.title = '';
+        }
+    }
+    
+    if (icadDockerBtn && compatibility.icad) {
+        if (!compatibility.icad.supported || !compatibility.icad.docker) {
+            icadDockerBtn.disabled = true;
+            icadDockerBtn.title = compatibility.icad.reason || 'Not supported with current GPU';
+        } else {
+            icadDockerBtn.disabled = false;
+            icadDockerBtn.title = '';
+        }
+    }
+    
+    if (icadLocalBtn && compatibility.icad) {
+        if (!compatibility.icad.supported || !compatibility.icad.local) {
+            icadLocalBtn.disabled = true;
+            icadLocalBtn.title = compatibility.icad.reason || 'Not supported with current GPU';
+        } else {
+            icadLocalBtn.disabled = false;
+            icadLocalBtn.title = '';
+        }
+    }
+    
+    if (fasterWhisperBtn && compatibility['faster-whisper']) {
+        if (!compatibility['faster-whisper'].supported) {
+            fasterWhisperBtn.disabled = true;
+            fasterWhisperBtn.title = compatibility['faster-whisper'].reason || 'Not supported with current GPU';
+        } else {
+            fasterWhisperBtn.disabled = false;
+            fasterWhisperBtn.title = '';
+        }
+    }
 }
 
 function saveGPUConfig(enabled) {
@@ -6265,11 +7015,30 @@ function loadSystemStatus() {
             if (data.success && data.status) {
                 const status = data.status;
                 
+                // Show installation mode
+                const modeText = document.getElementById('installation-mode-text');
+                const modeDesc = document.getElementById('installation-mode-description');
+                if (modeText) {
+                    if (status.runningInDocker) {
+                        modeText.textContent = 'Docker Container';
+                        modeText.style.color = '#00ccff';
+                        if (modeDesc) modeDesc.textContent = 'Running inside Docker. Services will be installed as Docker containers.';
+                    } else {
+                        modeText.textContent = 'Local Installation';
+                        modeText.style.color = '#00ff00';
+                        if (modeDesc) modeDesc.textContent = 'Running locally. Services will be installed as native applications.';
+                    }
+                }
+                
                 // Docker status
                 const dockerStatus = document.getElementById('docker-status');
                 const installDockerBtn = document.getElementById('install-docker-btn');
                 if (dockerStatus) {
-                    if (status.docker.installed && status.docker.daemonRunning) {
+                    if (status.runningInDocker) {
+                        dockerStatus.textContent = '✓ Running in Docker';
+                        dockerStatus.style.color = '#00ccff';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else if (status.docker.installed && status.docker.daemonRunning) {
                         dockerStatus.textContent = '✓ Installed & Running';
                         dockerStatus.style.color = '#00ff00';
                         if (installDockerBtn) installDockerBtn.style.display = 'none';
@@ -6280,9 +7049,12 @@ function loadSystemStatus() {
                     } else {
                         dockerStatus.textContent = '✗ Not Installed';
                         dockerStatus.style.color = '#ff0000';
-                        if (installDockerBtn) {
+                        // Only show install button if not running in Docker and can install
+                        if (installDockerBtn && status.docker.canInstall !== false) {
                             installDockerBtn.style.display = 'inline-block';
                             installDockerBtn.disabled = false;
+                        } else if (installDockerBtn) {
+                            installDockerBtn.style.display = 'none';
                         }
                     }
                 }
@@ -6322,6 +7094,85 @@ function loadSystemStatus() {
                         }
                     }
                 }
+                
+                // Service status
+                if (status.services) {
+                    // Ollama
+                    const ollamaStatus = document.getElementById('ollama-status');
+                    const installOllamaLocalBtn = document.getElementById('install-ollama-local-btn');
+                    const installOllamaDockerBtn = document.getElementById('install-ollama-docker-btn');
+                    if (ollamaStatus) {
+                        if (status.services.ollama.running) {
+                            ollamaStatus.textContent = `✓ Running (${status.services.ollama.url || 'localhost:11434'})`;
+                            ollamaStatus.style.color = '#00ff00';
+                            if (installOllamaLocalBtn) installOllamaLocalBtn.style.display = 'none';
+                            if (installOllamaDockerBtn) installOllamaDockerBtn.style.display = 'none';
+                        } else if (status.services.ollama.installed) {
+                            ollamaStatus.textContent = '⚠ Installed (not running)';
+                            ollamaStatus.style.color = '#ffff00';
+                            if (installOllamaLocalBtn) installOllamaLocalBtn.style.display = 'none';
+                            if (installOllamaDockerBtn) installOllamaDockerBtn.style.display = 'none';
+                        } else {
+                            ollamaStatus.textContent = '✗ Not Installed';
+                            ollamaStatus.style.color = '#ff0000';
+                            if (installOllamaLocalBtn) {
+                                installOllamaLocalBtn.style.display = 'inline-block';
+                                installOllamaLocalBtn.disabled = false;
+                            }
+                            if (installOllamaDockerBtn && status.docker.daemonRunning) {
+                                installOllamaDockerBtn.style.display = 'inline-block';
+                                installOllamaDockerBtn.disabled = false;
+                            }
+                        }
+                    }
+                    
+                    // faster-whisper
+                    const fasterWhisperStatus = document.getElementById('faster-whisper-status');
+                    const installFasterWhisperBtn = document.getElementById('install-faster-whisper-btn');
+                    if (fasterWhisperStatus) {
+                        if (status.services.fasterWhisper.installed) {
+                            fasterWhisperStatus.textContent = '✓ Installed';
+                            fasterWhisperStatus.style.color = '#00ff00';
+                            if (installFasterWhisperBtn) installFasterWhisperBtn.style.display = 'none';
+                        } else {
+                            fasterWhisperStatus.textContent = '✗ Not Installed';
+                            fasterWhisperStatus.style.color = '#ff0000';
+                            if (installFasterWhisperBtn) {
+                                installFasterWhisperBtn.style.display = 'inline-block';
+                                installFasterWhisperBtn.disabled = false;
+                            }
+                        }
+                    }
+                    
+                    // iCAD Transcribe
+                    const icadStatus = document.getElementById('icad-status');
+                    const installIcadLocalBtn = document.getElementById('install-icad-local-btn');
+                    const installIcadDockerBtn = document.getElementById('install-icad-docker-btn');
+                    if (icadStatus) {
+                        if (status.services.icadTranscribe.running) {
+                            icadStatus.textContent = `✓ Running (${status.services.icadTranscribe.url || 'localhost:9912'})`;
+                            icadStatus.style.color = '#00ff00';
+                            if (installIcadLocalBtn) installIcadLocalBtn.style.display = 'none';
+                            if (installIcadDockerBtn) installIcadDockerBtn.style.display = 'none';
+                        } else if (status.services.icadTranscribe.installed) {
+                            icadStatus.textContent = '⚠ Installed (not running)';
+                            icadStatus.style.color = '#ffff00';
+                            if (installIcadLocalBtn) installIcadLocalBtn.style.display = 'none';
+                            if (installIcadDockerBtn) installIcadDockerBtn.style.display = 'none';
+                        } else {
+                            icadStatus.textContent = '✗ Not Installed';
+                            icadStatus.style.color = '#ff0000';
+                            if (installIcadLocalBtn) {
+                                installIcadLocalBtn.style.display = 'inline-block';
+                                installIcadLocalBtn.disabled = false;
+                            }
+                            if (installIcadDockerBtn && status.docker.daemonRunning) {
+                                installIcadDockerBtn.style.display = 'inline-block';
+                                installIcadDockerBtn.disabled = false;
+                            }
+                        }
+                    }
+                }
             }
         })
         .catch(error => {
@@ -6350,6 +7201,637 @@ function loadSystemStatus() {
         .catch(error => {
             console.error('Error loading system info:', error);
         });
+    
+    // Load model recommendations
+    loadModelRecommendations();
+    
+    // Load service status
+    loadServiceStatus();
+}
+
+function loadModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('model-recommendations-content');
+                if (content) {
+                    let html = `<div style="margin-bottom: 15px;"><strong>Hardware:</strong> ${recs.hardware.type} (${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'})</div>`;
+                    html += `<div style="margin-bottom: 15px; padding: 10px; background-color: rgba(0, 51, 0, 0.2); border-radius: 4px;">${recs.summary.bestFor}</div>`;
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+            const content = document.getElementById('model-recommendations-content');
+            if (content) {
+                content.textContent = 'Error loading recommendations';
+            }
+        });
+}
+
+function loadServiceStatus() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                const content = document.getElementById('service-status-content');
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>Ollama:</strong> `;
+                    if (status.ollama.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.ollama.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.ollama.url})</span>`;
+                        }
+                        if (status.ollama.models && status.ollama.models.length > 0) {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em;">Models: ${status.ollama.models.join(', ')}</div>`;
+                        } else {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em; color: #ffaa00;">No models installed</div>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // iCAD status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>iCAD Transcribe:</strong> `;
+                    if (status.icad.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.icad.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.icad.url})</span>`;
+                        }
+                        html += `<div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">Models are managed automatically by iCAD</div>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // faster-whisper status
+                    html += `<div>`;
+                    html += `<strong>faster-whisper:</strong> `;
+                    if (status.fasterWhisper.installed) {
+                        html += `<span style="color: #00ff00;">✓ Installed</span>`;
+                        html += `<div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">Models download automatically on first use</div>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Installed</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service status:', error);
+            const content = document.getElementById('service-status-content');
+            if (content) {
+                content.textContent = 'Error loading service status';
+            }
+        });
+}
+
+// Auto-refresh service status every 30 seconds when System Status tab is active
+let serviceStatusInterval = null;
+function startServiceStatusAutoRefresh() {
+    if (serviceStatusInterval) {
+        clearInterval(serviceStatusInterval);
+    }
+    serviceStatusInterval = setInterval(() => {
+        const systemTab = document.querySelector('.quick-start-tab[data-tab="system"]');
+        if (systemTab && systemTab.classList.contains('active')) {
+            loadServiceStatus();
+        }
+    }, 30000); // Refresh every 30 seconds
+}
+
+// Stop auto-refresh when tab is not active
+function stopServiceStatusAutoRefresh() {
+    if (serviceStatusInterval) {
+        clearInterval(serviceStatusInterval);
+        serviceStatusInterval = null;
+    }
+}
+
+function pullOllamaModel(modelName) {
+    if (!modelName) {
+        showNotification('Please select a model to pull', 'error');
+        return;
+    }
+    
+    if (!confirm(`Pull Ollama model "${modelName}"? This may take several minutes.`)) {
+        return;
+    }
+    
+    fetch('/api/models/pull-ollama', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ modelName })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                showNotification(`Pulling model ${modelName}...`, 'success');
+                pollModelPullStatus('ollama', data.jobId, modelName);
+            } else {
+                showNotification(data.error || 'Error starting model pull', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error pulling model:', error);
+            showNotification('Error pulling model', 'error');
+        });
+}
+
+function pollModelPullStatus(service, jobId, modelName) {
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        console.log(`[${service}] Pulling ${modelName}: ${job.progress}%`);
+                        setTimeout(poll, 2000);
+                    } else if (job.status === 'completed') {
+                        showNotification(`${modelName} pulled successfully!`, 'success');
+                        loadServiceStatus(); // Refresh status
+                        loadModelRecommendations(); // Refresh recommendations
+                        // Also refresh if in settings
+                        if (typeof loadSettingsInstalledModels === 'function') {
+                            loadSettingsInstalledModels();
+                        }
+                        if (typeof loadQuickStartInstalledModels === 'function') {
+                            loadQuickStartInstalledModels();
+                        }
+                    } else if (job.status === 'failed') {
+                        showNotification(job.error || `Failed to pull ${modelName}`, 'error');
+                    }
+                } else {
+                    showNotification('Model pull status unknown', 'error');
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling model pull status:`, error);
+                showNotification('Error checking pull status', 'error');
+            });
+    };
+    
+    poll();
+}
+
+// Settings-specific functions
+function loadSettingsServiceStatus() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                const content = document.getElementById('settings-service-status-content');
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>Ollama:</strong> `;
+                    if (status.ollama.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.ollama.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.ollama.url})</span>`;
+                        }
+                        if (status.ollama.models && status.ollama.models.length > 0) {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em;">Installed models: ${status.ollama.models.join(', ')}</div>`;
+                        } else {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em; color: #ffaa00;">No models installed</div>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // iCAD status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>iCAD Transcribe:</strong> `;
+                    if (status.icad.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.icad.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.icad.url})</span>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // faster-whisper status
+                    html += `<div>`;
+                    html += `<strong>faster-whisper:</strong> `;
+                    if (status.fasterWhisper.installed) {
+                        html += `<span style="color: #00ff00;">✓ Installed</span>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Installed</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service status:', error);
+            const content = document.getElementById('settings-service-status-content');
+            if (content) {
+                content.textContent = 'Error loading service status';
+            }
+        });
+}
+
+function loadSettingsModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('settings-model-recommendations-content');
+                const hardwareInfo = document.getElementById('settings-hardware-info');
+                
+                if (hardwareInfo) {
+                    hardwareInfo.innerHTML = `
+                        <div><strong>Type:</strong> ${recs.hardware.type}</div>
+                        <div><strong>VRAM/RAM:</strong> ${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'}</div>
+                        <div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">${recs.summary.bestFor}</div>
+                    `;
+                }
+                
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.ollama.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="settings-ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('settings-ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+        });
+}
+
+function loadSettingsInstalledModels() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status && data.status.ollama) {
+                const content = document.getElementById('settings-installed-models-content');
+                if (content) {
+                    if (data.status.ollama.models && data.status.ollama.models.length > 0) {
+                        let html = '<div style="display: flex; flex-direction: column; gap: 5px;">';
+                        data.status.ollama.models.forEach(model => {
+                            html += `<div style="padding: 5px; background-color: rgba(0, 0, 0, 0.2); border-radius: 4px;"><code>${model}</code></div>`;
+                        });
+                        html += '</div>';
+                        content.innerHTML = html;
+                    } else {
+                        content.innerHTML = '<div style="color: #ffaa00;">No models installed. Pull a model using the recommendations above or the manual pull section.</div>';
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading installed models:', error);
+        });
+}
+
+function pullModelFromSettings() {
+    const modelName = document.getElementById('settings-pull-model-name').value.trim();
+    if (!modelName) {
+        showNotification('Please enter a model name', 'error');
+        return;
+    }
+    
+    const statusEl = document.getElementById('settings-pull-model-status');
+    if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #ffff00;">Starting pull...</span>';
+    }
+    
+    pullOllamaModel(modelName);
+    
+    // Update status via polling
+    const pollStatus = setInterval(() => {
+        fetch('/api/services/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.status && data.status.ollama) {
+                    if (data.status.ollama.models && data.status.ollama.models.includes(modelName)) {
+                        if (statusEl) {
+                            statusEl.innerHTML = `<span style="color: #00ff00;">✓ Model ${modelName} installed!</span>`;
+                        }
+                        clearInterval(pollStatus);
+                        loadSettingsInstalledModels();
+                    }
+                }
+            })
+            .catch(() => {});
+    }, 3000);
+    
+    setTimeout(() => clearInterval(pollStatus), 300000); // Stop after 5 minutes
+}
+
+function autoDetectServiceUrl(serviceName, port, inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    
+    input.value = 'Detecting...';
+    input.disabled = true;
+    
+    fetch('/api/system/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const runningInDocker = data.status.runningInDocker;
+                let detectedUrl;
+                
+                if (runningInDocker) {
+                    // Docker-to-Docker: Use service name
+                    detectedUrl = `http://${serviceName}:${port}`;
+                } else {
+                    // Local-to-Docker or Local-to-Local: Use localhost
+                    detectedUrl = `http://localhost:${port}`;
+                }
+                
+                input.value = detectedUrl;
+                input.disabled = false;
+                showNotification(`Auto-detected URL: ${detectedUrl}`, 'success');
+            } else {
+                input.value = `http://localhost:${port}`;
+                input.disabled = false;
+                showNotification('Using default localhost URL', 'info');
+            }
+        })
+        .catch(error => {
+            console.error('Error auto-detecting URL:', error);
+            input.value = `http://localhost:${port}`;
+            input.disabled = false;
+            showNotification('Using default localhost URL', 'info');
+        });
+}
+
+function useRecommendedOllamaModel() {
+    const recommended = document.getElementById('ai-ollama-recommended-model');
+    if (recommended && recommended.textContent) {
+        document.getElementById('settings-ollama-model').value = recommended.textContent.trim();
+        showNotification('Recommended model set', 'success');
+    }
+}
+
+// Quick Start Models Tab functions
+function loadQuickStartModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('quickstart-model-recommendations-content');
+                const hardwareInfo = document.getElementById('quickstart-hardware-info');
+                
+                if (hardwareInfo) {
+                    hardwareInfo.innerHTML = `
+                        <div><strong>Type:</strong> ${recs.hardware.type}</div>
+                        <div><strong>VRAM/RAM:</strong> ${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'}</div>
+                        <div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">${recs.summary.bestFor}</div>
+                    `;
+                }
+                
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.ollama.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="quickstart-ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('quickstart-ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+        });
+}
+
+function loadQuickStartInstalledModels() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status && data.status.ollama) {
+                const content = document.getElementById('quickstart-installed-models-content');
+                if (content) {
+                    if (data.status.ollama.models && data.status.ollama.models.length > 0) {
+                        let html = '<div style="display: flex; flex-direction: column; gap: 5px;">';
+                        data.status.ollama.models.forEach(model => {
+                            html += `<div style="padding: 5px; background-color: rgba(0, 0, 0, 0.2); border-radius: 4px;"><code>${model}</code></div>`;
+                        });
+                        html += '</div>';
+                        content.innerHTML = html;
+                    } else {
+                        content.innerHTML = '<div style="color: #ffaa00;">No models installed. Pull a model using the recommendations above.</div>';
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading installed models:', error);
+        });
+}
+
+function pullModelFromQuickStart() {
+    const modelName = document.getElementById('quickstart-pull-model-name').value.trim();
+    if (!modelName) {
+        showNotification('Please enter a model name', 'error');
+        return;
+    }
+    
+    const statusEl = document.getElementById('quickstart-pull-model-status');
+    if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #ffff00;">Starting pull...</span>';
+    }
+    
+    pullOllamaModel(modelName);
+    
+    // Update status via polling
+    const pollStatus = setInterval(() => {
+        fetch('/api/services/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.status && data.status.ollama) {
+                    if (data.status.ollama.models && data.status.ollama.models.includes(modelName)) {
+                        if (statusEl) {
+                            statusEl.innerHTML = `<span style="color: #00ff00;">✓ Model ${modelName} installed!</span>`;
+                        }
+                        clearInterval(pollStatus);
+                        loadQuickStartInstalledModels();
+                    }
+                }
+            })
+            .catch(() => {});
+    }, 3000);
+    
+    setTimeout(() => clearInterval(pollStatus), 300000); // Stop after 5 minutes
 }
 
 // Update Management Functions
@@ -6745,6 +8227,137 @@ function saveFrequency() {
             console.error('Error saving frequency:', error);
             showNotification('Error saving frequency', 'error');
         });
+}
+
+function installService(service, useDocker) {
+    const serviceNames = {
+        'ollama': 'Ollama',
+        'faster-whisper': 'faster-whisper',
+        'icad-transcribe': 'iCAD Transcribe'
+    };
+    
+    const serviceName = serviceNames[service] || service;
+    const installType = useDocker ? 'Docker' : 'Local';
+    
+    if (!confirm(`Install ${serviceName} as ${installType} installation?`)) {
+        return;
+    }
+    
+    // Map service name for API endpoint
+    const apiServiceName = service === 'icad-transcribe' ? 'icad-transcribe' : service;
+    const endpoint = `/api/system/install-${apiServiceName}`;
+    const btnId = `install-${service}${useDocker ? '-docker' : '-local'}-btn`;
+    const btn = document.getElementById(btnId);
+    // Map status element ID (icad vs icad-transcribe)
+    const statusElId = service === 'icad-transcribe' ? 'icad-status' : `${service}-status`;
+    const statusEl = document.getElementById(statusElId);
+    
+    if (btn) btn.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = '⏳ Starting installation...';
+        statusEl.style.color = '#ffff00';
+    }
+    
+    fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ useDocker })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                showNotification(`${serviceName} installation started.`, 'success');
+                // Poll for installation status using the existing function
+                pollServiceInstallationStatus(apiServiceName, data.jobId, btnId);
+            } else {
+                if (statusEl) {
+                    statusEl.textContent = '✗ Installation failed';
+                    statusEl.style.color = '#ff0000';
+                }
+                if (btn) btn.disabled = false;
+                showNotification(data.error || `Error starting ${serviceName} installation`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error installing ${serviceName}:`, error);
+            if (statusEl) {
+                statusEl.textContent = '✗ Installation error';
+                statusEl.style.color = '#ff0000';
+            }
+            if (btn) btn.disabled = false;
+            showNotification(`Error installing ${serviceName}`, 'error');
+        });
+}
+
+function pollServiceInstallationStatus(service, jobId, btnId) {
+    const statusEl = document.getElementById(`${service}-status`);
+    const btn = document.getElementById(btnId);
+    
+    // Map service names for display
+    const serviceNames = {
+        'ollama': 'Ollama',
+        'faster-whisper': 'faster-whisper',
+        'icad-transcribe': 'iCAD Transcribe'
+    };
+    const displayName = serviceNames[service] || service;
+    
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        if (statusEl) {
+                            statusEl.textContent = `⏳ Installing... (${Math.round(job.progress || 0)}%)`;
+                            statusEl.style.color = '#ffff00';
+                        }
+                        // Show output if available
+                        if (job.output && job.output.length > 0) {
+                            const lastOutput = job.output[job.output.length - 1];
+                            if (lastOutput && lastOutput.length < 100) {
+                                // Show last output line if it's short
+                                console.log(`[${displayName}] ${lastOutput}`);
+                            }
+                        }
+                        setTimeout(poll, 2000);
+                    } else if (job.status === 'completed') {
+                        if (statusEl) {
+                            statusEl.textContent = '✓ Installation complete';
+                            statusEl.style.color = '#00ff00';
+                        }
+                        if (btn) btn.style.display = 'none';
+                        showNotification(`${displayName} installed successfully`, 'success');
+                        setTimeout(() => loadSystemStatus(), 2000);
+                    } else if (job.status === 'failed') {
+                        if (statusEl) {
+                            statusEl.textContent = '✗ Installation failed';
+                            statusEl.style.color = '#ff0000';
+                        }
+                        if (btn) btn.disabled = false;
+                        const errorMsg = job.error || `${displayName} installation failed`;
+                        showNotification(errorMsg, 'error');
+                        console.error(`[${displayName}] Installation failed:`, job.error);
+                        if (job.output && job.output.length > 0) {
+                            console.error(`[${displayName}] Output:`, job.output);
+                        }
+                    }
+                } else {
+                    if (statusEl) statusEl.textContent = '✗ Installation status unknown';
+                    if (btn) btn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling ${displayName} installation status:`, error);
+                if (statusEl) statusEl.textContent = '✗ Status check failed';
+                if (btn) btn.disabled = false;
+            });
+    };
+    
+    poll();
 }
 
 function installDependency(type) {

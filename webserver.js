@@ -1,11 +1,20 @@
 // webserver.js - Web interface for viewing and managing calls with optional authentication
 
-require('dotenv').config();
+// Load environment variables from .env file
+// Use explicit path to ensure it works in Docker and local environments
+const path = require('path');
+const result = require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+if (result.error) {
+  // Only warn if file doesn't exist (may be intentional in some setups)
+  // Error will be caught later when validating required variables
+  console.warn('[Webserver] Warning: Could not load .env file:', result.error.message);
+  console.warn('[Webserver] Continuing with environment variables from system/container...');
+}
 const AWS = require('aws-sdk'); // Add AWS SDK
 
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
@@ -48,23 +57,64 @@ const {
   ICAD_API_KEY = ''
 } = process.env;
 
+// Debug mode flag for verbose logging
+const DEBUG_WEBSERVER = process.env.DEBUG_WEBSERVER === 'true' || process.env.DEBUG_ENV === 'true';
+
+// Log environment variable status (for debugging)
+if (DEBUG_WEBSERVER) {
+  console.log('[Webserver] Environment variable check:');
+  console.log(`[Webserver]   WEBSERVER_PORT: ${WEBSERVER_PORT ? `"${WEBSERVER_PORT}" (${typeof WEBSERVER_PORT})` : 'MISSING/UNDEFINED'}`);
+  console.log(`[Webserver]   PUBLIC_DOMAIN: ${PUBLIC_DOMAIN ? `"${PUBLIC_DOMAIN}" (${typeof PUBLIC_DOMAIN})` : 'MISSING/UNDEFINED'}`);
+  console.log(`[Webserver]   GEOCODING_PROVIDER: ${process.env.GEOCODING_PROVIDER ? `"${process.env.GEOCODING_PROVIDER}"` : 'MISSING/UNDEFINED'}`);
+  console.log(`[Webserver]   GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY ? 'SET (hidden)' : 'NOT SET'}`);
+  console.log(`[Webserver]   LOCATIONIQ_API_KEY: ${LOCATIONIQ_API_KEY ? 'SET (hidden)' : 'NOT SET'}`);
+}
+
 // Validate required environment variables
+// Check for missing or empty string values
 const requiredVars = ['WEBSERVER_PORT', 'PUBLIC_DOMAIN'];
-const missingVars = requiredVars.filter(varName => !process.env[varName]);
+const missingVars = requiredVars.filter(varName => {
+  const value = process.env[varName];
+  return !value || (typeof value === 'string' && value.trim() === '');
+});
 
 if (missingVars.length > 0) {
-  console.error(`ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
+  console.error(`[Webserver] ERROR: Missing or empty required environment variables: ${missingVars.join(', ')}`);
+  console.error(`[Webserver] Please check your .env file and ensure these variables are set with non-empty values.`);
+  console.error(`[Webserver] For Docker installations, ensure .env file is mounted correctly.`);
   process.exit(1);
 }
 
+// Validate WEBSERVER_PORT is a valid number
+const portNum = parseInt(WEBSERVER_PORT, 10);
+if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+  console.error(`[Webserver] ERROR: WEBSERVER_PORT must be a valid port number (1-65535), got: "${WEBSERVER_PORT}"`);
+  process.exit(1);
+}
+
+// Auto-configure service URLs on startup (async, non-blocking)
+// This ensures services work correctly in Docker-to-Docker, Local-to-Docker, and Local-to-Local scenarios
+setTimeout(() => {
+  autoConfigureServiceUrls().catch(err => {
+    console.warn('[Webserver] Service URL auto-configuration failed:', err.message);
+  });
+}, 2000); // Wait 2 seconds for services to be ready
+
 // Check for geocoding service (Nominatim doesn't need API key)
 const GEOCODING_PROVIDER = process.env.GEOCODING_PROVIDER || '';
-const hasGeocoding = GEOCODING_PROVIDER.toLowerCase() === 'nominatim' || 
-                    GOOGLE_MAPS_API_KEY || 
-                    LOCATIONIQ_API_KEY;
+// Handle case-insensitive comparison and empty strings
+const geoProviderLower = GEOCODING_PROVIDER.toLowerCase().trim();
+const hasGeocoding = geoProviderLower === 'nominatim' || 
+                    (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim() !== '') || 
+                    (LOCATIONIQ_API_KEY && LOCATIONIQ_API_KEY.trim() !== '');
 
 if (!hasGeocoding) {
-  console.error('ERROR: Geocoding service not configured. Set GEOCODING_PROVIDER=nominatim (free) or provide GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY');
+  console.error('[Webserver] ERROR: Geocoding service not configured.');
+  console.error('[Webserver] Please set one of the following:');
+  console.error('[Webserver]   - GEOCODING_PROVIDER=nominatim (free, recommended for testing)');
+  console.error('[Webserver]   - GOOGLE_MAPS_API_KEY=your-key-here');
+  console.error('[Webserver]   - LOCATIONIQ_API_KEY=your-key-here');
+  console.error(`[Webserver] Current GEOCODING_PROVIDER value: "${GEOCODING_PROVIDER}"`);
   process.exit(1);
 }
 
@@ -158,6 +208,229 @@ app.post('/api/config/services', async (req, res) => {
     res.json({ success: true, message: 'Configuration updated. Restart services for changes to take effect.' });
   } catch (error) {
     console.error('Error updating service config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Settings API Endpoints
+// Get all settings
+app.get('/api/settings', (req, res) => {
+  try {
+    const settings = {
+      // General
+      webserverPort: WEBSERVER_PORT,
+      botPort: BOT_PORT,
+      publicDomain: PUBLIC_DOMAIN,
+      timezone: process.env.TIMEZONE || 'America/New_York',
+      authEnabled: process.env.AUTH_ENABLED === 'true',
+      
+      // Map
+      mapCenter: {
+        lat: parseFloat(process.env.MAP_CENTER_LAT || '39.078925'),
+        lng: parseFloat(process.env.MAP_CENTER_LNG || '-76.933018')
+      },
+      mapZoom: parseInt(process.env.MAP_ZOOM || '13'),
+      defaultTimeRange: parseInt(process.env.DEFAULT_TIME_RANGE || '12'),
+      trackNewCalls: process.env.TRACK_NEW_CALLS !== 'false',
+      
+      // Audio
+      globalVolume: parseFloat(process.env.GLOBAL_VOLUME || '0.5'),
+      muteNewCalls: process.env.MUTE_NEW_CALLS === 'true',
+      autoplayEnabled: process.env.AUTOPLAY_ENABLED === 'true',
+      
+      // Geocoding
+      geocodingProvider: GEOCODING_PROVIDER || 'nominatim',
+      geocodingCity: process.env.GEOCODING_CITY || '',
+      geocodingState: process.env.GEOCODING_STATE || '',
+      geocodingCountry: process.env.GEOCODING_COUNTRY || 'us',
+      geocodingCounties: process.env.GEOCODING_COUNTIES || '',
+      
+      // Transcription
+      transcriptionMode: TRANSCRIPTION_MODE || 'local',
+      transcriptionEnabled: true, // Always enabled, but mode can vary
+      icadUrl: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : '',
+      icadPort: TRANSCRIPTION_MODE === 'icad' ? ((process.env.ICAD_URL && process.env.ICAD_URL.match(/:(\d+)/)) ? process.env.ICAD_URL.match(/:(\d+)/)[1] : '9912') : '9912',
+      icadWebUI: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : null,
+      fasterWhisperUrl: TRANSCRIPTION_MODE === 'faster-whisper' ? (process.env.FASTER_WHISPER_URL || 'http://localhost:8000') : '',
+      fasterWhisperPort: TRANSCRIPTION_MODE === 'faster-whisper' ? ((process.env.FASTER_WHISPER_URL && process.env.FASTER_WHISPER_URL.match(/:(\d+)/)) ? process.env.FASTER_WHISPER_URL.match(/:(\d+)/)[1] : '8000') : '8000',
+      
+      // AI
+      aiProvider: AI_PROVIDER || 'ollama',
+      aiEnabled: true, // Always enabled, but provider can vary
+      ollamaUrl: AI_PROVIDER === 'ollama' ? (OLLAMA_URL || 'http://localhost:11434') : '',
+      ollamaPort: AI_PROVIDER === 'ollama' ? ((OLLAMA_URL && OLLAMA_URL.match(/:(\d+)/)) ? OLLAMA_URL.match(/:(\d+)/)[1] : '11434') : '11434',
+      ollamaModel: AI_PROVIDER === 'ollama' ? (process.env.OLLAMA_MODEL || 'llama3.1:8b') : '',
+      openaiModel: AI_PROVIDER === 'openai' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : '',
+      
+      // Discord
+      discordEnabled: process.env.DISCORD_ENABLED === 'true',
+      discordChannel: process.env.DISCORD_CHANNEL_ID || '',
+      discordAISummaries: process.env.DISCORD_AI_SUMMARIES === 'true',
+      
+      // Storage
+      storageMode: STORAGE_MODE || 'local',
+      s3Endpoint: process.env.S3_ENDPOINT || '',
+      s3Bucket: process.env.S3_BUCKET || '',
+      s3Region: process.env.S3_REGION || '',
+      
+      // Display
+      heatmapIntensity: parseInt(process.env.HEATMAP_INTENSITY || '5'),
+      heatmapEnabled: process.env.HEATMAP_ENABLED === 'true',
+      maxMarkers: parseInt(process.env.MAX_MARKERS || '1000'),
+      clusterMarkers: process.env.CLUSTER_MARKERS !== 'false'
+    };
+    
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error('Error loading settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Save settings
+app.post('/api/settings', async (req, res) => {
+  try {
+    const { category, settings } = req.body;
+    const envPath = path.join(process.cwd(), '.env');
+    let envContent = '';
+    
+    // Read existing .env file
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+    }
+    
+    // Update settings based on category
+    const updates = [];
+    if (category === 'general') {
+      if (settings.webserverPort) updates.push({ key: 'WEBSERVER_PORT', value: settings.webserverPort });
+      if (settings.botPort) updates.push({ key: 'BOT_PORT', value: settings.botPort });
+      if (settings.publicDomain) updates.push({ key: 'PUBLIC_DOMAIN', value: settings.publicDomain });
+      if (settings.timezone) updates.push({ key: 'TIMEZONE', value: settings.timezone });
+      updates.push({ key: 'AUTH_ENABLED', value: settings.authEnabled ? 'true' : 'false' });
+    } else if (category === 'map') {
+      if (settings.mapCenter) {
+        updates.push({ key: 'MAP_CENTER_LAT', value: settings.mapCenter.lat });
+        updates.push({ key: 'MAP_CENTER_LNG', value: settings.mapCenter.lng });
+      }
+      if (settings.mapZoom) updates.push({ key: 'MAP_ZOOM', value: settings.mapZoom });
+      if (settings.defaultTimeRange) updates.push({ key: 'DEFAULT_TIME_RANGE', value: settings.defaultTimeRange });
+      updates.push({ key: 'TRACK_NEW_CALLS', value: settings.trackNewCalls ? 'true' : 'false' });
+    } else if (category === 'audio') {
+      if (settings.globalVolume !== undefined) updates.push({ key: 'GLOBAL_VOLUME', value: settings.globalVolume });
+      updates.push({ key: 'MUTE_NEW_CALLS', value: settings.muteNewCalls ? 'true' : 'false' });
+      updates.push({ key: 'AUTOPLAY_ENABLED', value: settings.autoplayEnabled ? 'true' : 'false' });
+    } else if (category === 'geocoding') {
+      if (settings.geocodingProvider) updates.push({ key: 'GEOCODING_PROVIDER', value: settings.geocodingProvider });
+      if (settings.geocodingCity) updates.push({ key: 'GEOCODING_CITY', value: settings.geocodingCity });
+      if (settings.geocodingState) updates.push({ key: 'GEOCODING_STATE', value: settings.geocodingState });
+      if (settings.geocodingCountry) updates.push({ key: 'GEOCODING_COUNTRY', value: settings.geocodingCountry });
+      if (settings.geocodingCounties) updates.push({ key: 'GEOCODING_COUNTIES', value: settings.geocodingCounties });
+    } else if (category === 'transcription') {
+      if (settings.transcriptionMode) {
+        const currentMode = process.env.TRANSCRIPTION_MODE || 'local';
+        updates.push({ key: 'TRANSCRIPTION_MODE', value: settings.transcriptionMode });
+        // Clear other transcription mode settings when switching
+        if (settings.transcriptionMode !== currentMode) {
+          if (settings.transcriptionMode !== 'icad') {
+            updates.push({ key: 'ICAD_URL', value: '' });
+            updates.push({ key: 'ICAD_API_KEY', value: '' });
+          }
+          if (settings.transcriptionMode !== 'faster-whisper') {
+            updates.push({ key: 'FASTER_WHISPER_URL', value: '' });
+          }
+        }
+      }
+      // Only save settings for the selected mode
+      if (settings.transcriptionMode === 'icad') {
+        // Auto-detect iCAD URL if not provided or using default
+        let icadUrl = settings.icadUrl;
+        if (!icadUrl || icadUrl === '' || icadUrl.includes('localhost') || icadUrl.includes('icad-transcribe:')) {
+          icadUrl = await detectServiceUrl('icad-transcribe', 9912, icadUrl);
+        }
+        if (icadUrl) updates.push({ key: 'ICAD_URL', value: icadUrl });
+        if (settings.icadApiKey) updates.push({ key: 'ICAD_API_KEY', value: settings.icadApiKey });
+      } else if (settings.transcriptionMode === 'faster-whisper') {
+        if (settings.fasterWhisperUrl !== undefined) updates.push({ key: 'FASTER_WHISPER_URL', value: settings.fasterWhisperUrl });
+      }
+    } else if (category === 'ai') {
+      if (settings.aiProvider) {
+        const currentProvider = process.env.AI_PROVIDER || 'ollama';
+        updates.push({ key: 'AI_PROVIDER', value: settings.aiProvider });
+        // Clear settings for disabled provider when switching
+        if (settings.aiProvider !== currentProvider) {
+          if (settings.aiProvider !== 'ollama') {
+            updates.push({ key: 'OLLAMA_URL', value: '' });
+            updates.push({ key: 'OLLAMA_MODEL', value: '' });
+          }
+        }
+      }
+      // Only save settings for the selected provider
+      if (settings.aiProvider === 'ollama') {
+        // Auto-detect Ollama URL if not provided or using default
+        let ollamaUrl = settings.ollamaUrl;
+        if (!ollamaUrl || ollamaUrl === '' || ollamaUrl.includes('localhost') || ollamaUrl.includes('ollama:')) {
+          ollamaUrl = await detectServiceUrl('ollama', 11434, ollamaUrl);
+        }
+        if (ollamaUrl) updates.push({ key: 'OLLAMA_URL', value: ollamaUrl });
+        if (settings.ollamaModel) updates.push({ key: 'OLLAMA_MODEL', value: settings.ollamaModel });
+      } else if (settings.aiProvider === 'openai') {
+        if (settings.openaiModel) updates.push({ key: 'OPENAI_MODEL', value: settings.openaiModel });
+        if (settings.openaiApiKey) updates.push({ key: 'OPENAI_API_KEY', value: settings.openaiApiKey });
+      }
+    } else if (category === 'discord') {
+      updates.push({ key: 'DISCORD_ENABLED', value: settings.discordEnabled ? 'true' : 'false' });
+      if (settings.discordChannel) updates.push({ key: 'DISCORD_CHANNEL_ID', value: settings.discordChannel });
+      updates.push({ key: 'DISCORD_AI_SUMMARIES', value: settings.discordAISummaries ? 'true' : 'false' });
+      if (settings.discordToken) updates.push({ key: 'DISCORD_TOKEN', value: settings.discordToken });
+    } else if (category === 'storage') {
+      if (settings.storageMode) updates.push({ key: 'STORAGE_MODE', value: settings.storageMode });
+      if (settings.s3Endpoint !== undefined) updates.push({ key: 'S3_ENDPOINT', value: settings.s3Endpoint });
+      if (settings.s3Bucket !== undefined) updates.push({ key: 'S3_BUCKET', value: settings.s3Bucket });
+      if (settings.s3Region !== undefined) updates.push({ key: 'S3_REGION', value: settings.s3Region });
+      if (settings.s3AccessKey) updates.push({ key: 'S3_ACCESS_KEY', value: settings.s3AccessKey });
+      if (settings.s3SecretKey) updates.push({ key: 'S3_SECRET_KEY', value: settings.s3SecretKey });
+    } else if (category === 'display') {
+      if (settings.heatmapIntensity) updates.push({ key: 'HEATMAP_INTENSITY', value: settings.heatmapIntensity });
+      updates.push({ key: 'HEATMAP_ENABLED', value: settings.heatmapEnabled ? 'true' : 'false' });
+      if (settings.maxMarkers) updates.push({ key: 'MAX_MARKERS', value: settings.maxMarkers });
+      updates.push({ key: 'CLUSTER_MARKERS', value: settings.clusterMarkers ? 'true' : 'false' });
+    } else if (category === 'api-keys') {
+      if (settings.googleMapsKey) updates.push({ key: 'GOOGLE_MAPS_API_KEY', value: settings.googleMapsKey });
+      if (settings.locationiqKey) updates.push({ key: 'LOCATIONIQ_API_KEY', value: settings.locationiqKey });
+    }
+    
+    // Update .env file
+    updates.forEach(({ key, value }) => {
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${value}`);
+      } else {
+        envContent += `\n${key}=${value}`;
+      }
+    });
+    
+    fs.writeFileSync(envPath, envContent);
+    
+    res.json({ success: true, message: `${category} settings saved. Restart required for some changes.` });
+  } catch (error) {
+    console.error('Error saving settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get API keys (masked)
+app.get('/api/settings/api-keys', (req, res) => {
+  try {
+    const keys = {
+      'Google Maps': GOOGLE_MAPS_API_KEY || null,
+      'LocationIQ': LOCATIONIQ_API_KEY || null,
+      'OpenAI': OPENAI_API_KEY || null,
+      'Discord': process.env.DISCORD_TOKEN || null
+    };
+    
+    res.json({ success: true, keys });
+  } catch (error) {
+    console.error('Error loading API keys:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -360,18 +633,192 @@ app.post('/api/location/detect', async (req, res) => {
   }
 });
 
+// Helper function to check if running in Docker
+function isRunningInDocker() {
+  try {
+    // Check for .dockerenv file
+    if (fs.existsSync('/.dockerenv')) {
+      return true;
+    }
+    // Check cgroup (Linux)
+    if (fs.existsSync('/proc/self/cgroup')) {
+      const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+      if (cgroup.includes('docker') || cgroup.includes('containerd')) {
+        return true;
+      }
+    }
+    // Check environment variables
+    if (process.env.DOCKER_CONTAINER === 'true' || process.env.container === 'docker') {
+      return true;
+    }
+    return false;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Detect service location and return appropriate URL
+ * Handles: Docker-to-Docker, Local-to-Docker, Local-to-Local
+ * @param {string} serviceName - 'ollama' or 'icad-transcribe'
+ * @param {number} defaultPort - Default port (11434 for Ollama, 9912 for iCAD)
+ * @param {string} currentUrl - Current configured URL (if any)
+ * @returns {Promise<string>} Appropriate URL for the service
+ */
+async function detectServiceUrl(serviceName, defaultPort, currentUrl = null) {
+  // If URL is explicitly provided and is remote, use it
+  if (currentUrl && !currentUrl.includes('localhost') && !currentUrl.includes(serviceName + ':')) {
+    return currentUrl;
+  }
+  
+  const scannerMapInDocker = isRunningInDocker();
+  
+  // Check if service is running in Docker (same compose network)
+  let serviceInDocker = false;
+  if (scannerMapInDocker) {
+    // We're in Docker, check if service container exists in same network
+    try {
+      const { execSync } = require('child_process');
+      const os = require('os');
+      // Try to resolve service name (works in Docker networks)
+      if (os.platform() === 'win32') {
+        // Windows: Try nslookup or ping
+        try {
+          execSync(`ping -n 1 ${serviceName}`, { 
+            stdio: 'ignore',
+            timeout: 2000
+          });
+          serviceInDocker = true;
+        } catch (err) {
+          // Try getent on WSL/Linux containers
+          try {
+            execSync(`getent hosts ${serviceName}`, { 
+              stdio: 'ignore',
+              timeout: 2000
+            });
+            serviceInDocker = true;
+          } catch (err2) {
+            serviceInDocker = false;
+          }
+        }
+      } else {
+        // Linux/Mac: Use getent
+        try {
+          execSync(`getent hosts ${serviceName}`, { 
+            stdio: 'ignore',
+            timeout: 2000
+          });
+          serviceInDocker = true;
+        } catch (err) {
+          serviceInDocker = false;
+        }
+      }
+    } catch (err) {
+      // Service not found in Docker network, might be local or different network
+      serviceInDocker = false;
+    }
+  } else {
+    // We're running locally, check if service is in Docker
+    try {
+      const { execSync } = require('child_process');
+      // Check if Docker container exists and is running
+      const containerName = execSync(`docker ps --filter "name=${serviceName}" --format "{{.Names}}"`, {
+        stdio: 'pipe',
+        timeout: 2000,
+        encoding: 'utf8'
+      }).trim();
+      if (containerName && containerName.includes(serviceName)) {
+        serviceInDocker = true;
+      }
+    } catch (err) {
+      // Docker not available or container not running
+      serviceInDocker = false;
+    }
+  }
+  
+  // Determine appropriate URL
+  if (scannerMapInDocker && serviceInDocker) {
+    // Docker-to-Docker: Use service name (Docker network DNS)
+    return `http://${serviceName}:${defaultPort}`;
+  } else if (!scannerMapInDocker && serviceInDocker) {
+    // Local-to-Docker: Use localhost (Docker port mapping)
+    return `http://localhost:${defaultPort}`;
+  } else {
+    // Local-to-Local or fallback: Use localhost
+    return `http://localhost:${defaultPort}`;
+  }
+}
+
+/**
+ * Auto-configure service URLs based on detected environment
+ * Updates .env file with appropriate URLs
+ */
+async function autoConfigureServiceUrls() {
+  try {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) {
+      return; // No .env file to update
+    }
+    
+    let envContent = fs.readFileSync(envPath, 'utf8');
+    let updated = false;
+    
+    // Auto-configure Ollama URL if not set or using default
+    if (process.env.AI_PROVIDER === 'ollama') {
+      const currentOllamaUrl = process.env.OLLAMA_URL || '';
+      if (!currentOllamaUrl || currentOllamaUrl.includes('localhost') || currentOllamaUrl.includes('ollama:')) {
+        const detectedUrl = await detectServiceUrl('ollama', 11434, currentOllamaUrl);
+        if (detectedUrl !== currentOllamaUrl) {
+          envContent = envContent.replace(/^OLLAMA_URL=.*$/m, `OLLAMA_URL=${detectedUrl}`);
+          if (!envContent.includes('OLLAMA_URL=')) {
+            envContent += `\nOLLAMA_URL=${detectedUrl}\n`;
+          }
+          updated = true;
+          process.env.OLLAMA_URL = detectedUrl;
+        }
+      }
+    }
+    
+    // Auto-configure iCAD URL if not set or using default
+    if (process.env.TRANSCRIPTION_MODE === 'icad') {
+      const currentIcadUrl = process.env.ICAD_URL || '';
+      if (!currentIcadUrl || currentIcadUrl.includes('localhost') || currentIcadUrl.includes('icad-transcribe:')) {
+        const detectedUrl = await detectServiceUrl('icad-transcribe', 9912, currentIcadUrl);
+        if (detectedUrl !== currentIcadUrl) {
+          envContent = envContent.replace(/^ICAD_URL=.*$/m, `ICAD_URL=${detectedUrl}`);
+          if (!envContent.includes('ICAD_URL=')) {
+            envContent += `\nICAD_URL=${detectedUrl}\n`;
+          }
+          updated = true;
+          process.env.ICAD_URL = detectedUrl;
+        }
+      }
+    }
+    
+    if (updated) {
+      fs.writeFileSync(envPath, envContent);
+      console.log('[Webserver] Auto-configured service URLs based on detected environment');
+    }
+  } catch (error) {
+    console.warn('[Webserver] Could not auto-configure service URLs:', error.message);
+  }
+}
+
 // System Status API Endpoints
 // Get system status (Docker, Node.js, Python availability)
 app.get('/api/system/status', (req, res) => {
   try {
     const DependencyInstaller = require('./scripts/installer/dependency-installer');
     const dependencyInstaller = new DependencyInstaller();
+    const runningInDocker = isRunningInDocker();
     
     const status = {
       docker: {
         installed: dependencyInstaller.isInstalled('docker'),
         dockerCompose: dependencyInstaller.isDockerComposeInstalled(),
-        daemonRunning: dependencyInstaller.isDockerDaemonRunning()
+        daemonRunning: dependencyInstaller.isDockerDaemonRunning(),
+        // If running in Docker, we can't install Docker from inside the container
+        canInstall: !runningInDocker
       },
       nodejs: {
         installed: dependencyInstaller.isNodeInstalled(),
@@ -386,8 +833,74 @@ app.get('/api/system/status', (req, res) => {
         version: dependencyInstaller.isPythonInstalled() ? 
           (execSync('python3 --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 
            execSync('python --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()) : null
+      },
+      runningInDocker: isRunningInDocker(),
+      // Service status checks
+      services: {
+        ollama: {
+          installed: false,
+          running: false,
+          url: null
+        },
+        fasterWhisper: {
+          installed: false,
+          running: false
+        },
+        icadTranscribe: {
+          installed: false,
+          running: false,
+          url: null
+        }
       }
     };
+    
+    // Check service status
+    try {
+      // Check Ollama
+      try {
+        const ollamaCheck = execSync('curl -s http://localhost:11434/api/tags || echo "not_running"', { 
+          encoding: 'utf8', 
+          timeout: 2000,
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+        if (ollamaCheck && !ollamaCheck.includes('not_running')) {
+          status.services.ollama.installed = true;
+          status.services.ollama.running = true;
+          status.services.ollama.url = 'http://localhost:11434';
+        }
+      } catch (err) {
+        // Ollama not running locally
+      }
+      
+      // Check iCAD Transcribe
+      try {
+        const icadCheck = execSync('curl -s http://localhost:9912/health || echo "not_running"', { 
+          encoding: 'utf8', 
+          timeout: 2000,
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+        if (icadCheck && !icadCheck.includes('not_running')) {
+          status.services.icadTranscribe.installed = true;
+          status.services.icadTranscribe.running = true;
+          status.services.icadTranscribe.url = 'http://localhost:9912';
+        }
+      } catch (err) {
+        // iCAD not running locally
+      }
+      
+      // Check faster-whisper (Python package)
+      try {
+        execSync('python3 -c "import faster_whisper" 2>/dev/null || python -c "import faster_whisper" 2>/dev/null', { 
+          stdio: 'ignore',
+          timeout: 2000
+        });
+        status.services.fasterWhisper.installed = true;
+      } catch (err) {
+        // faster-whisper not installed
+      }
+    } catch (err) {
+      // Ignore service check errors
+    }
     
     res.json({ success: true, status });
   } catch (error) {
@@ -865,6 +1378,20 @@ app.get('/api/radio/detect-software', (req, res) => {
 // TrunkRecorder Auto-Configuration API Endpoint
 app.post('/api/radio/configure-trunkrecorder', async (req, res) => {
   try {
+    // Check SDR compatibility first
+    const SDRDetector = require('./scripts/installer/sdr-detector');
+    const sdrDetector = new SDRDetector();
+    await sdrDetector.detectDevices();
+    const recommendedDevice = sdrDetector.getRecommendedDevice();
+    const sdrCompat = sdrDetector.getSDRCompatibility(recommendedDevice);
+    
+    if (!sdrCompat.supported && !recommendedDevice.isDefault) {
+      return res.status(400).json({
+        success: false,
+        error: sdrCompat.reason || `Detected SDR device "${recommendedDevice.name}" is not supported by TrunkRecorder`
+      });
+    }
+    
     const { preview = false } = req.body;
     
     // Determine config path (check both project root appdata and user appdata)
@@ -990,13 +1517,30 @@ app.post('/api/radio/configure-trunkrecorder', async (req, res) => {
       ? Math.round(freqValues.reduce((a, b) => a + b, 0) / freqValues.length)
       : 850000000;
     
+    // Auto-detect SDR device
+    let deviceConfig = {
+      driver: 'osmosdr',
+      device: 'rtl=0',
+      deviceString: 'rtl=0'
+    };
+    
+    try {
+      const SDRDetector = require('./scripts/installer/sdr-detector');
+      const detector = new SDRDetector();
+      const recommendedDevice = await detector.getRecommendedDevice();
+      deviceConfig = recommendedDevice;
+      console.log(`[TrunkRecorder Config] Auto-detected SDR device: ${recommendedDevice.name} (${recommendedDevice.driver}, ${recommendedDevice.device})`);
+    } catch (err) {
+      console.warn(`[TrunkRecorder Config] Could not auto-detect SDR device: ${err.message}, using default RTL-SDR`);
+    }
+    
     // Generate config
     const config = {
       ver: 2,
       sources: [
         {
-          driver: 'osmosdr',
-          device: 'rtl=0',
+          driver: deviceConfig.driver || 'osmosdr',
+          device: deviceConfig.device || deviceConfig.deviceString || 'rtl=0',
           center: centerFreq,
           rate: 2048000,
           gain: 30,
@@ -1395,6 +1939,580 @@ app.post('/api/system/install-python', async (req, res) => {
   }
 });
 
+// Install Ollama (non-Docker)
+app.post('/api/system/install-ollama', async (req, res) => {
+  try {
+    // Check GPU compatibility first
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const gpuDetector = new GPUDetector();
+    const allGPUs = await gpuDetector.detectAllGPUs();
+    
+    if (allGPUs.primary) {
+      const compat = gpuDetector.getServiceGPUCompatibility('ollama', allGPUs.primary.brand);
+      const { useDocker = false } = req.body;
+      const isDocker = isRunningInDocker() || useDocker;
+      
+      if (isDocker && !compat.docker) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `Ollama Docker installation not supported with ${allGPUs.primary.brand.toUpperCase()} GPU`
+        });
+      }
+      
+      if (!isDocker && !compat.local) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `Ollama local installation not supported with ${allGPUs.primary.brand.toUpperCase()} GPU`
+        });
+      }
+    }
+    
+    const { useDocker = false } = req.body;
+    const isDocker = isRunningInDocker() || useDocker;
+    
+    const jobId = `ollama-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'ollama',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    const installOllama = async () => {
+      const job = installationJobs.get(jobId);
+      try {
+        if (isDocker) {
+          // Update progress
+          if (job) {
+            job.progress = 10;
+            job.output.push('Adding Ollama service to docker-compose.yml...');
+          }
+          
+          // Add to docker-compose.yml
+          const DockerComposeBuilder = require('./scripts/installer/docker-compose-builder');
+          const composeBuilder = new DockerComposeBuilder(process.cwd());
+          
+          // Check if GPU should be enabled
+          const envPath = path.join(process.cwd(), '.env');
+          let enableGPU = false;
+          if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            enableGPU = /DOCKER_GPU_ENABLED\s*=\s*true/i.test(envContent);
+          }
+          
+          const addResult = await composeBuilder.addService('ollama', enableGPU);
+          if (!addResult.success) {
+            return { success: false, error: `Failed to add Ollama to docker-compose.yml: ${addResult.error}` };
+          }
+          
+          if (job) {
+            job.progress = 30;
+            job.output.push('Pulling Ollama Docker image...');
+          }
+          
+          // Pull Docker image with progress
+          const { spawn } = require('child_process');
+          const dockerCmd = process.platform === 'win32' ? 'docker' : 'docker';
+          const pullProcess = spawn(dockerCmd, ['pull', 'ollama/ollama:latest'], {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+          
+          let pullOutput = '';
+          pullProcess.stdout.on('data', (data) => {
+            pullOutput += data.toString();
+            if (job) {
+              // Try to extract progress from Docker pull output
+              const progressMatch = data.toString().match(/(\d+(\.\d+)?%)/);
+              if (progressMatch) {
+                const percent = parseFloat(progressMatch[1]);
+                job.progress = Math.min(30 + (percent * 0.6), 90); // 30-90% for pull
+              }
+              job.output.push(data.toString().trim());
+            }
+          });
+          
+          pullProcess.stderr.on('data', (data) => {
+            pullOutput += data.toString();
+            if (job) {
+              job.output.push(data.toString().trim());
+            }
+          });
+          
+          await new Promise((resolve, reject) => {
+            pullProcess.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`Docker pull failed with code ${code}`));
+              }
+            });
+            pullProcess.on('error', reject);
+          });
+          
+          if (job) {
+            job.progress = 95;
+            job.output.push('Starting Ollama container...');
+          }
+          
+          // Start the service using docker compose
+          // Use the same project name as scanner-map if it exists
+          const composeCmd = process.platform === 'win32' ? 'docker' : 'docker';
+          const composeProject = (await (async () => {
+            try {
+              const composePath = path.join(process.cwd(), 'docker-compose.yml');
+              if (fs.existsSync(composePath)) {
+                const composeContent = fs.readFileSync(composePath, 'utf8');
+                const yaml = require('js-yaml');
+                const compose = yaml.load(composeContent);
+                return compose.name || 'scanner-map';
+              }
+            } catch (err) {
+              // Ignore errors
+            }
+            return 'scanner-map';
+          })());
+          
+          const startArgs = ['compose', 'up', '-d', 'ollama'];
+          if (composeProject !== 'scanner-map') {
+            startArgs.push('--project-name', composeProject);
+          }
+          
+          const startProcess = spawn(composeCmd, startArgs, {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+          
+          await new Promise((resolve, reject) => {
+            startProcess.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`Failed to start Ollama container`));
+              }
+            });
+            startProcess.on('error', reject);
+          });
+          
+          return { success: true, message: 'Ollama installed and started successfully' };
+        } else {
+          // Install Ollama locally
+          const { execSync } = require('child_process');
+          const os = require('os');
+          const platform = os.platform();
+          
+          if (platform === 'win32') {
+            // Windows: Download and install Ollama
+            execSync('powershell -Command "Invoke-WebRequest -Uri https://ollama.com/download/windows -OutFile ollama-installer.exe"', { stdio: 'inherit' });
+            return { success: true, message: 'Ollama installer downloaded. Please run ollama-installer.exe to complete installation.' };
+          } else if (platform === 'linux') {
+            // Linux: Install via script
+            execSync('curl -fsSL https://ollama.com/install.sh | sh', { stdio: 'inherit' });
+            return { success: true, message: 'Ollama installed successfully. Start it with: ollama serve' };
+          } else if (platform === 'darwin') {
+            // macOS: Install via Homebrew or download
+            try {
+              execSync('brew install ollama', { stdio: 'inherit' });
+              return { success: true, message: 'Ollama installed via Homebrew. Start it with: ollama serve' };
+            } catch (err) {
+              return { success: false, error: 'Please install Ollama manually from https://ollama.com/download' };
+            }
+          }
+        }
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    };
+    
+    installOllama()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting Ollama installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install faster-whisper (Python package)
+app.post('/api/system/install-faster-whisper', async (req, res) => {
+  try {
+    // Check GPU compatibility first - faster-whisper works with NVIDIA or CPU
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const gpuDetector = new GPUDetector();
+    const allGPUs = await gpuDetector.detectAllGPUs();
+    
+    if (allGPUs.primary) {
+      const compat = gpuDetector.getServiceGPUCompatibility('faster-whisper', allGPUs.primary.brand);
+      
+      if (!compat.supported) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `faster-whisper requires NVIDIA GPU or CPU. Detected: ${allGPUs.primary.brand.toUpperCase()} ${allGPUs.primary.name}`
+        });
+      }
+    }
+    // Note: faster-whisper can work on CPU, so we don't require GPU
+    
+    const jobId = `faster-whisper-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'faster-whisper',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    const installFasterWhisper = async () => {
+      const job = installationJobs.get(jobId);
+      try {
+        if (job) {
+          job.progress = 10;
+          job.output.push('Checking Python installation...');
+        }
+        
+        const { spawn } = require('child_process');
+        // Try python3 first, then python
+        let pythonCmd = 'python3';
+        try {
+          execSync('python3 --version', { stdio: 'ignore' });
+        } catch (err) {
+          try {
+            execSync('python --version', { stdio: 'ignore' });
+            pythonCmd = 'python';
+          } catch (err2) {
+            return { success: false, error: 'Python not found. Please install Python 3.10+ first.' };
+          }
+        }
+        
+        if (job) {
+          job.progress = 20;
+          job.output.push(`Using Python: ${pythonCmd}`);
+          job.output.push('Installing faster-whisper (this may take several minutes)...');
+        }
+        
+        // Install faster-whisper with progress tracking
+        return new Promise((resolve, reject) => {
+          const installProcess = spawn(pythonCmd, ['-m', 'pip', 'install', 'faster-whisper'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            shell: process.platform === 'win32'
+          });
+          
+          let output = '';
+          installProcess.stdout.on('data', (data) => {
+            output += data.toString();
+            if (job) {
+              job.output.push(data.toString().trim());
+              // Estimate progress (pip install is hard to track precisely)
+              if (job.progress < 80) {
+                job.progress = Math.min(job.progress + 5, 80);
+              }
+            }
+          });
+          
+          installProcess.stderr.on('data', (data) => {
+            output += data.toString();
+            if (job) {
+              job.output.push(data.toString().trim());
+            }
+          });
+          
+          installProcess.on('close', (code) => {
+            if (code === 0) {
+              if (job) {
+                job.progress = 100;
+              }
+              resolve({ success: true, message: 'faster-whisper installed successfully' });
+            } else {
+              reject(new Error(`Installation failed with code ${code}: ${output}`));
+            }
+          });
+          
+          installProcess.on('error', (err) => {
+            reject(new Error(`Failed to start installation: ${err.message}`));
+          });
+        });
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    };
+    
+    (async () => {
+      try {
+        const result = await installFasterWhisper();
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      } catch (error) {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.progress = 100;
+          job.error = error.message;
+        }
+      }
+    })();
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting faster-whisper installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install iCAD Transcribe
+app.post('/api/system/install-icad-transcribe', async (req, res) => {
+  try {
+    // Check GPU compatibility first - iCAD requires NVIDIA
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const gpuDetector = new GPUDetector();
+    const allGPUs = await gpuDetector.detectAllGPUs();
+    
+    if (allGPUs.primary) {
+      const compat = gpuDetector.getServiceGPUCompatibility('icad', allGPUs.primary.brand);
+      const { useDocker = false } = req.body;
+      const isDocker = isRunningInDocker() || useDocker;
+      
+      if (!compat.supported) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `iCAD Transcribe requires NVIDIA GPU. Detected: ${allGPUs.primary.brand.toUpperCase()} ${allGPUs.primary.name}`
+        });
+      }
+      
+      if (isDocker && !compat.docker) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `iCAD Transcribe Docker installation not supported with ${allGPUs.primary.brand.toUpperCase()} GPU`
+        });
+      }
+      
+      if (!isDocker && !compat.local) {
+        return res.status(400).json({
+          success: false,
+          error: compat.reason || `iCAD Transcribe local installation not supported with ${allGPUs.primary.brand.toUpperCase()} GPU`
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'iCAD Transcribe requires NVIDIA GPU. No GPU detected.'
+      });
+    }
+    
+    const { useDocker = false } = req.body;
+    const isDocker = isRunningInDocker() || useDocker;
+    
+    const jobId = `icad-transcribe-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'icad-transcribe',
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start installation asynchronously
+    const installICAD = async () => {
+      const job = installationJobs.get(jobId);
+      try {
+        if (isDocker) {
+          // Update progress
+          if (job) {
+            job.progress = 10;
+            job.output.push('Adding iCAD Transcribe service to docker-compose.yml...');
+          }
+          
+          // Add to docker-compose.yml
+          const DockerComposeBuilder = require('./scripts/installer/docker-compose-builder');
+          const composeBuilder = new DockerComposeBuilder(process.cwd());
+          
+          // Check if GPU should be enabled
+          const envPath = path.join(process.cwd(), '.env');
+          let enableGPU = false;
+          if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            enableGPU = /DOCKER_GPU_ENABLED\s*=\s*true/i.test(envContent);
+          }
+          
+          const addResult = await composeBuilder.addService('icad-transcribe', enableGPU);
+          if (!addResult.success) {
+            return { success: false, error: `Failed to add iCAD Transcribe to docker-compose.yml: ${addResult.error}` };
+          }
+          
+          if (job) {
+            job.progress = 30;
+            job.output.push('Pulling iCAD Transcribe Docker image...');
+          }
+          
+          // Pull Docker image with progress
+          const { spawn } = require('child_process');
+          const dockerCmd = process.platform === 'win32' ? 'docker' : 'docker';
+          const pullProcess = spawn(dockerCmd, ['pull', 'thegreatcodeholio/icad_transcribe:1.0'], {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+          
+          let pullOutput = '';
+          pullProcess.stdout.on('data', (data) => {
+            pullOutput += data.toString();
+            if (job) {
+              // Try to extract progress from Docker pull output
+              const progressMatch = data.toString().match(/(\d+(\.\d+)?%)/);
+              if (progressMatch) {
+                const percent = parseFloat(progressMatch[1]);
+                job.progress = Math.min(30 + (percent * 0.6), 90); // 30-90% for pull
+              }
+              job.output.push(data.toString().trim());
+            }
+          });
+          
+          pullProcess.stderr.on('data', (data) => {
+            pullOutput += data.toString();
+            if (job) {
+              job.output.push(data.toString().trim());
+            }
+          });
+          
+          await new Promise((resolve, reject) => {
+            pullProcess.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`Docker pull failed with code ${code}`));
+              }
+            });
+            pullProcess.on('error', reject);
+          });
+          
+          if (job) {
+            job.progress = 95;
+            job.output.push('Starting iCAD Transcribe container...');
+          }
+          
+          // Start the service using docker compose
+          // Use the same project name as scanner-map if it exists
+          const composeCmd = process.platform === 'win32' ? 'docker' : 'docker';
+          const composeProject = (await (async () => {
+            try {
+              const composePath = path.join(process.cwd(), 'docker-compose.yml');
+              if (fs.existsSync(composePath)) {
+                const composeContent = fs.readFileSync(composePath, 'utf8');
+                const yaml = require('js-yaml');
+                const compose = yaml.load(composeContent);
+                return compose.name || 'scanner-map';
+              }
+            } catch (err) {
+              // Ignore errors
+            }
+            return 'scanner-map';
+          })());
+          
+          const startArgs = ['compose', 'up', '-d', 'icad-transcribe'];
+          if (composeProject !== 'scanner-map') {
+            startArgs.push('--project-name', composeProject);
+          }
+          
+          const startProcess = spawn(composeCmd, startArgs, {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+          
+          await new Promise((resolve, reject) => {
+            startProcess.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`Failed to start iCAD Transcribe container`));
+              }
+            });
+            startProcess.on('error', reject);
+          });
+          
+          return { success: true, message: 'iCAD Transcribe installed and started successfully' };
+        } else {
+          // Install iCAD Transcribe locally (Python package)
+          const { execSync } = require('child_process');
+          let pythonCmd = 'python3';
+          try {
+            execSync('python3 --version', { stdio: 'ignore' });
+          } catch (err) {
+            try {
+              execSync('python --version', { stdio: 'ignore' });
+              pythonCmd = 'python';
+            } catch (err2) {
+              return { success: false, error: 'Python not found. Please install Python 3.10+ first.' };
+            }
+          }
+          
+          // Install icad-transcribe
+          execSync(`${pythonCmd} -m pip install icad-transcribe`, { stdio: 'inherit' });
+          return { success: true, message: 'iCAD Transcribe installed. Start it with: icad-transcribe serve' };
+        }
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    };
+    
+    installICAD()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting iCAD Transcribe installation:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get installation status
 app.get('/api/system/install-status/:jobId', (req, res) => {
   const { jobId } = req.params;
@@ -1414,25 +2532,280 @@ app.get('/api/system/install-status/:jobId', (req, res) => {
   res.json({ success: true, job });
 });
 
+// Model Recommendations and Pulling API Endpoints
+// Get model recommendations based on hardware
+app.get('/api/models/recommendations', async (req, res) => {
+  try {
+    const GPUDetector = require('./scripts/installer/gpu-detector');
+    const ModelRecommendations = require('./scripts/installer/model-recommendations');
+    const gpuDetector = new GPUDetector();
+    
+    // Detect GPU and VRAM
+    const allGPUs = await gpuDetector.detectAllGPUs();
+    let vramGB = 0;
+    let hasGPU = false;
+    
+    if (allGPUs.primary && allGPUs.primary.brand === 'nvidia') {
+      hasGPU = true;
+      try {
+        vramGB = await ModelRecommendations.detectGPUMemory();
+      } catch (err) {
+        // Default to 8GB if can't detect
+        vramGB = 8;
+      }
+    }
+    
+    const recommendations = ModelRecommendations.getCompleteRecommendations(vramGB, hasGPU);
+    
+    res.json({
+      success: true,
+      recommendations: recommendations,
+      hardware: {
+        hasGPU: hasGPU,
+        gpuInfo: allGPUs.primary,
+        vramGB: vramGB
+      }
+    });
+  } catch (error) {
+    console.error('Error getting model recommendations:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Pull Ollama model
+app.post('/api/models/pull-ollama', async (req, res) => {
+  try {
+    const { modelName } = req.body;
+    if (!modelName) {
+      return res.status(400).json({ success: false, error: 'Model name is required' });
+    }
+    
+    const jobId = `ollama-pull-${Date.now()}`;
+    installationJobs.set(jobId, {
+      id: jobId,
+      type: 'ollama-pull',
+      model: modelName,
+      status: 'running',
+      progress: 0,
+      output: [],
+      error: null,
+      startedAt: new Date()
+    });
+    
+    // Start pulling asynchronously
+    const pullModel = async () => {
+      const job = installationJobs.get(jobId);
+      try {
+        if (job) {
+          job.progress = 5;
+          job.output.push(`Starting pull of Ollama model: ${modelName}`);
+        }
+        
+        const isDocker = isRunningInDocker();
+        let pullCommand;
+        
+        if (isDocker) {
+          // Pull via Docker exec
+          pullCommand = ['exec', '-i', 'ollama', 'ollama', 'pull', modelName];
+        } else {
+          // Pull locally
+          pullCommand = ['pull', modelName];
+        }
+        
+        const { spawn } = require('child_process');
+        const ollamaCmd = isDocker ? 'docker' : 'ollama';
+        const pullProcess = spawn(ollamaCmd, pullCommand, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          cwd: process.cwd()
+        });
+        
+        let output = '';
+        pullProcess.stdout.on('data', (data) => {
+          output += data.toString();
+          if (job) {
+            const line = data.toString().trim();
+            job.output.push(line);
+            // Try to extract progress from Ollama output
+            if (line.includes('%')) {
+              const progressMatch = line.match(/(\d+(\.\d+)?)%/);
+              if (progressMatch) {
+                const percent = parseFloat(progressMatch[1]);
+                job.progress = Math.min(5 + (percent * 0.9), 95);
+              }
+            }
+          }
+        });
+        
+        pullProcess.stderr.on('data', (data) => {
+          output += data.toString();
+          if (job) {
+            job.output.push(data.toString().trim());
+          }
+        });
+        
+        await new Promise((resolve, reject) => {
+          pullProcess.on('close', (code) => {
+            if (code === 0) {
+              if (job) {
+                job.progress = 100;
+                job.output.push('Model pulled successfully!');
+              }
+              resolve();
+            } else {
+              reject(new Error(`Pull failed with code ${code}: ${output}`));
+            }
+          });
+          pullProcess.on('error', reject);
+        });
+        
+        return { success: true, message: `Model ${modelName} pulled successfully` };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    };
+    
+    pullModel()
+      .then(result => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = result.success ? 'completed' : 'failed';
+          job.progress = 100;
+          job.result = result;
+          if (!result.success) {
+            job.error = result.error;
+          }
+        }
+      })
+      .catch(error => {
+        const job = installationJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = error.message;
+        }
+      });
+    
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error('Error starting Ollama model pull:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get service status (running/stopped)
+app.get('/api/services/status', async (req, res) => {
+  try {
+    const { spawn } = require('child_process');
+    const status = {
+      ollama: { running: false, url: null, models: [] },
+      icad: { running: false, url: null },
+      fasterWhisper: { installed: false }
+    };
+    
+    // Check Ollama
+    try {
+      const isDocker = isRunningInDocker();
+      let checkCmd;
+      if (isDocker) {
+        checkCmd = ['exec', 'ollama', 'ollama', 'list'];
+      } else {
+        checkCmd = ['list'];
+      }
+      
+      const ollamaProcess = spawn(isDocker ? 'docker' : 'ollama', checkCmd, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 5000
+      });
+      
+      let ollamaOutput = '';
+      ollamaProcess.stdout.on('data', (data) => {
+        ollamaOutput += data.toString();
+      });
+      
+      await new Promise((resolve) => {
+        ollamaProcess.on('close', (code) => {
+          if (code === 0) {
+            status.ollama.running = true;
+            status.ollama.url = process.env.OLLAMA_URL || 'http://localhost:11434';
+            // Parse models from output
+            const lines = ollamaOutput.split('\n').filter(l => l.trim() && !l.includes('NAME'));
+            status.ollama.models = lines.map(line => {
+              const parts = line.trim().split(/\s+/);
+              return parts[0];
+            }).filter(m => m);
+          }
+          resolve();
+        });
+        ollamaProcess.on('error', () => resolve());
+        setTimeout(() => resolve(), 6000);
+      });
+    } catch (err) {
+      // Ollama not running
+    }
+    
+    // Check iCAD Transcribe
+    try {
+      const icadUrl = process.env.ICAD_URL || 'http://localhost:9912';
+      const response = await fetch(`${icadUrl}/api/health`, {
+        method: 'GET',
+        timeout: 3000
+      });
+      if (response.ok) {
+        status.icad.running = true;
+        status.icad.url = icadUrl;
+      }
+    } catch (err) {
+      // iCAD not running
+    }
+    
+    // Check faster-whisper (Python package)
+    try {
+      const { execSync } = require('child_process');
+      execSync('python3 -c "import faster_whisper; print(\'OK\')"', { 
+        stdio: 'ignore',
+        timeout: 3000
+      });
+      status.fasterWhisper.installed = true;
+    } catch (err) {
+      // Not installed
+    }
+    
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error checking service status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GPU Configuration API Endpoints
 // Get GPU status
 app.get('/api/system/gpu-status', async (req, res) => {
   try {
     const GPUDetector = require('./scripts/installer/gpu-detector');
     const gpuDetector = new GPUDetector();
-    const gpuInfo = await gpuDetector.detectNvidiaGPU();
+    const allGPUs = await gpuDetector.detectAllGPUs();
     
     let toolkitCheck = null;
-    if (gpuInfo.available && process.platform === 'linux') {
+    if (allGPUs.primary && allGPUs.primary.brand === 'nvidia' && process.platform === 'linux') {
       toolkitCheck = await gpuDetector.checkNvidiaContainerToolkit();
+    }
+    
+    // Check service compatibility
+    const serviceCompatibility = {};
+    if (allGPUs.primary) {
+      ['ollama', 'icad', 'faster-whisper'].forEach(service => {
+        const compat = gpuDetector.getServiceGPUCompatibility(service, allGPUs.primary.brand);
+        serviceCompatibility[service] = compat;
+      });
     }
     
     res.json({
       success: true,
-      available: gpuInfo.available,
-      name: gpuInfo.name || null,
+      available: allGPUs.available,
+      primary: allGPUs.primary,
+      brands: allGPUs.brands,
       toolkitInstalled: toolkitCheck?.installed || false,
-      toolkitVersion: toolkitCheck?.version || null
+      toolkitVersion: toolkitCheck?.version || null,
+      serviceCompatibility: serviceCompatibility
     });
   } catch (error) {
     console.error('Error checking GPU status:', error);
@@ -1440,7 +2813,7 @@ app.get('/api/system/gpu-status', async (req, res) => {
   }
 });
 
-// Configure GPU (enable/disable in .env)
+// Configure GPU (enable/disable in .env and rebuild docker-compose)
 app.post('/api/system/configure-gpu', async (req, res) => {
   try {
     const { enabled } = req.body;
@@ -1451,6 +2824,7 @@ app.post('/api/system/configure-gpu', async (req, res) => {
       envContent = fs.readFileSync(envPath, 'utf8');
     }
     
+    // Update DOCKER_GPU_ENABLED
     const varName = 'DOCKER_GPU_ENABLED';
     const regex = new RegExp(`^${varName}=.*$`, 'm');
     if (regex.test(envContent)) {
@@ -1459,7 +2833,80 @@ app.post('/api/system/configure-gpu', async (req, res) => {
       envContent += `\n${varName}=${enabled ? 'true' : 'false'}\n`;
     }
     
+    // If GPU is enabled and TRANSCRIPTION_MODE is local, set TRANSCRIPTION_DEVICE to cuda
+    // Only update if NVIDIA GPU is actually available (faster-whisper requires CUDA)
+    if (enabled) {
+      const GPUDetector = require('./scripts/installer/gpu-detector');
+      const gpuDetector = new GPUDetector();
+      const allGPUs = await gpuDetector.detectAllGPUs();
+      
+      // Only set CUDA if NVIDIA GPU is detected
+      if (allGPUs.primary && allGPUs.primary.brand === 'nvidia') {
+        // Check if TRANSCRIPTION_MODE is local
+        const transcriptionModeMatch = envContent.match(/^TRANSCRIPTION_MODE=(.+)$/m);
+        const transcriptionMode = transcriptionModeMatch ? transcriptionModeMatch[1].trim() : 'local';
+        
+        if (transcriptionMode === 'local') {
+          // Update TRANSCRIPTION_DEVICE to cuda
+          const deviceRegex = /^TRANSCRIPTION_DEVICE=.*$/m;
+          if (deviceRegex.test(envContent)) {
+            envContent = envContent.replace(deviceRegex, 'TRANSCRIPTION_DEVICE=cuda');
+          } else {
+            envContent += '\nTRANSCRIPTION_DEVICE=cuda\n';
+          }
+        }
+      }
+    } else {
+      // If GPU is disabled and TRANSCRIPTION_DEVICE is cuda, set it back to cpu
+      const deviceRegex = /^TRANSCRIPTION_DEVICE=.*$/m;
+      if (deviceRegex.test(envContent)) {
+        const currentDevice = envContent.match(/^TRANSCRIPTION_DEVICE=(.+)$/m);
+        if (currentDevice && currentDevice[1].trim() === 'cuda') {
+          envContent = envContent.replace(deviceRegex, 'TRANSCRIPTION_DEVICE=cpu');
+        }
+      }
+    }
+    
     fs.writeFileSync(envPath, envContent, 'utf8');
+    
+    // Rebuild docker-compose.yml if Docker is being used
+    try {
+      const dockerComposePath = path.join(__dirname, 'docker-compose.yml');
+      if (fs.existsSync(dockerComposePath)) {
+        const DockerComposeBuilder = require('./scripts/installer/docker-compose-builder');
+        const builder = new DockerComposeBuilder(__dirname);
+        
+        // Read current .env to get service configuration
+        const dotenv = require('dotenv');
+        const envConfig = dotenv.parse(envContent);
+        
+        // Determine which services are enabled
+        const services = {
+          // Check if services should be enabled (local containers vs remote)
+          enableOllama: envConfig.AI_PROVIDER === 'ollama' && (!envConfig.OLLAMA_URL || envConfig.OLLAMA_URL.includes('localhost') || envConfig.OLLAMA_URL.includes('ollama:')),
+          enableICAD: envConfig.TRANSCRIPTION_MODE === 'icad' && (!envConfig.ICAD_URL || envConfig.ICAD_URL.includes('localhost') || envConfig.ICAD_URL.includes('icad-transcribe:')),
+          // Auto-detect service URLs for web UI
+          detectedOllamaUrl: envConfig.OLLAMA_URL ? null : (isRunningInDocker() ? 'http://ollama:11434' : 'http://localhost:11434'),
+          detectedIcadUrl: envConfig.ICAD_URL ? null : (isRunningInDocker() ? 'http://icad-transcribe:9912' : 'http://localhost:9912'),
+          enableTrunkRecorder: false, // Don't auto-enable TrunkRecorder
+          enableRdioScanner: false,
+          enableOP25: false,
+          radioSoftware: 'none',
+          transcriptionMode: envConfig.TRANSCRIPTION_MODE || 'local',
+          timezone: envConfig.TIMEZONE || 'America/New_York',
+          enableGPU: enabled,
+          ollamaUrl: envConfig.OLLAMA_URL || null,
+          icadUrl: envConfig.ICAD_URL || null
+        };
+        
+        await builder.build(services);
+        console.log('[GPU] Docker Compose rebuilt with GPU configuration');
+      }
+    } catch (rebuildError) {
+      console.warn('[GPU] Could not rebuild docker-compose.yml:', rebuildError.message);
+      // Don't fail the request if rebuild fails
+    }
+    
     res.json({ success: true, message: 'GPU configuration updated. Restart Docker services for changes to take effect.' });
   } catch (error) {
     console.error('Error configuring GPU:', error);
@@ -2791,16 +4238,43 @@ setInterval(checkForLiveFeedCalls, 2500); // Poll for live feed slightly offset,
 // --- End Polling Logic ---
 
 // Server Startup
-server.listen(WEBSERVER_PORT, () => {
-  console.log(`Web server running on port ${WEBSERVER_PORT}`);
-  console.log(`Audio URL base: http://${PUBLIC_DOMAIN}:${WEBSERVER_PORT}/audio/`);
+console.log(`[Webserver] Starting server on port ${portNum}...`);
+
+// Handle server errors (must be set before listen)
+server.on('error', (err) => {
+  console.error(`[Webserver] ERROR: Failed to start server on port ${portNum}:`, err.message);
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Webserver] Port ${portNum} is already in use. Please:`);
+    console.error(`[Webserver]   1. Stop the process using port ${portNum}`);
+    console.error(`[Webserver]   2. Or change WEBSERVER_PORT in .env file`);
+  } else if (err.code === 'EACCES') {
+    console.error(`[Webserver] Permission denied binding to port ${portNum}.`);
+    console.error(`[Webserver] On Linux/macOS, ports <1024 require root privileges.`);
+    console.error(`[Webserver] Please use a port >= 1024 or run with appropriate permissions.`);
+  }
+  process.exit(1);
+});
+
+server.listen(portNum, () => {
+  console.log(`[Webserver] ✓ Web server running on port ${portNum}`);
+  console.log(`[Webserver] ✓ Audio URL base: http://${PUBLIC_DOMAIN}:${portNum}/audio/`);
+  console.log(`[Webserver] ✓ Web UI accessible at: http://${PUBLIC_DOMAIN}:${portNum}/`);
   
   if (authEnabled) {
-    console.log('Authentication: ENABLED');
-    console.log(`Session duration: ${SESSION_DURATION / (24 * 60 * 60 * 1000)} days`);
-    console.log(`Max sessions per user: ${MAX_SESSIONS}`);
+    console.log('[Webserver] Authentication: ENABLED');
+    console.log(`[Webserver] Session duration: ${SESSION_DURATION / (24 * 60 * 60 * 1000)} days`);
+    console.log(`[Webserver] Max sessions per user: ${MAX_SESSIONS}`);
   } else {
-    console.log('Authentication: DISABLED');
+    console.log('[Webserver] Authentication: DISABLED');
+  }
+  
+  // Log geocoding provider status
+  if (geoProviderLower === 'nominatim') {
+    console.log('[Webserver] Geocoding provider: Nominatim (free, public service)');
+  } else if (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim() !== '') {
+    console.log('[Webserver] Geocoding provider: Google Maps');
+  } else if (LOCATIONIQ_API_KEY && LOCATIONIQ_API_KEY.trim() !== '') {
+    console.log('[Webserver] Geocoding provider: LocationIQ');
   }
 });
 
