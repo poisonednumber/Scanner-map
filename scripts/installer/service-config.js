@@ -46,6 +46,7 @@ class ServiceConfig {
       : 'http://localhost:3306/api/call-upload';
 
     const config = {
+      ver: 2,  // Required: Config format version 2
       sources: [
         {
           type: 'rtl_sdr',
@@ -59,7 +60,10 @@ class ServiceConfig {
           id: 1,
           name: 'Your System',
           control_channels: [851.0125, 851.5125],
-          type: 'p25'
+          type: 'p25',
+          modulation: 'qpsk',  // Moved from Source to System in v2
+          squelch: -50,  // Moved from Source to System in v2
+          audioGain: 1.0  // Moved from Source to System in v2
         }
       ],
       uploadServer: {
@@ -111,20 +115,72 @@ class ServiceConfig {
     if (shouldUpdate) {
       try {
         const existing = await fs.readJSON(configPath);
+        
+        // Ensure version 2 is set
+        if (!existing.ver || existing.ver !== 2) {
+          existing.ver = 2;
+        }
+        
+        // Update upload server
         if (!existing.uploadServer) {
           existing.uploadServer = {};
         }
         existing.uploadServer.apiKey = generatedApiKey;
         existing.uploadServer.url = uploadUrl;
         existing.uploadServer.type = 'rdio-scanner';
+        
+        // Migrate systems to v2 format if needed (add modulation, squelch, audioGain if missing)
+        if (existing.systems && Array.isArray(existing.systems)) {
+          existing.systems.forEach(system => {
+            if (!system.modulation) {
+              system.modulation = 'qpsk';  // Default for P25
+            }
+            if (system.squelch === undefined) {
+              system.squelch = -50;  // Default squelch
+            }
+            if (system.audioGain === undefined) {
+              system.audioGain = 1.0;  // Default audio gain
+            }
+          });
+        }
+        
         await fs.writeJSON(configPath, existing, { spaces: 2 });
         return { updated: true, path: configPath, apiKey: generatedApiKey };
       } catch (err) {
-        // If update fails, recreate the file
+        // If update fails, recreate the file with v2 format
         console.warn(`Warning: Could not update TrunkRecorder config, recreating: ${err.message}`);
         await fs.writeJSON(configPath, config, { spaces: 2 });
         return { recreated: true, path: configPath, apiKey: generatedApiKey };
       }
+    }
+    
+    // Check if existing file needs version update
+    try {
+      const existing = await fs.readJSON(configPath);
+      if (!existing.ver || existing.ver !== 2) {
+        // Update to version 2
+        existing.ver = 2;
+        
+        // Migrate systems to v2 format
+        if (existing.systems && Array.isArray(existing.systems)) {
+          existing.systems.forEach(system => {
+            if (!system.modulation) {
+              system.modulation = 'qpsk';
+            }
+            if (system.squelch === undefined) {
+              system.squelch = -50;
+            }
+            if (system.audioGain === undefined) {
+              system.audioGain = 1.0;
+            }
+          });
+        }
+        
+        await fs.writeJSON(configPath, existing, { spaces: 2 });
+        return { migrated: true, path: configPath, apiKey: existing.uploadServer?.apiKey || generatedApiKey };
+      }
+    } catch (err) {
+      // Ignore errors when checking existing file
     }
 
     // File exists and is valid - return existing API key if present

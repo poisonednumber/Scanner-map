@@ -2,6 +2,27 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
+## [3.0.10] - 2024-12-20
+
+### TrunkRecorder Configuration Fix
+
+### Fixed
+- **TrunkRecorder Config Format v2**
+  - Fixed TrunkRecorder Docker container not starting due to missing `"ver": 2` field
+  - Updated config structure to comply with TrunkRecorder v2 format requirements
+  - Moved `modulation`, `squelch`, and `audioGain` from Source to System (v2 requirement)
+  - Added automatic migration logic to upgrade existing configs to v2 format
+  - Updated example config file to v2 format
+
+### Changed
+- **TrunkRecorder Config Generation**
+  - All new configs now include `"ver": 2` at the top
+  - System objects now include `modulation: 'qpsk'`, `squelch: -50`, and `audioGain: 1.0` by default
+  - Existing configs are automatically migrated to v2 format when updated
+  - Config validation ensures v2 format compliance
+
+---
+
 ## [3.0.9] - 2024-12-20
 
 ### Installer Logging and Comprehensive Testing
