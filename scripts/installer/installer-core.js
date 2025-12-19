@@ -419,6 +419,99 @@ class InstallerCore {
 
     if (!result.success) {
       console.log(chalk.red(`\n❌ Setup failed: ${result.error}`));
+      
+      // If npm install failed due to PATH issue, offer to restart
+      if (result.needsRestart || (result.details && result.details.includes('restart'))) {
+        console.log(chalk.blue.bold('\n🔄 Node.js/npm was just installed.'));
+        console.log(chalk.blue('   The installer needs to be restarted for the new PATH to take effect.\n'));
+        
+        const { restart } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'restart',
+          message: chalk.bold('Would you like to restart the installer now?'),
+          default: true
+        }]);
+        
+        if (restart) {
+          // Ask if user wants to update installer from repo before restarting
+          const { updateInstaller } = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'updateInstaller',
+            message: chalk.bold('Update installer from repository before restarting?'),
+            default: true
+          }]);
+          
+          if (updateInstaller) {
+            console.log(chalk.blue('\n📥 Updating installer from repository...\n'));
+            try {
+              const { execSync } = require('child_process');
+              // Check if we're in a git repository
+              try {
+                execSync('git rev-parse --git-dir', { 
+                  cwd: this.projectRoot, 
+                  stdio: 'ignore' 
+                });
+                
+                // Pull latest changes
+                console.log(chalk.gray('   Pulling latest changes...'));
+                execSync('git pull', {
+                  cwd: this.projectRoot,
+                  stdio: 'inherit'
+                });
+                console.log(chalk.green('   ✓ Installer updated successfully\n'));
+              } catch (gitErr) {
+                console.log(chalk.yellow('   ⚠ Not a git repository or git pull failed'));
+                console.log(chalk.gray('   Continuing with restart...\n'));
+              }
+            } catch (err) {
+              console.log(chalk.yellow(`   ⚠ Update failed: ${err.message}`));
+              console.log(chalk.gray('   Continuing with restart...\n'));
+            }
+          }
+          
+          console.log(chalk.blue('🔄 Restarting installer...\n'));
+          console.log(chalk.gray('   Please wait a moment for Node.js to be available in PATH...\n'));
+          
+          // Wait a bit for PATH to update (especially on Windows)
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Try to restart the installer
+          const path = require('path');
+          const { spawn } = require('child_process');
+          
+          // On Windows, try to use cmd.exe to get fresh PATH
+          if (process.platform === 'win32') {
+            const installerScript = path.join(__dirname, 'installer-core.js');
+            const child = spawn('cmd.exe', ['/c', 'node', installerScript], {
+              cwd: this.projectRoot,
+              stdio: 'inherit',
+              detached: true,
+              shell: true
+            });
+            child.unref();
+          } else {
+            // On Unix-like systems, try to refresh PATH
+            const installerScript = path.join(__dirname, 'installer-core.js');
+            const child = spawn('bash', ['-c', `source ~/.bashrc 2>/dev/null || true; node "${installerScript}"`], {
+              cwd: this.projectRoot,
+              stdio: 'inherit',
+              detached: true
+            });
+            child.unref();
+          }
+          
+          process.exit(0);
+        } else {
+          console.log(chalk.yellow('\n⚠️  Please restart the installer manually after Node.js is available in your PATH.'));
+          console.log(chalk.cyan('   Run the installer again:'));
+          if (process.platform === 'win32') {
+            console.log(chalk.cyan('      install.bat'));
+          } else {
+            console.log(chalk.cyan('      bash install.sh'));
+          }
+        }
+      }
+      
       process.exit(1);
     }
 
@@ -466,6 +559,104 @@ class InstallerCore {
         console.log(chalk.red('❌ Prerequisites still missing:\n'));
         prerequisites.errors.forEach(err => console.log(chalk.red(`   • ${err}`)));
         console.log(chalk.yellow('\n💡 You may need to restart your terminal after installing dependencies.'));
+        
+        // Check if Node.js/npm was just installed
+        const nodeJustInstalled = installResult.installed && installResult.installed.some(item => 
+          item.includes('Node.js') || item.includes('npm')
+        );
+        
+        if (nodeJustInstalled) {
+          console.log(chalk.blue.bold('\n🔄 Node.js/npm was just installed.'));
+          console.log(chalk.blue('   The installer needs to be restarted for the new PATH to take effect.\n'));
+          
+          const { restart } = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'restart',
+            message: chalk.bold('Would you like to restart the installer now?'),
+            default: true
+          }]);
+          
+          if (restart) {
+            // Ask if user wants to update installer from repo before restarting
+            const { updateInstaller } = await inquirer.prompt([{
+              type: 'confirm',
+              name: 'updateInstaller',
+              message: chalk.bold('Update installer from repository before restarting?'),
+              default: true
+            }]);
+            
+            if (updateInstaller) {
+              console.log(chalk.blue('\n📥 Updating installer from repository...\n'));
+              try {
+                const { execSync } = require('child_process');
+                // Check if we're in a git repository
+                try {
+                  execSync('git rev-parse --git-dir', { 
+                    cwd: this.projectRoot, 
+                    stdio: 'ignore' 
+                  });
+                  
+                  // Pull latest changes
+                  console.log(chalk.gray('   Pulling latest changes...'));
+                  execSync('git pull', {
+                    cwd: this.projectRoot,
+                    stdio: 'inherit'
+                  });
+                  console.log(chalk.green('   ✓ Installer updated successfully\n'));
+                } catch (gitErr) {
+                  console.log(chalk.yellow('   ⚠ Not a git repository or git pull failed'));
+                  console.log(chalk.gray('   Continuing with restart...\n'));
+                }
+              } catch (err) {
+                console.log(chalk.yellow(`   ⚠ Update failed: ${err.message}`));
+                console.log(chalk.gray('   Continuing with restart...\n'));
+              }
+            }
+            
+            console.log(chalk.blue('🔄 Restarting installer...\n'));
+            console.log(chalk.gray('   Please wait a moment for Node.js to be available in PATH...\n'));
+            
+            // Wait a bit for PATH to update (especially on Windows)
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Try to restart the installer
+            const path = require('path');
+            const { spawn } = require('child_process');
+            
+            // On Windows, try to use cmd.exe to get fresh PATH
+            if (process.platform === 'win32') {
+              const installerScript = path.join(__dirname, 'installer-core.js');
+              const child = spawn('cmd.exe', ['/c', 'node', installerScript], {
+                cwd: this.projectRoot,
+                stdio: 'inherit',
+                detached: true,
+                shell: true
+              });
+              child.unref();
+            } else {
+              // On Unix-like systems, try to refresh PATH
+              const installerScript = path.join(__dirname, 'installer-core.js');
+              const child = spawn('bash', ['-c', `source ~/.bashrc 2>/dev/null || true; node "${installerScript}"`], {
+                cwd: this.projectRoot,
+                stdio: 'inherit',
+                detached: true
+              });
+              child.unref();
+            }
+            
+            process.exit(0);
+          } else {
+            console.log(chalk.yellow('\n⚠️  Please restart the installer manually after Node.js is available in your PATH.'));
+            console.log(chalk.cyan('   Run the installer again:'));
+            if (process.platform === 'win32') {
+              console.log(chalk.cyan('      install.bat'));
+            } else {
+              console.log(chalk.cyan('      bash install.sh'));
+            }
+            return { success: false };
+          }
+        }
+        
         return { success: false };
       }
     }

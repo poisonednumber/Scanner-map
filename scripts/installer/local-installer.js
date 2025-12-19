@@ -76,12 +76,31 @@ class LocalInstaller {
    */
   async installDependencies() {
     try {
+      // First check if npm is available
+      try {
+        execSync('npm --version', { stdio: 'ignore' });
+      } catch (err) {
+        return {
+          success: false,
+          error: 'npm not found in PATH. Node.js may have been just installed - please restart the installer.',
+          needsRestart: true
+        };
+      }
+      
       execSync('npm install', {
         cwd: this.projectRoot,
         stdio: 'inherit'
       });
       return { success: true };
     } catch (err) {
+      // Check if it's a PATH issue
+      if (err.message && (err.message.includes('not found') || err.message.includes('ENOENT'))) {
+        return {
+          success: false,
+          error: 'npm not found in PATH. Node.js may have been just installed - please restart the installer.',
+          needsRestart: true
+        };
+      }
       return {
         success: false,
         error: err.message
@@ -107,6 +126,13 @@ class LocalInstaller {
     // Install npm dependencies
     const depsResult = await this.installDependencies();
     if (!depsResult.success) {
+      if (depsResult.needsRestart) {
+        return {
+          success: false,
+          error: depsResult.error,
+          needsRestart: true
+        };
+      }
       return {
         success: false,
         error: 'Failed to install npm dependencies',
