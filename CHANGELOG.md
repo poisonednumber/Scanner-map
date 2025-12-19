@@ -2,7 +2,48 @@
 
 All notable changes to Scanner Map will be documented in this file.
 
-## [Unreleased] - 2024-12-XX
+## [3.0.0] - 2024-12-18
+
+### Major Documentation Overhaul
+
+Complete restructure of documentation and repository cleanup.
+
+### Added
+- **Modular documentation structure** in `docs/` folder:
+  - `INSTALLATION.md` - Detailed setup for all platforms
+  - `CONFIGURATION.md` - Complete `.env` settings reference
+  - `DOCKER.md` - Docker Compose and service configuration
+  - `TRANSCRIPTION.md` - Local, remote, OpenAI, iCAD modes
+  - `GEOCODING.md` - Nominatim, LocationIQ, Google Maps setup
+  - `DISCORD.md` - Bot creation and configuration
+  - `RADIO-SOFTWARE.md` - SDRTrunk & TrunkRecorder integration
+  - `TROUBLESHOOTING.md` - Common issues and solutions
+- `.env.example` - Complete configuration template with all options documented
+- `.cursorignore` and `.cursorrules` - Development workflow optimization
+- `.dockerignore` - Optimized Docker builds
+- `bin/scanner-map.js` - CLI entry point for npm global install
+
+### Changed
+- **README.md** completely rewritten as clean landing page with quick start
+- Version bumped to 3.0.0
+
+### Removed
+- `INSTALLATION_METHODS.md` (merged into docs/)
+- `INSTALLER_IMPROVEMENTS.md` (development notes)
+- `INSTALLER_WALKTHROUGH.md` (merged into docs/)
+- `SERVICE_SETUP_GUIDES.md` (merged into docs/)
+- `TESTING_GUIDE.md` (development notes)
+- `USB_CONFIGURATION_WINDOWS.md` (merged into docs/)
+- `TRUNKRECORDER_ATTRIBUTION.md` (moved to README acknowledgments)
+- `Windows installer/` folder (replaced by unified installer)
+- `Linux installer/` folder (replaced by unified installer)
+- `install-test/` folder (test directory)
+- `Scanner-map/` folder (duplicate)
+- Backup files (`*-fixed.js`)
+
+---
+
+## [2.9.1] - Previous Release
 
 ### Docker & Installation Improvements
 
