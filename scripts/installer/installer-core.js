@@ -14,6 +14,8 @@ const DockerInstaller = require('./docker-installer');
 const LocalInstaller = require('./local-installer');
 const DependencyInstaller = require('./dependency-installer');
 const GPUDetector = require('./gpu-detector');
+const ModelRecommendations = require('./model-recommendations');
+const WhisperDownloader = require('./whisper-downloader');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -61,6 +63,7 @@ class InstallerCore {
     this.localInstaller = new LocalInstaller(projectRoot);
     this.dependencyInstaller = new DependencyInstaller();
     this.gpuDetector = new GPUDetector();
+    this.whisperDownloader = new WhisperDownloader(projectRoot);
   }
 
   /**
@@ -292,6 +295,19 @@ class InstallerCore {
       result = await this.dockerInstaller.install(config);
     } else {
       result = await this.localInstaller.install(config);
+      
+      // Pre-download Whisper model for local installations
+      if (config.transcriptionMode === 'local' && config.whisperModel) {
+        console.log(chalk.blue('\n📥 Pre-downloading Whisper model...\n'));
+        const downloadResult = await this.whisperDownloader.downloadModel(
+          config.whisperModel,
+          config.transcriptionDevice || 'cpu'
+        );
+        if (!downloadResult.success && !downloadResult.skip) {
+          console.log(chalk.yellow(`⚠ Could not pre-download model: ${downloadResult.error}`));
+          console.log(chalk.gray('   Model will be downloaded automatically on first transcription.\n'));
+        }
+      }
     }
 
     if (!result.success) {
@@ -488,6 +504,19 @@ class InstallerCore {
 
     // Local transcription options
     if (transcriptionMode === 'local') {
+      // Detect GPU and recommend model
+      const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
+      let vramGB = 8; // Default
+      let recommendedWhisper = 'small';
+      
+      if (gpuInfo.available) {
+        vramGB = await ModelRecommendations.detectGPUMemory();
+        const whisperRec = ModelRecommendations.getWhisperModel(vramGB);
+        recommendedWhisper = whisperRec.recommended;
+        console.log(chalk.blue(`   💡 Detected ${vramGB}GB GPU - Recommended: ${whisperRec.recommended} model`));
+        console.log(chalk.gray(`      ${whisperRec.description} (${whisperRec.vramUsage} VRAM)\n`));
+      }
+
       const localAnswers = await inquirer.prompt([
         {
           type: 'list',
@@ -495,22 +524,22 @@ class InstallerCore {
           message: 'Hardware:',
           choices: [
             { name: '🖥️  CPU - Works everywhere, slower', value: 'cpu' },
-            { name: '🎮 CUDA - Much faster (NVIDIA GPU required)', value: 'cuda' }
+            { name: '🎮 CUDA - Much faster (NVIDIA GPU required)', value: 'cuda', disabled: !gpuInfo.available && 'No NVIDIA GPU detected' }
           ],
-          default: 'cpu'
+          default: gpuInfo.available ? 'cuda' : 'cpu'
         },
         {
           type: 'list',
           name: 'whisperModel',
-          message: 'Model size:',
+          message: 'Whisper model size:',
           choices: [
-            { name: 'tiny - Fastest, basic accuracy', value: 'tiny' },
-            { name: 'base - Good for low-end hardware', value: 'base' },
-            { name: 'small - Recommended (default)', value: 'small' },
-            { name: 'medium - Better accuracy, needs 5GB+ RAM', value: 'medium' },
-            { name: 'large-v3 - Best accuracy, needs 10GB+ RAM', value: 'large-v3' }
+            { name: `tiny - Fastest, basic accuracy (${gpuInfo.available ? '~1GB VRAM' : '~1GB RAM'})`, value: 'tiny' },
+            { name: `base - Good for low-end hardware (${gpuInfo.available ? '~1GB VRAM' : '~1GB RAM'})`, value: 'base' },
+            { name: `small - Recommended for 8GB GPU (${gpuInfo.available ? '~2-3GB VRAM' : '~2GB RAM'}) ⭐`, value: 'small' },
+            { name: `medium - Better accuracy (${gpuInfo.available ? '~5-6GB VRAM' : '~5GB RAM'})`, value: 'medium', disabled: vramGB < 8 && gpuInfo.available && 'Needs 8GB+ VRAM' },
+            { name: `large-v3 - Best accuracy (${gpuInfo.available ? '~10GB+ VRAM' : '~10GB+ RAM'})`, value: 'large-v3', disabled: vramGB < 16 && gpuInfo.available && 'Needs 16GB+ VRAM' }
           ],
-          default: 'small'
+          default: recommendedWhisper
         }
       ]);
       Object.assign(config, localAnswers);
@@ -589,20 +618,52 @@ class InstallerCore {
       ]);
       Object.assign(config, openaiAnswers);
     } else {
+      // Detect GPU and recommend Ollama model
+      const gpuInfo = await this.gpuDetector.detectNvidiaGPU();
+      let vramGB = 8; // Default
+      let recommendedOllama = DEFAULTS.OLLAMA_MODEL;
+      
+      if (gpuInfo.available) {
+        vramGB = await ModelRecommendations.detectGPUMemory();
+        const ollamaRec = ModelRecommendations.getOllamaModel(vramGB);
+        recommendedOllama = ollamaRec.recommended;
+        console.log(chalk.blue(`   💡 Detected ${vramGB}GB GPU - Recommended: ${ollamaRec.recommended}`));
+        console.log(chalk.gray(`      ${ollamaRec.description} (${ollamaRec.vramUsage} VRAM, ${ollamaRec.speed} speed)\n`));
+      }
+
       const ollamaAnswers = await inquirer.prompt([
         {
-          type: 'input',
+          type: 'list',
           name: 'ollamaModel',
           message: 'Ollama model:',
-          default: DEFAULTS.OLLAMA_MODEL
+          choices: [
+            { name: `llama3.1:8b - Best for 8GB GPU (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'}) ⭐`, value: 'llama3.1:8b' },
+            { name: `mistral:7b - Faster, smaller (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' },
+            { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : 'Not recommended'})`, value: 'llama3.1:70b', disabled: vramGB < 16 && gpuInfo.available && 'Needs 16GB+ VRAM' },
+            { name: 'Custom model name', value: 'custom' }
+          ],
+          default: recommendedOllama
         }
       ]);
+
+      if (ollamaAnswers.ollamaModel === 'custom') {
+        const { customModel } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'customModel',
+            message: 'Enter Ollama model name (e.g., llama3.1:8b):',
+            default: DEFAULTS.OLLAMA_MODEL,
+            validate: input => input.trim().length > 0 || 'Model name is required'
+          }
+        ]);
+        ollamaAnswers.ollamaModel = customModel;
+      }
+
       Object.assign(config, ollamaAnswers);
       
       console.log(chalk.gray(`\n   📝 Ollama will be available at: ${SERVICE_URLS[installationType].ollama}`));
       if (installationType === 'docker') {
-        console.log(chalk.gray(`   📝 Ollama container included - pull model after startup:`));
-        console.log(chalk.gray(`      docker exec ollama ollama pull ${ollamaAnswers.ollamaModel}`));
+        console.log(chalk.gray(`   📝 Model will be automatically pulled after installation.`));
       }
     }
 
@@ -1098,9 +1159,10 @@ class InstallerCore {
       console.log(chalk.white('   Start Scanner Map:'));
       console.log(chalk.cyan('     docker-compose up -d\n'));
 
+      // Model pulling is now automatic, but show command as reference
       if (config.aiProvider === 'ollama') {
-        console.log(chalk.white('   Pull Ollama model (first time only):'));
-        console.log(chalk.cyan(`     docker exec ollama ollama pull ${config.ollamaModel}\n`));
+        console.log(chalk.white('   Ollama model will be pulled automatically after services start.'));
+        console.log(chalk.gray(`   (Manual: docker exec ollama ollama pull ${config.ollamaModel})\n`));
       }
     } else {
       console.log(chalk.white('   Start Scanner Map:'));
@@ -1172,6 +1234,19 @@ class InstallerCore {
         const startResult = await this.dockerInstaller.startServices();
         if (startResult.success) {
           console.log(chalk.green('✓ Services started!\n'));
+          
+          // Automatically pull Ollama model if using Ollama
+          if (config.aiProvider === 'ollama' && config.ollamaModel) {
+            console.log(chalk.blue('📥 Pulling Ollama model (this may take a few minutes)...\n'));
+            const pullResult = await this.dockerInstaller.pullOllamaModel(config.ollamaModel);
+            if (!pullResult.success) {
+              console.log(chalk.yellow(`⚠ Could not auto-pull model: ${pullResult.error}`));
+              if (pullResult.manualCommand) {
+                console.log(chalk.gray(`   Run manually: ${pullResult.manualCommand}`));
+              }
+            }
+          }
+          
           console.log(chalk.cyan.bold('🌐 Open Scanner Map: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
           if (config.transcriptionMode === 'icad' || config.enableICAD) {
             console.log(chalk.cyan.bold('🎤 Open iCAD:        ') + chalk.underline(`http://localhost:${DEFAULTS.ICAD_PORT}`));
@@ -1179,6 +1254,15 @@ class InstallerCore {
         } else {
           console.log(chalk.yellow(`⚠ Could not start services: ${startResult.error}`));
           console.log(chalk.gray('   Start manually: docker-compose up -d'));
+          if (config.aiProvider === 'ollama' && config.ollamaModel) {
+            console.log(chalk.gray(`   Then pull model: docker exec ollama ollama pull ${config.ollamaModel}`));
+          }
+        }
+      } else {
+        // Still show model pull command if not starting now
+        if (config.aiProvider === 'ollama' && config.ollamaModel) {
+          console.log(chalk.white('\n   After starting services, pull the Ollama model:'));
+          console.log(chalk.cyan(`     docker exec ollama ollama pull ${config.ollamaModel}\n`));
         }
       }
     }

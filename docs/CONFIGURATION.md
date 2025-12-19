@@ -90,10 +90,12 @@ OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b
 ```
 
-**Models:**
-- `llama3.1:8b` - Good balance of speed/accuracy
-- `llama3.1:70b` - Best accuracy, requires powerful hardware
-- `mistral:7b` - Fast alternative
+**Models (Recommended for 8GB GPU):**
+- `llama3.1:8b` - ⭐ **Best for 8GB GPU** - Excellent balance (~6-7GB VRAM)
+- `mistral:7b` - Faster alternative (~5GB VRAM)
+- `llama3.1:70b` - Best accuracy, requires 16GB+ VRAM
+
+**Note:** Models are automatically pulled during installation. The installer detects your GPU and recommends the best model.
 
 ---
 

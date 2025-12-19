@@ -31,15 +31,20 @@ WHISPER_MODEL=base         # See model options below
 
 ### Whisper Models
 
-| Model | Size | Speed | Accuracy | VRAM Required |
-|-------|------|-------|----------|---------------|
-| `tiny` | 39M | Fastest | Low | 1 GB |
-| `base` | 74M | Fast | Medium | 1 GB |
-| `small` | 244M | Medium | Good | 2 GB |
-| `medium` | 769M | Slow | Very Good | 5 GB |
-| `large-v3` | 1550M | Slowest | Best | 10 GB |
+| Model | Size | Speed | Accuracy | VRAM Required | Best For |
+|-------|------|-------|----------|---------------|----------|
+| `tiny` | 39M | Fastest | Low | ~1 GB | CPU, low-end |
+| `base` | 74M | Fast | Medium | ~1 GB | CPU, low-end GPU |
+| `small` | 244M | Medium | Good | ~2-3 GB | ⭐ **8GB GPU (Recommended)** |
+| `medium` | 769M | Slow | Very Good | ~5-6 GB | 8GB+ GPU |
+| `large-v3` | 1550M | Slowest | Best | ~10 GB | 16GB+ GPU |
 
-**Recommendation:** Use `base` for CPU, `small` or `medium` for GPU.
+**Recommendations:**
+- **8GB GPU:** `small` - Best balance of speed and accuracy
+- **16GB+ GPU:** `medium` or `large-v3` - Better accuracy
+- **CPU only:** `base` or `tiny` - Smaller models work better on CPU
+
+**Note:** Models are automatically downloaded during installation. The installer detects your GPU and recommends the best model.
 
 ### Python Setup
 

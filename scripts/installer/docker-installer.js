@@ -261,17 +261,22 @@ class DockerInstaller {
           cwd: this.projectRoot,
           stdio: 'pipe' // Use pipe to capture output
         });
-        return { success: true };
-      } catch (err) {
-        const errorOutput = err.stdout?.toString() || err.stderr?.toString() || err.message || '';
-        
-        // #region agent log
-        debugLog('docker-installer.js:220', 'docker compose up failed', { 
-          errorOutput: errorOutput.substring(0, 500), 
-          hasPortError: errorOutput.includes('ports are not available') || errorOutput.includes('bind:'),
-          hasTrunkRecorderError: errorOutput.includes('trunk-recorder')
-        }, 'A,B,C,D');
-        // #endregion
+      const result = { success: true };
+      
+      // Wait a moment for services to fully start
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      return result;
+    } catch (err) {
+      const errorOutput = err.stdout?.toString() || err.stderr?.toString() || err.message || '';
+      
+      // #region agent log
+      debugLog('docker-installer.js:220', 'docker compose up failed', { 
+        errorOutput: errorOutput.substring(0, 500), 
+        hasPortError: errorOutput.includes('ports are not available') || errorOutput.includes('bind:'),
+        hasTrunkRecorderError: errorOutput.includes('trunk-recorder')
+      }, 'A,B,C,D');
+      // #endregion
         
         // Check if it's a port conflict issue (Hypothesis A, B, C)
         if (errorOutput.includes('ports are not available') || 
@@ -713,6 +718,88 @@ class DockerInstaller {
       return {
         success: false,
         error: err.message
+      };
+    }
+  }
+
+  /**
+   * Pull Ollama model automatically after services start
+   */
+  async pullOllamaModel(modelName) {
+    const chalk = require('chalk');
+    
+    if (!modelName) {
+      return { success: false, error: 'Model name is required' };
+    }
+
+    try {
+      // Wait for Ollama container to be ready
+      console.log(chalk.blue('   Waiting for Ollama to be ready...'));
+      let retries = 30;
+      let ready = false;
+      
+      while (retries > 0 && !ready) {
+        try {
+          execSync('docker exec ollama ollama list', { 
+            stdio: 'ignore',
+            timeout: 5000
+          });
+          ready = true;
+        } catch (err) {
+          retries--;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (!ready) {
+        return { 
+          success: false, 
+          error: 'Ollama container not ready after 30 seconds',
+          manualCommand: `docker exec ollama ollama pull ${modelName}`
+        };
+      }
+
+      // Check if model already exists
+      try {
+        const listOutput = execSync('docker exec ollama ollama list', { 
+          encoding: 'utf8',
+          timeout: 10000
+        });
+        if (listOutput.includes(modelName)) {
+          console.log(chalk.green(`   ✓ Model ${modelName} already exists`));
+          return { success: true, alreadyExists: true };
+        }
+      } catch (err) {
+        // Continue to pull if check fails
+      }
+
+      // Pull the model
+      console.log(chalk.blue(`   Pulling Ollama model: ${modelName}...`));
+      console.log(chalk.gray('   This may take several minutes depending on your internet speed.\n'));
+      
+      const pullProcess = spawn('docker', ['exec', '-i', 'ollama', 'ollama', 'pull', modelName], {
+        stdio: 'inherit',
+        cwd: this.projectRoot
+      });
+
+      await new Promise((resolve, reject) => {
+        pullProcess.on('close', (code) => {
+          if (code === 0) {
+            console.log(chalk.green(`\n   ✓ Model ${modelName} pulled successfully!\n`));
+            resolve();
+          } else {
+            reject(new Error(`Ollama pull exited with code ${code}`));
+          }
+        });
+        pullProcess.on('error', reject);
+      });
+
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err.message,
+        manualCommand: `docker exec ollama ollama pull ${modelName}`
       };
     }
   }
