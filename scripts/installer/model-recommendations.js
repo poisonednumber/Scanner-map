@@ -66,10 +66,40 @@ class ModelRecommendations {
    * Get recommended Ollama model for GPU VRAM
    */
   static getOllamaModel(vramGB = 8) {
-    if (vramGB >= 16) {
+    if (vramGB >= 24) {
+      // 24GB+ - can handle largest models
+      return {
+        recommended: 'llama3.1:70b',
+        alternatives: ['llama3.1:8b', 'mistral:7b'],
+        description: 'Largest models for maximum accuracy',
+        vramUsage: '~12-14GB',
+        speed: 'Medium',
+        quality: 'Best'
+      };
+    } else if (vramGB >= 16) {
       return MODEL_RECOMMENDATIONS.ollama['16gb'];
+    } else if (vramGB >= 12) {
+      // 12GB - can handle 8b models comfortably
+      return {
+        recommended: 'llama3.1:8b',
+        alternatives: ['mistral:7b', 'llama3.1:8b-instruct-q4_K_M'],
+        description: 'Best balance for 12GB VRAM',
+        vramUsage: '~6-7GB',
+        speed: 'Fast',
+        quality: 'Excellent'
+      };
     } else if (vramGB >= 8) {
       return MODEL_RECOMMENDATIONS.ollama['8gb'];
+    } else if (vramGB >= 6) {
+      // 6GB - smaller quantized models
+      return {
+        recommended: 'mistral:7b',
+        alternatives: ['llama3.1:8b-instruct-q4_K_M', 'phi3:mini'],
+        description: 'Optimized for 6GB VRAM',
+        vramUsage: '~4-5GB',
+        speed: 'Fast',
+        quality: 'Good'
+      };
     } else {
       return MODEL_RECOMMENDATIONS.ollama['cpu'];
     }
@@ -81,8 +111,38 @@ class ModelRecommendations {
   static getWhisperModel(vramGB = 8) {
     if (vramGB >= 16) {
       return MODEL_RECOMMENDATIONS.whisper['16gb'];
+    } else if (vramGB >= 12) {
+      // 12GB - can handle medium comfortably
+      return {
+        recommended: 'medium',
+        alternatives: ['small', 'large-v3'],
+        description: 'Better accuracy with 12GB VRAM',
+        vramUsage: '~5-6GB',
+        speed: 'Medium',
+        accuracy: 'Very Good'
+      };
     } else if (vramGB >= 8) {
       return MODEL_RECOMMENDATIONS.whisper['8gb'];
+    } else if (vramGB >= 6) {
+      // 6GB - small model
+      return {
+        recommended: 'small',
+        alternatives: ['base', 'medium'],
+        description: 'Good for 6GB VRAM',
+        vramUsage: '~2-3GB',
+        speed: 'Fast',
+        accuracy: 'Good'
+      };
+    } else if (vramGB >= 4) {
+      // 4GB - base model
+      return {
+        recommended: 'base',
+        alternatives: ['tiny', 'small'],
+        description: 'Optimized for 4GB VRAM',
+        vramUsage: '~1GB',
+        speed: 'Fast',
+        accuracy: 'Medium'
+      };
     } else {
       return MODEL_RECOMMENDATIONS.whisper['cpu'];
     }

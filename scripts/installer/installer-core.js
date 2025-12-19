@@ -16,6 +16,8 @@ const DependencyInstaller = require('./dependency-installer');
 const GPUDetector = require('./gpu-detector');
 const ModelRecommendations = require('./model-recommendations');
 const WhisperDownloader = require('./whisper-downloader');
+const AutoStart = require('./auto-start');
+const UpdateChecker = require('./update-checker');
 
 // Default configurations for all services
 const DEFAULTS = {
@@ -64,6 +66,8 @@ class InstallerCore {
     this.dependencyInstaller = new DependencyInstaller();
     this.gpuDetector = new GPUDetector();
     this.whisperDownloader = new WhisperDownloader(projectRoot);
+    this.autoStart = new AutoStart(projectRoot);
+    this.updateChecker = new UpdateChecker(projectRoot);
   }
 
   /**
@@ -210,7 +214,12 @@ class InstallerCore {
     const integrationConfig = await this.configureIntegrations(installationType);
     console.log('');
 
-    // Step 7/8: Review and install
+    // Step 7/8: Post-installation options
+    this.printStep(currentStep++, totalSteps, 'Post-installation options');
+    const postInstallConfig = await this.configurePostInstall(installationType, {});
+    console.log('');
+
+    // Step 8/9: Review and install
     this.printStep(currentStep++, totalSteps, 'Review and install');
     
     // Build final configuration with auto-configured URLs
@@ -269,7 +278,12 @@ class InstallerCore {
       storageMode: 'local',
       enableAuth: false,
       enableMappedTalkGroups: true,
-      mappedTalkGroups: ''
+      mappedTalkGroups: '',
+      
+      // Post-installation options
+      openWebUI: postInstallConfig.openWebUI,
+      enableAutoStart: postInstallConfig.enableAutoStart,
+      enableAutoUpdate: postInstallConfig.enableAutoUpdate
     };
 
     await this.showSummary(config);
@@ -531,17 +545,33 @@ class InstallerCore {
         {
           type: 'list',
           name: 'whisperModel',
-          message: 'Whisper model size:',
+          message: `Whisper model size ${gpuInfo.available ? `(${vramGB}GB VRAM detected)` : ''}:`,
           choices: [
             { name: `tiny - Fastest, basic accuracy (${gpuInfo.available ? '~1GB VRAM' : '~1GB RAM'})`, value: 'tiny' },
             { name: `base - Good for low-end hardware (${gpuInfo.available ? '~1GB VRAM' : '~1GB RAM'})`, value: 'base' },
-            { name: `small - Recommended for 8GB GPU (${gpuInfo.available ? '~2-3GB VRAM' : '~2GB RAM'}) ⭐`, value: 'small' },
-            { name: `medium - Better accuracy (${gpuInfo.available ? '~5-6GB VRAM' : '~5GB RAM'})`, value: 'medium', disabled: vramGB < 8 && gpuInfo.available && 'Needs 8GB+ VRAM' },
-            { name: `large-v3 - Best accuracy (${gpuInfo.available ? '~10GB+ VRAM' : '~10GB+ RAM'})`, value: 'large-v3', disabled: vramGB < 16 && gpuInfo.available && 'Needs 16GB+ VRAM' }
+            { name: `small - ${gpuInfo.available && vramGB >= 6 ? '⭐ Recommended' : 'Good balance'} (${gpuInfo.available ? '~2-3GB VRAM' : '~2GB RAM'})`, value: 'small' },
+            { name: `medium - Better accuracy (${gpuInfo.available ? '~5-6GB VRAM' : '~5GB RAM'})`, value: 'medium', disabled: vramGB < 8 && gpuInfo.available && `Needs 8GB+ VRAM (you have ${vramGB}GB)` },
+            { name: `large-v3 - Best accuracy (${gpuInfo.available ? '~10GB+ VRAM' : '~10GB+ RAM'})`, value: 'large-v3', disabled: vramGB < 16 && gpuInfo.available && `Needs 16GB+ VRAM (you have ${vramGB}GB)` },
+            { name: '📝 Enter custom model name', value: 'custom' }
           ],
           default: recommendedWhisper
         }
       ]);
+
+      // Handle custom model input
+      if (localAnswers.whisperModel === 'custom') {
+        const { customModel } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'customModel',
+            message: 'Enter Whisper model name (e.g., small, medium, large-v3):',
+            default: recommendedWhisper,
+            validate: input => input.trim().length > 0 || 'Model name is required'
+          }
+        ]);
+        localAnswers.whisperModel = customModel;
+      }
+
       Object.assign(config, localAnswers);
     }
 
@@ -631,17 +661,55 @@ class InstallerCore {
         console.log(chalk.gray(`      ${ollamaRec.description} (${ollamaRec.vramUsage} VRAM, ${ollamaRec.speed} speed)\n`));
       }
 
+      // Build dynamic choices based on VRAM
+      const ollamaChoices = [];
+      
+      if (vramGB >= 24) {
+        ollamaChoices.push(
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'}) ⭐`, value: 'llama3.1:70b' },
+          { name: `llama3.1:8b - Fast alternative (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'})`, value: 'llama3.1:8b' },
+          { name: `mistral:7b - Faster (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' }
+        );
+      } else if (vramGB >= 16) {
+        ollamaChoices.push(
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'}) ⭐`, value: 'llama3.1:70b' },
+          { name: `llama3.1:8b - Fast alternative (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'})`, value: 'llama3.1:8b' },
+          { name: `mistral:7b - Faster (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' }
+        );
+      } else if (vramGB >= 12) {
+        ollamaChoices.push(
+          { name: `llama3.1:8b - Best for ${vramGB}GB GPU (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'}) ⭐`, value: 'llama3.1:8b' },
+          { name: `mistral:7b - Faster, smaller (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' },
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'})`, value: 'llama3.1:70b', disabled: 'Needs 16GB+ VRAM' }
+        );
+      } else if (vramGB >= 8) {
+        ollamaChoices.push(
+          { name: `llama3.1:8b - Best for ${vramGB}GB GPU (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'}) ⭐`, value: 'llama3.1:8b' },
+          { name: `mistral:7b - Faster, smaller (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' },
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'})`, value: 'llama3.1:70b', disabled: 'Needs 16GB+ VRAM' }
+        );
+      } else if (vramGB >= 6) {
+        ollamaChoices.push(
+          { name: `mistral:7b - Best for ${vramGB}GB GPU (${gpuInfo.available ? '~4-5GB VRAM' : '~7GB RAM'}) ⭐`, value: 'mistral:7b' },
+          { name: `llama3.1:8b - May be tight (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'})`, value: 'llama3.1:8b' },
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'})`, value: 'llama3.1:70b', disabled: 'Needs 16GB+ VRAM' }
+        );
+      } else {
+        ollamaChoices.push(
+          { name: `mistral:7b - Recommended (${gpuInfo.available ? '~4-5GB VRAM' : '~7GB RAM'}) ⭐`, value: 'mistral:7b' },
+          { name: `llama3.1:8b - May not fit (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'})`, value: 'llama3.1:8b', disabled: gpuInfo.available && `Needs 8GB+ VRAM (you have ${vramGB}GB)` },
+          { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : '~70GB RAM'})`, value: 'llama3.1:70b', disabled: 'Needs 16GB+ VRAM' }
+        );
+      }
+      
+      ollamaChoices.push({ name: '📝 Enter custom model name', value: 'custom' });
+
       const ollamaAnswers = await inquirer.prompt([
         {
           type: 'list',
           name: 'ollamaModel',
-          message: 'Ollama model:',
-          choices: [
-            { name: `llama3.1:8b - Best for 8GB GPU (${gpuInfo.available ? '~6-7GB VRAM' : '~8GB RAM'}) ⭐`, value: 'llama3.1:8b' },
-            { name: `mistral:7b - Faster, smaller (${gpuInfo.available ? '~5GB VRAM' : '~7GB RAM'})`, value: 'mistral:7b' },
-            { name: `llama3.1:70b - Best quality (${gpuInfo.available ? '~12-14GB VRAM' : 'Not recommended'})`, value: 'llama3.1:70b', disabled: vramGB < 16 && gpuInfo.available && 'Needs 16GB+ VRAM' },
-            { name: 'Custom model name', value: 'custom' }
-          ],
+          message: `Ollama model ${gpuInfo.available ? `(${vramGB}GB VRAM detected)` : ''}:`,
+          choices: ollamaChoices,
           default: recommendedOllama
         }
       ]);
@@ -1077,6 +1145,50 @@ class InstallerCore {
   }
 
   /**
+   * Configure post-installation options
+   */
+  async configurePostInstall(installationType, config) {
+    console.log(chalk.gray('   Configure what happens after installation.\n'));
+
+    const postInstallConfig = {};
+
+    // Auto-open web UI
+    const { openWebUI } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'openWebUI',
+        message: 'Open web UI in browser after installation?',
+        default: true
+      }
+    ]);
+    postInstallConfig.openWebUI = openWebUI;
+
+    // Auto-start configuration
+    const { enableAutoStart } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableAutoStart',
+        message: 'Start Scanner Map automatically on system boot?',
+        default: false
+      }
+    ]);
+    postInstallConfig.enableAutoStart = enableAutoStart;
+
+    // Auto-update check
+    const { enableAutoUpdate } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableAutoUpdate',
+        message: 'Check for updates automatically? (checks on startup)',
+        default: true
+      }
+    ]);
+    postInstallConfig.enableAutoUpdate = enableAutoUpdate;
+
+    return postInstallConfig;
+  }
+
+  /**
    * Show configuration summary
    */
   async showSummary(config) {
@@ -1145,6 +1257,40 @@ class InstallerCore {
     console.log(chalk.white(`     Discord: ${formatValue(config.enableDiscord)}`));
     console.log(chalk.white(`     TrunkRecorder: ${formatValue(config.enableTrunkRecorder)}`));
     console.log('');
+  }
+
+  /**
+   * Open web UI in browser
+   */
+  async openWebUI(port) {
+    const { exec } = require('child_process');
+    const url = `http://localhost:${port}`;
+    
+    return new Promise((resolve) => {
+      if (process.platform === 'win32') {
+        exec(`start ${url}`, (err) => {
+          if (err) {
+            console.log(chalk.yellow(`   ⚠ Could not open browser automatically. Open manually: ${url}`));
+          }
+          resolve();
+        });
+      } else if (process.platform === 'darwin') {
+        exec(`open ${url}`, (err) => {
+          if (err) {
+            console.log(chalk.yellow(`   ⚠ Could not open browser automatically. Open manually: ${url}`));
+          }
+          resolve();
+        });
+      } else {
+        // Linux
+        exec(`xdg-open ${url}`, (err) => {
+          if (err) {
+            console.log(chalk.yellow(`   ⚠ Could not open browser automatically. Open manually: ${url}`));
+          }
+          resolve();
+        });
+      }
+    });
   }
 
   /**
@@ -1247,6 +1393,11 @@ class InstallerCore {
             }
           }
           
+          // Open web UI if requested
+          if (config.openWebUI) {
+            await this.openWebUI(config.webserverPort);
+          }
+          
           console.log(chalk.cyan.bold('🌐 Open Scanner Map: ') + chalk.underline(`http://localhost:${config.webserverPort}`));
           if (config.transcriptionMode === 'icad' || config.enableICAD) {
             console.log(chalk.cyan.bold('🎤 Open iCAD:        ') + chalk.underline(`http://localhost:${DEFAULTS.ICAD_PORT}`));
@@ -1264,6 +1415,39 @@ class InstallerCore {
           console.log(chalk.white('\n   After starting services, pull the Ollama model:'));
           console.log(chalk.cyan(`     docker exec ollama ollama pull ${config.ollamaModel}\n`));
         }
+      }
+    } else {
+      // Local installation - open web UI if requested
+      if (config.openWebUI) {
+        await this.openWebUI(config.webserverPort);
+      }
+    }
+
+    // Configure auto-start
+    if (config.enableAutoStart) {
+      console.log(chalk.blue('\n⚙️  Configuring auto-start...\n'));
+      const autoStartResult = await this.autoStart.configure(installationType, config);
+      if (autoStartResult.success) {
+        if (autoStartResult.requiresSudo) {
+          console.log(chalk.yellow('   ⚠️  Auto-start requires sudo. Run these commands:'));
+          autoStartResult.commands.forEach(cmd => console.log(chalk.cyan(`     ${cmd}`)));
+          console.log('');
+        } else {
+          console.log(chalk.green('   ✓ Auto-start configured!\n'));
+        }
+      } else {
+        console.log(chalk.yellow(`   ⚠ Could not configure auto-start: ${autoStartResult.error}\n`));
+      }
+    }
+
+    // Configure auto-update check
+    if (config.enableAutoUpdate) {
+      console.log(chalk.blue('⚙️  Configuring auto-update check...\n'));
+      const updateConfigResult = await this.updateChecker.configureAutoUpdate(true);
+      if (updateConfigResult.success) {
+        console.log(chalk.green('   ✓ Auto-update check enabled!\n'));
+      } else {
+        console.log(chalk.yellow(`   ⚠ Could not configure auto-update: ${updateConfigResult.error}\n`));
       }
     }
 
