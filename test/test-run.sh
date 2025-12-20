@@ -5,7 +5,7 @@
 # Cleans up runtime files and runs the app
 # ============================================
 
-# Colors for output
+# Colors for output (defined early for error messages)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -28,6 +28,23 @@ print_warning() {
 print_error() {
     echo -e "${RED}✗${NC} $1"
 }
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Change to project root (parent directory of test/)
+cd "$SCRIPT_DIR/.." || {
+    print_error "Could not change to project root directory"
+    exit 1
+}
+
+# Verify we're in the project root by checking for key files
+if [[ ! -f "package.json" ]] && [[ ! -f "bot.js" ]]; then
+    print_error "Could not find project root directory."
+    echo "Expected to find package.json or bot.js in parent directory."
+    echo "Current directory: $(pwd)"
+    exit 1
+fi
 
 print_header() {
     echo ""
@@ -221,7 +238,7 @@ run_docker() {
     # Check if docker-compose.yml exists
     if [[ ! -f "docker-compose.yml" ]]; then
         print_error "docker-compose.yml not found"
-        echo "Please run this script from the Scanner Map project root directory."
+        echo "Project root directory does not contain docker-compose.yml."
         exit 1
     fi
     
@@ -337,7 +354,7 @@ run_local() {
     # Check if bot.js exists
     if [[ ! -f "bot.js" ]]; then
         print_error "bot.js not found"
-        echo "Please run this script from the Scanner Map project root directory."
+        echo "Project root directory does not contain bot.js."
         exit 1
     fi
     

@@ -5,6 +5,35 @@ REM Scanner Map Test Runner
 REM Cleans up runtime files and runs the app
 REM ============================================
 
+REM Get the directory where this script is located
+set "SCRIPT_DIR=%~dp0"
+
+REM Change to project root (parent directory of test/)
+cd /d "%SCRIPT_DIR%"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Could not navigate to script directory.
+    pause
+    exit /b 1
+)
+
+cd ..
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Could not navigate to project root directory.
+    pause
+    exit /b 1
+)
+
+REM Verify we're in the project root by checking for key files
+if not exist "package.json" (
+    if not exist "bot.js" (
+        echo ERROR: Could not find project root directory.
+        echo Expected to find package.json or bot.js in parent directory.
+        echo Current directory: %CD%
+        pause
+        exit /b 1
+    )
+)
+
 echo.
 echo ========================================
 echo Scanner Map Test Runner
@@ -46,7 +75,7 @@ if %errorlevel% neq 0 (
 REM Check if docker-compose.yml exists
 if not exist "docker-compose.yml" (
     echo ERROR: docker-compose.yml not found
-    echo Please run this script from the Scanner Map project root directory.
+    echo Project root directory does not contain docker-compose.yml.
     pause
     exit /b 1
 )
