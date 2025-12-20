@@ -9,6 +9,7 @@ const path = require('path');
 
 // Environment variables - strict loading from .env only
 const {
+  GEOCODING_PROVIDER = 'nominatim', // nominatim (free), locationiq (free tier), or google (paid)
   LOCATIONIQ_API_KEY = null,
   GOOGLE_MAPS_API_KEY = null, // Added for Google API support
   GEOCODING_STATE,
@@ -32,9 +33,17 @@ if (!AI_PROVIDER) {
 }
 
 if (AI_PROVIDER.toLowerCase() === 'openai') {
-    if (!OPENAI_API_KEY || !OPENAI_MODEL) {
-        console.error("FATAL: [Geocoding] AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
+    // OPENAI_MODEL should be set, but API key can be configured via web UI
+    if (!OPENAI_MODEL) {
+        console.error("FATAL: [Geocoding] AI_PROVIDER is 'openai', but OPENAI_MODEL is missing in the .env file.");
+        console.error("Please set OPENAI_MODEL in your .env file (e.g., OPENAI_MODEL=gpt-4o-mini).");
         process.exit(1);
+    }
+    // API key can be missing initially - user will configure via web UI
+    if (!OPENAI_API_KEY) {
+        console.warn("WARNING: [Geocoding] AI_PROVIDER is 'openai', but OPENAI_API_KEY is not set.");
+        console.warn("OpenAI features will not work until you configure the API key via the web UI.");
+        console.warn("The application will continue to start, but AI features will be disabled.");
     }
 } else if (AI_PROVIDER.toLowerCase() === 'ollama') {
     if (!OLLAMA_URL || !OLLAMA_MODEL) {
@@ -48,28 +57,54 @@ if (AI_PROVIDER.toLowerCase() === 'openai') {
 // --- END VALIDATION ---
 
 // Validate required environment variables
-// Check if we have at least one geocoding API key
-const hasGoogleMaps = !!GOOGLE_MAPS_API_KEY;
-const hasLocationIQ = !!LOCATIONIQ_API_KEY;
-
-if (!hasGoogleMaps && !hasLocationIQ) {
-  console.error('ERROR: At least one geocoding API key is required (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY)');
-  process.exit(1);
-}
-
-// Determine which provider to use and validate required variables
+// Determine which provider to use
+const provider = (GEOCODING_PROVIDER || '').toLowerCase();
 let geocodingProvider = null;
 
-if (hasGoogleMaps && hasLocationIQ) {
-  // Both available - prefer LocationIQ for consistency with existing setup
-  geocodingProvider = 'locationiq';
-  console.log('[Geocoding] Both Google Maps and LocationIQ available, using LocationIQ');
-} else if (hasLocationIQ) {
-  geocodingProvider = 'locationiq';
-  console.log('[Geocoding] Using LocationIQ for geocoding');
-} else if (hasGoogleMaps) {
-  geocodingProvider = 'google';
-  console.log('[Geocoding] Using Google Maps for geocoding');
+if (provider === 'nominatim') {
+  // Nominatim (OpenStreetMap) - free, no API key required
+  geocodingProvider = 'nominatim';
+  console.log('[Geocoding] Using Nominatim (OpenStreetMap) - free, no API key required');
+} else if (provider === 'locationiq') {
+  // LocationIQ - requires API key (free tier available)
+  if (!LOCATIONIQ_API_KEY) {
+    console.warn('[Geocoding] WARNING: GEOCODING_PROVIDER is set to "locationiq" but LOCATIONIQ_API_KEY is not configured.');
+    console.warn('[Geocoding] Falling back to Nominatim (free, no API key required).');
+    console.warn('[Geocoding] To use LocationIQ, get a free API key at: https://locationiq.com/');
+    console.warn('[Geocoding] Then set LOCATIONIQ_API_KEY in your .env file or via the web UI.');
+    geocodingProvider = 'nominatim'; // Fallback to nominatim instead of exiting
+  } else {
+    geocodingProvider = 'locationiq';
+    console.log('[Geocoding] Using LocationIQ for geocoding');
+  }
+} else if (provider === 'google') {
+  // Google Maps - requires API key (paid)
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.warn('[Geocoding] WARNING: GEOCODING_PROVIDER is set to "google" but GOOGLE_MAPS_API_KEY is not configured.');
+    console.warn('[Geocoding] Falling back to Nominatim (free, no API key required).');
+    console.warn('[Geocoding] To use Google Maps, get an API key at: https://console.cloud.google.com/');
+    console.warn('[Geocoding] Then set GOOGLE_MAPS_API_KEY in your .env file or via the web UI.');
+    geocodingProvider = 'nominatim'; // Fallback to nominatim instead of exiting
+  } else {
+    geocodingProvider = 'google';
+    console.log('[Geocoding] Using Google Maps for geocoding');
+  }
+} else {
+  // Auto-detect based on available API keys (backward compatibility)
+  const hasGoogleMaps = !!GOOGLE_MAPS_API_KEY;
+  const hasLocationIQ = !!LOCATIONIQ_API_KEY;
+  
+  if (!hasGoogleMaps && !hasLocationIQ) {
+    // Default to Nominatim if no API keys provided
+    geocodingProvider = 'nominatim';
+    console.log('[Geocoding] No API keys found, using Nominatim (OpenStreetMap) - free, no API key required');
+  } else if (hasLocationIQ) {
+    geocodingProvider = 'locationiq';
+    console.log('[Geocoding] Using LocationIQ for geocoding');
+  } else if (hasGoogleMaps) {
+    geocodingProvider = 'google';
+    console.log('[Geocoding] Using Google Maps for geocoding');
+  }
 }
 
 // Validate required environment variables based on provider
@@ -91,12 +126,18 @@ if (!process.env.GEOCODING_TARGET_COUNTIES) process.env.GEOCODING_TARGET_COUNTIE
 const TARGET_COUNTIES = process.env.GEOCODING_TARGET_COUNTIES.split(',').map(county => county.trim());
 const COUNTRY_CODES = process.env.GEOCODING_COUNTRY; // LocationIQ uses country codes
 
-// Logger setup (remains the same)
+// Cache timezone formatter function (optimization: avoid timezone lookup on every log entry)
+const getFormattedTimestamp = (() => {
+  // Create a function that formats current time in the configured timezone
+  return () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS');
+})();
+
+// Logger setup
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp({
-      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
+      format: getFormattedTimestamp
     }),
     winston.format.printf(({ timestamp, level, message }) => {
       if (message.includes('Talk Group') ||
@@ -340,12 +381,82 @@ async function geocodeAddress(address) {
   }
 
   // Check which geocoding provider to use
-  if (geocodingProvider === 'locationiq') {
+  if (geocodingProvider === 'nominatim') {
+    return await geocodeAddressWithNominatim(address);
+  } else if (geocodingProvider === 'locationiq') {
     return await geocodeAddressWithLocationIQ(address);
   } else if (geocodingProvider === 'google') {
     return await geocodeAddressWithGoogleMaps(address);
   } else {
-    logger.error('No geocoding API key available');
+    logger.error('No geocoding provider configured');
+    return null;
+  }
+}
+
+async function geocodeAddressWithNominatim(address) {
+  // Nominatim (OpenStreetMap) - free, no API key required
+  // Note: Please use responsibly - max 1 request per second
+  const endpoint = `https://nominatim.openstreetmap.org/search`;
+  const params = new URLSearchParams({
+    q: address,
+    format: 'json',
+    addressdetails: '1',
+    limit: '1',
+    countrycodes: COUNTRY_CODES || 'us',
+    'accept-language': 'en'
+  });
+
+  try {
+    // Add user agent header (required by Nominatim usage policy)
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: {
+        'User-Agent': 'Scanner-Map/1.0 (https://github.com/poisonednumber/Scanner-map)'
+      }
+    });
+    
+    if (!response.ok) {
+      logger.error(`Nominatim API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      logger.warn(`Nominatim API returned no results for address: "${address}"`);
+      return null;
+    }
+
+    const result = data[0];
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    const display_name = result.display_name;
+    const addressDetails = result.address || {};
+    const county = addressDetails.county || null;
+
+    if (isNaN(lat) || isNaN(lon) || !display_name) {
+      logger.warn(`Nominatim response missing essential fields for address: "${address}"`);
+      return null;
+    }
+
+    // Filter by county if specified
+    if (county && TARGET_COUNTIES.length > 0) {
+      const countyMatch = TARGET_COUNTIES.some(targetCounty => 
+        county.toLowerCase().includes(targetCounty.toLowerCase()) ||
+        targetCounty.toLowerCase().includes(county.toLowerCase())
+      );
+      if (!countyMatch) {
+        logger.info(`Nominatim result county "${county}" not in target counties for address: "${address}"`);
+        return null;
+      }
+    }
+
+    return {
+      lat,
+      lng: lon,
+      formatted_address: display_name,
+      county: county || 'Unknown'
+    };
+  } catch (error) {
+    logger.error(`Nominatim geocoding error for "${address}":`, error);
     return null;
   }
 }

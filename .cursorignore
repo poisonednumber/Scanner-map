@@ -1,0 +1,63 @@
+# ============================================
+# CURSOR IGNORE - Files to exclude from indexing
+# ============================================
+# This improves Cursor's performance by not indexing
+# large/irrelevant files when using AI features
+
+# Large dependency folders
+node_modules/
+.venv/
+venv/
+__pycache__/
+
+# Runtime data (changes frequently, not useful for AI)
+data/
+audio/
+recordings/
+logs/
+appdata/
+
+# Binary/media files
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.mp4
+*.avi
+*.mov
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.db
+*.sqlite
+*.sqlite3
+
+# Large ML model files
+*.pt
+*.pth
+*.onnx
+*.bin
+models/
+
+# Lock files (large, auto-generated)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Git internals
+.git/
+
+# Temporary/backup files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.log
+

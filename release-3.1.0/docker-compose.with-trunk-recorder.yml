@@ -1,0 +1,66 @@
+# Docker Compose with TrunkRecorder enabled
+# This is an example file showing how to enable TrunkRecorder
+# Copy this configuration to docker-compose.yml if you want to use TrunkRecorder
+#
+# IMPORTANT: TrunkRecorder is licensed under GPL-3.0
+# See LICENSE_NOTICE.md for license information and compliance requirements
+
+version: '3.8'
+
+services:
+  scanner-map:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scanner-map
+    restart: unless-stopped
+    ports:
+      - "${WEBSERVER_PORT:-3001}:3001"  # Web interface
+      - "${BOT_PORT:-3306}:3306"         # API endpoint for TrunkRecorder/SDRTrunk
+    volumes:
+      - ./appdata/scanner-map/data:/app/data                 # Database and API keys
+      - ./appdata/scanner-map/audio:/app/audio               # Audio file storage
+      - ./appdata/scanner-map/logs:/app/logs                 # Log files
+      - ./.env:/app/.env                 # Configuration
+      # Mount TrunkRecorder config for auto-configuration
+      - ./appdata/trunk-recorder/config:/app/appdata/trunk-recorder/config  # For API key auto-config
+    environment:
+      - NODE_ENV=production
+    networks:
+      - scanner-network
+    depends_on:
+      - trunk-recorder
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/test', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  trunk-recorder:
+    image: lwcooper/trunk-recorder:latest
+    container_name: trunk-recorder
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb  # USB devices for SDR
+    volumes:
+      - ./appdata/trunk-recorder/config:/config
+      - ./appdata/trunk-recorder/recordings:/recordings
+    environment:
+      - TZ=${TIMEZONE:-UTC}
+    networks:
+      - scanner-network
+    # TrunkRecorder will upload to scanner-map:3306/api/call-upload
+    # Configure this in trunk-recorder/config/config.json
+    # 
+    # LICENSE NOTICE:
+    # TrunkRecorder is licensed under GNU General Public License v3.0 (GPL-3.0)
+    # Official Repository: https://github.com/TrunkRecorder/trunk-recorder
+    # Docker Repository: https://github.com/TrunkRecorder/trunk-recorder-docker
+    # By using this service, you agree to comply with GPL-3.0 terms
+
+networks:
+  scanner-network:
+    driver: bridge
+
