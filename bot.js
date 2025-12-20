@@ -6,7 +6,6 @@ require('dotenv').config();
 const {
   BOT_PORT: PORT,  
   PUBLIC_DOMAIN,
-  ENABLE_DISCORD = 'false',
   DISCORD_TOKEN,
   MAPPED_TALK_GROUPS: mappedTalkGroupsString,
   ENABLE_MAPPED_TALK_GROUPS = 'true',
@@ -77,17 +76,9 @@ if (!AI_PROVIDER) {
 }
 
 if (AI_PROVIDER.toLowerCase() === 'openai') {
-  // OPENAI_MODEL should be set, but API key can be configured via web UI
-  if (!OPENAI_MODEL) {
-    console.error("FATAL: AI_PROVIDER is 'openai', but OPENAI_MODEL is missing in the .env file.");
-    console.error("Please set OPENAI_MODEL in your .env file (e.g., OPENAI_MODEL=gpt-4o-mini).");
-    process.exit(1);
-  }
-  // API key can be missing initially - user will configure via web UI
-  if (!OPENAI_API_KEY) {
-    console.warn("WARNING: AI_PROVIDER is 'openai', but OPENAI_API_KEY is not set.");
-    console.warn("OpenAI features will not work until you configure the API key via the web UI.");
-    console.warn("The application will continue to start, but AI features will be disabled.");
+  if (!OPENAI_API_KEY || !OPENAI_MODEL) {
+      console.error("FATAL: AI_PROVIDER is 'openai', but OPENAI_API_KEY or OPENAI_MODEL is missing in the .env file.");
+      process.exit(1);
   }
 } else if (AI_PROVIDER.toLowerCase() === 'ollama') {
   if (!OLLAMA_URL || !OLLAMA_MODEL) {
@@ -126,9 +117,9 @@ if (effectiveTranscriptionMode === 'icad' && !ICAD_URL) {
 
 // Now initialize derived variables
 const express = require('express');
-const fs = require('fs-extra');
+const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const busboy = require('busboy');
 const sqlite3 = require('sqlite3').verbose();
@@ -161,7 +152,7 @@ const MAPPED_TALK_GROUPS = mappedTalkGroupsString
 const IS_MAPPED_TALK_GROUPS_ENABLED = ENABLE_MAPPED_TALK_GROUPS.toLowerCase() === 'true';
 
 // Parse Two-Tone configuration
-const IS_TWO_TONE_MODE_ENABLED = (ENABLE_TWO_TONE_MODE || '').toLowerCase() === 'true';
+const IS_TWO_TONE_MODE_ENABLED = ENABLE_TWO_TONE_MODE.toLowerCase() === 'true';
 const TWO_TONE_TALK_GROUPS = twoToneTalkGroupsString
   ? twoToneTalkGroupsString.split(',').map(id => id.trim())
   : [];
@@ -720,19 +711,13 @@ const infoFilter = winston.format((info, opts) => {
   return info;
 });
 
-// Cache timezone formatter function (optimization: avoid timezone lookup on every log entry)
-const getFormattedTimestamp = (() => {
-  // Create a function that formats current time in the configured timezone
-  return () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS');
-})();
-
 // Logger setup
 const logger = winston.createLogger({
   level: 'info', // Log info and above to files
   format: winston.format.combine(
     // Default format for files (timestamp + standard json/logfmt)
     winston.format.timestamp({
-      format: getFormattedTimestamp
+      format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
     }),
     winston.format.errors({ stack: true }), // Log stack traces for errors
     winston.format.splat(),
@@ -756,7 +741,7 @@ const logger = winston.createLogger({
       format: winston.format.combine(
         // 1. Add timestamp
         winston.format.timestamp({
-          format: getFormattedTimestamp
+          format: () => moment().tz(TIMEZONE).format('MM/DD/YYYY HH:mm:ss.SSS')
         }),
         // 2. Apply the custom info whitelist filter *for console only*
         infoFilter({ allowedPatterns }), // Pass the patterns here
@@ -860,12 +845,53 @@ function checkTalkGroupsImported() {
 }
 
 // Function to import talkgroups from CSV
-// NOTE: This function is deprecated. Talkgroups should be imported via the web UI.
-// Keeping function for backward compatibility but it will not be called automatically.
 function importTalkGroups() {
-  return new Promise((resolve) => {
-    logger.info('Talkgroup import from CSV is deprecated. Please use the web UI to import talkgroups.');
-    resolve();
+  return new Promise((resolve, reject) => {
+    const talkGroupsFile = path.join(__dirname, 'talkgroups.csv');
+    
+    if (!fs.existsSync(talkGroupsFile)) {
+      logger.warn('talkgroups.csv not found. Skipping talkgroup import.');
+      resolve();
+      return;
+    }
+
+    logger.info('Importing talkgroups from CSV...');
+    let importCount = 0;
+
+    fs.createReadStream(talkGroupsFile)
+      .pipe(csv({
+        headers: ['DEC', 'HEX', 'Alpha Tag', 'Mode', 'Description', 'Tag', 'County'],
+        skipLines: 0,
+      }))
+      .on('data', (row) => {
+        const id = parseInt(row['DEC'], 10);
+        const hex = row['HEX'];
+        const alphaTag = row['Alpha Tag'];
+        const mode = row['Mode'];
+        const description = row['Description'];
+        const tag = row['Tag'];
+        const county = row['County'];
+
+        db.run(
+          `INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, hex, alphaTag, mode, description, tag, county],
+          (err) => {
+            if (err) {
+              logger.error('Error inserting talk group:', err.message);
+            } else {
+              importCount++;
+            }
+          }
+        );
+      })
+      .on('end', () => {
+        logger.info(`Successfully imported ${importCount} talkgroups.`);
+        resolve();
+      })
+      .on('error', (err) => {
+        logger.error('Error importing talkgroups:', err);
+        reject(err);
+      });
   });
 }
 
@@ -873,23 +899,13 @@ function importTalkGroups() {
 function ensureApiKey() {
   return new Promise((resolve, reject) => {
     try {
-      // Set default API key file path if not provided
-      const apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
-      // Try appdata structure first (new), fallback to old structure
-      let finalApiKeyPath = apiKeyFilePath;
-      if (!API_KEY_FILE) {
-        // Try appdata structure first
-        const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
-        if (fs.existsSync(path.dirname(appdataPath))) {
-          finalApiKeyPath = appdataPath;
-        }
-      }
-      
       // Ensure directory exists
-      const apiKeyDir = path.dirname(finalApiKeyPath);
-      fs.ensureDirSync(apiKeyDir);
+      const apiKeyDir = path.dirname(API_KEY_FILE);
+      if (!fs.existsSync(apiKeyDir)) {
+        fs.mkdirSync(apiKeyDir, { recursive: true });
+      }
 
-      if (!fs.existsSync(finalApiKeyPath)) {
+      if (!fs.existsSync(API_KEY_FILE)) {
         // Create a default API key
         const defaultKey = uuidv4();
         const hashedKey = bcrypt.hashSync(defaultKey, 10);
@@ -901,51 +917,14 @@ function ensureApiKey() {
           description: 'Auto-generated API key for first boot'
         }];
         
-        fs.writeFileSync(finalApiKeyPath, JSON.stringify(initialApiKeys, null, 2));
+        fs.writeFileSync(API_KEY_FILE, JSON.stringify(initialApiKeys, null, 2));
         
         logger.info(`Created default API key: ${defaultKey}`);
-        logger.info(`API key saved to: ${finalApiKeyPath}`);
+        logger.info(`API key saved to: ${API_KEY_FILE}`);
         logger.warn('IMPORTANT: Save this API key as it won\'t be shown again!');
-        
-        // Auto-update TrunkRecorder config if it exists and needs the key
-        updateTrunkRecorderApiKey(defaultKey);
-        
-        // Auto-update iCAD Transcribe config if it exists and needs the key
-        updateICADApiKey(defaultKey);
-        
         resolve(defaultKey);
       } else {
         logger.info('API key file already exists.');
-        
-        // Check if TrunkRecorder config needs API key update
-        // Try appdata structure first (new), fallback to old structure
-        let trunkRecorderConfigPath = path.join(__dirname, 'appdata', 'trunk-recorder', 'config', 'config.json');
-        if (!fs.existsSync(trunkRecorderConfigPath)) {
-          trunkRecorderConfigPath = path.join(__dirname, 'trunk-recorder', 'config', 'config.json');
-        }
-        
-        if (fs.existsSync(trunkRecorderConfigPath)) {
-          try {
-            const configData = fs.readFileSync(trunkRecorderConfigPath, 'utf8');
-            const config = JSON.parse(configData);
-            
-            // If config has placeholder, create a TrunkRecorder-specific key
-            if (config.uploadServer && 
-                (config.uploadServer.apiKey === 'AUTO_GENERATE_ON_STARTUP' || 
-                 config.uploadServer.apiKey === 'YOUR_API_KEY_HERE' ||
-                 !config.uploadServer.apiKey)) {
-              
-              logger.info('TrunkRecorder config found with placeholder. Creating TrunkRecorder-specific API key...');
-              updateTrunkRecorderApiKey(null, true); // Create new TrunkRecorder-specific key
-            }
-          } catch (err) {
-            logger.warn(`Could not auto-update TrunkRecorder config: ${err.message}`);
-          }
-        }
-        
-        // Check if iCAD Transcribe config needs API key update
-        updateICADApiKey(null, false);
-        
         resolve(null);
       }
     } catch (err) {
@@ -953,159 +932,6 @@ function ensureApiKey() {
       reject(err);
     }
   });
-}
-
-// Helper function to update TrunkRecorder config with API key
-function updateTrunkRecorderApiKey(apiKey, createNew = false) {
-  // Try appdata structure first (new), fallback to old structure
-  let trunkRecorderConfigPath = path.join(__dirname, 'appdata', 'trunk-recorder', 'config', 'config.json');
-  if (!fs.existsSync(trunkRecorderConfigPath)) {
-    trunkRecorderConfigPath = path.join(__dirname, 'trunk-recorder', 'config', 'config.json');
-  }
-  
-  if (!fs.existsSync(trunkRecorderConfigPath)) {
-    return; // Config doesn't exist yet
-  }
-  
-  try {
-    const configData = fs.readFileSync(trunkRecorderConfigPath, 'utf8');
-    const config = JSON.parse(configData);
-    
-    // Check if API key already exists and is valid (not a placeholder)
-    if (config.uploadServer && 
-        config.uploadServer.apiKey && 
-        config.uploadServer.apiKey !== 'AUTO_GENERATE_ON_STARTUP' &&
-        config.uploadServer.apiKey !== 'YOUR_API_KEY_HERE' &&
-        !createNew) {
-      logger.info('TrunkRecorder API key already configured, skipping update');
-      return; // Key already exists and is valid
-    }
-    
-    let keyToUse = apiKey;
-    
-    // If we need to create a new TrunkRecorder-specific key
-    if (createNew || !keyToUse) {
-      keyToUse = uuidv4();
-      const hashedKey = bcrypt.hashSync(keyToUse, 10);
-      
-      // Load existing keys - use the same path logic as ensureApiKey
-      let apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
-      if (!API_KEY_FILE) {
-        const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
-        if (fs.existsSync(path.dirname(appdataPath))) {
-          apiKeyFilePath = appdataPath;
-        }
-      }
-      const existingKeys = JSON.parse(fs.readFileSync(apiKeyFilePath, 'utf8'));
-      
-      // Check if TrunkRecorder key exists
-      const existingTrunkRecorderKey = existingKeys.find(k => k.name === 'TrunkRecorder');
-      if (existingTrunkRecorderKey) {
-        existingTrunkRecorderKey.key = hashedKey;
-        existingTrunkRecorderKey.updated_at = new Date().toISOString();
-      } else {
-        existingKeys.push({
-          key: hashedKey,
-          name: 'TrunkRecorder',
-          disabled: false,
-          created_at: new Date().toISOString(),
-          description: 'Auto-generated API key for TrunkRecorder integration'
-        });
-      }
-      
-      fs.writeFileSync(apiKeyFilePath, JSON.stringify(existingKeys, null, 2));
-      logger.info(`Created TrunkRecorder API key: ${keyToUse}`);
-    }
-    
-    // Update config
-    if (!config.uploadServer) {
-      config.uploadServer = {};
-    }
-    config.uploadServer.apiKey = keyToUse;
-    
-    fs.writeFileSync(trunkRecorderConfigPath, JSON.stringify(config, null, 2));
-    logger.info(`Auto-updated TrunkRecorder config with API key`);
-    
-    // Also save to shared file for reference
-    // Try appdata structure first (new), fallback to old structure
-    let sharedKeyPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'trunk-recorder-api-key.txt');
-    let dataDir = path.dirname(sharedKeyPath);
-    if (!fs.existsSync(dataDir)) {
-      // Fallback to old structure
-      sharedKeyPath = path.join(__dirname, 'data', 'trunk-recorder-api-key.txt');
-      dataDir = path.dirname(sharedKeyPath);
-    }
-    fs.ensureDirSync(dataDir);
-    fs.writeFileSync(sharedKeyPath, keyToUse);
-    
-  } catch (err) {
-    logger.warn(`Could not auto-update TrunkRecorder config: ${err.message}`);
-  }
-}
-
-// Helper function to update iCAD Transcribe config with API key
-function updateICADApiKey(apiKey, createNew = false) {
-  // Try appdata structure first (new), fallback to old structure
-  let icadEnvPath = path.join(__dirname, 'appdata', 'icad-transcribe', '.env');
-  if (!fs.existsSync(icadEnvPath)) {
-    icadEnvPath = path.join(__dirname, 'icad-transcribe', '.env');
-  }
-  
-  if (!fs.existsSync(icadEnvPath)) {
-    return; // Config doesn't exist yet
-  }
-  
-  try {
-    let envContent = fs.readFileSync(icadEnvPath, 'utf8');
-    
-    // Check if API key already exists and is valid (not a placeholder)
-    const apiKeyMatch = envContent.match(/API_KEY=(.+)/);
-    if (apiKeyMatch && 
-        apiKeyMatch[1].trim() !== 'AUTO_GENERATE_ON_STARTUP' &&
-        apiKeyMatch[1].trim() !== '' &&
-        !createNew) {
-      logger.info('iCAD Transcribe API key already configured, skipping update');
-      return; // Key already exists and is valid
-    }
-    
-    let keyToUse = apiKey;
-    
-    // Check if API key needs to be generated
-    if (envContent.includes('API_KEY=AUTO_GENERATE_ON_STARTUP') || 
-        (!envContent.includes('API_KEY=') && createNew)) {
-      
-      if (!keyToUse) {
-        keyToUse = uuidv4();
-      }
-      
-      // Update iCAD .env
-      if (envContent.includes('API_KEY=AUTO_GENERATE_ON_STARTUP')) {
-        envContent = envContent.replace('API_KEY=AUTO_GENERATE_ON_STARTUP', `API_KEY=${keyToUse}`);
-      } else if (!envContent.includes('API_KEY=')) {
-        envContent += `\nAPI_KEY=${keyToUse}\n`;
-      } else {
-        // Replace existing API_KEY line
-        envContent = envContent.replace(/API_KEY=.*/g, `API_KEY=${keyToUse}`);
-      }
-      
-      fs.writeFileSync(icadEnvPath, envContent);
-      logger.info(`Auto-updated iCAD Transcribe .env with API key`);
-      
-      // Also update Scanner Map .env if it has the placeholder
-      const scannerMapEnvPath = path.join(__dirname, '.env');
-      if (fs.existsSync(scannerMapEnvPath)) {
-        let scannerEnvContent = fs.readFileSync(scannerMapEnvPath, 'utf8');
-        if (scannerEnvContent.includes('ICAD_API_KEY=AUTO_GENERATE_ON_STARTUP') || 
-            scannerEnvContent.includes('ICAD_API_KEY=') && !scannerEnvContent.match(/ICAD_API_KEY=[a-f0-9-]{36}/)) {
-          scannerEnvContent = scannerEnvContent.replace(/ICAD_API_KEY=.*/g, `ICAD_API_KEY=${keyToUse}`);
-          fs.writeFileSync(scannerMapEnvPath, scannerEnvContent);
-          logger.info(`Auto-updated Scanner Map .env with iCAD API key`);
-        }
-      }
-    }
-  } catch (err) {
-    logger.warn(`Could not auto-update iCAD Transcribe config: ${err.message}`);
-  }
 }
 
 // Function to initialize database tables
@@ -1255,79 +1081,21 @@ function startWebserver() {
   return new Promise((resolve, reject) => {
     logger.info('Starting webserver...');
     
-    // Store stderr output to detect early exits
-    let stderrBuffer = '';
-    let exitedEarly = false;
-    let exitCode = null;
-    
     const webserverProcess = spawn('node', ['webserver.js'], {
-      stdio: ['inherit', 'inherit', 'pipe'], // Capture stderr for error detection
+      stdio: 'inherit',
       env: { ...process.env }
     });
 
     webserverProcess.on('error', (err) => {
-      logger.error('[Webserver] Failed to start webserver process:', err);
+      logger.error('Failed to start webserver:', err);
       reject(err);
     });
 
-    // Capture stderr to detect validation errors
-    webserverProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      stderrBuffer += output;
-      // Check for validation errors that cause immediate exit
-      if (output.includes('ERROR: Missing required environment variables') ||
-          output.includes('ERROR: Geocoding service not configured')) {
-        exitedEarly = true;
-      }
-    });
-
-    // Handle process exit
-    webserverProcess.on('exit', (code, signal) => {
-      exitCode = code;
-      if (code !== null && code !== 0) {
-        exitedEarly = true;
-        logger.error(`[Webserver] Process exited with code ${code}${signal ? `, signal ${signal}` : ''}`);
-        if (stderrBuffer) {
-          logger.error(`[Webserver] Error output: ${stderrBuffer}`);
-        }
-      }
-    });
-
-    // Verify webserver actually started
-    const checkStartup = async () => {
-      // Wait a bit for server to initialize
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      // Check if process is still alive
-      if (exitedEarly || webserverProcess.killed) {
-        const errorMsg = exitCode !== null 
-          ? `Webserver exited early with code ${exitCode}`
-          : 'Webserver process died unexpectedly';
-        logger.error(`[Webserver] ${errorMsg}`);
-        if (stderrBuffer) {
-          logger.error(`[Webserver] Last error output:\n${stderrBuffer}`);
-        }
-        reject(new Error(errorMsg));
-        return;
-      }
-
-      // Try to verify server is listening by checking if process is still alive
-      // (More reliable than HTTP request which might fail due to other reasons)
-      try {
-        // Send signal 0 to check if process exists (doesn't kill it)
-        webserverProcess.kill(0);
-        logger.info(`[Webserver] ✓ Webserver started successfully on port ${WEBSERVER_PORT}`);
-        logger.info(`[Webserver] ✓ Web UI accessible at: http://${PUBLIC_DOMAIN || 'localhost'}:${WEBSERVER_PORT}/`);
-        resolve(webserverProcess);
-      } catch (err) {
-        // Process doesn't exist
-        logger.error('[Webserver] Webserver process check failed - process may have exited');
-        reject(new Error('Webserver process not running'));
-      }
-    };
-
-    // Start checking after initial delay
-    checkStartup().catch(reject);
+    // Give the webserver a moment to start
+    setTimeout(() => {
+      logger.info(`Webserver started on port ${WEBSERVER_PORT}`);
+      resolve(webserverProcess);
+    }, 2000);
   });
 }
 
@@ -1350,13 +1118,12 @@ async function initializeBot() {
       console.log('='.repeat(60));
     }
 
-    // Step 3: Load talkgroups (CSV import is deprecated - use web UI instead)
-    // Note: Talkgroups should be imported via the web UI, not from CSV file
+    // Step 3: Check and import talkgroups if needed
     const talkGroupsExist = await checkTalkGroupsImported();
     if (!talkGroupsExist) {
-      logger.info('No talkgroups found in database. Please import talkgroups via the web UI.');
+      await importTalkGroups();
     } else {
-      logger.info('Talkgroups found in database.');
+      logger.info('Talkgroups already imported, skipping CSV import.');
     }
 
     // Step 4: Load talkgroups for geocoding
@@ -1375,33 +1142,10 @@ async function initializeBot() {
     await startBotServices();
 
     // Step 8: Start webserver last
-    // Check if geocoding is available (Nominatim doesn't need API key)
-    const GEOCODING_PROVIDER = process.env.GEOCODING_PROVIDER || '';
-    const geoProviderLower = GEOCODING_PROVIDER.toLowerCase().trim();
-    const hasGeocoding = geoProviderLower === 'nominatim' || 
-                        (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim() !== '') || 
-                        (LOCATIONIQ_API_KEY && LOCATIONIQ_API_KEY.trim() !== '');
-    
-    if (WEBSERVER_PORT && hasGeocoding) {
-      try {
-        await startWebserver();
-      } catch (error) {
-        logger.error('[Webserver] Failed to start webserver:', error.message);
-        logger.error('[Webserver] Please check the error messages above and ensure:');
-        logger.error('[Webserver]   1. WEBSERVER_PORT and PUBLIC_DOMAIN are set in .env');
-        logger.error('[Webserver]   2. GEOCODING_PROVIDER is set (e.g., nominatim) or API keys are provided');
-        logger.error('[Webserver]   3. Port is not already in use');
-        // Don't exit - bot can still run without webserver
-        logger.warn('[Webserver] Continuing without webserver - bot will still function');
-      }
+    if (WEBSERVER_PORT && (GOOGLE_MAPS_API_KEY || LOCATIONIQ_API_KEY)) {
+      await startWebserver();
     } else {
-      if (!WEBSERVER_PORT) {
-        logger.warn('[Webserver] Not started: WEBSERVER_PORT is not configured');
-      }
-      if (!hasGeocoding) {
-        logger.warn('[Webserver] Not started: Geocoding service not configured');
-        logger.warn('[Webserver] Please set GEOCODING_PROVIDER=nominatim (free) or provide GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY');
-      }
+      logger.warn('Webserver not started: WEBSERVER_PORT or geocoding API key (GOOGLE_MAPS_API_KEY or LOCATIONIQ_API_KEY) not configured');
     }
 
     logger.info('Bot initialization completed successfully!');
@@ -1479,7 +1223,9 @@ let queueWarningLogged = false; // Prevent spam logging of queue warnings
 let lastQueueSizeLog = 0; // Track last queue size for change detection
 
 // Ensure upload directory exists
-fs.ensureDirSync(UPLOAD_DIR);
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
 
 logger.info(`Using upload directory: ${UPLOAD_DIR}`);
 
@@ -1502,17 +1248,8 @@ const db = new sqlite3.Database('./botdata.db', (err) => {
 let apiKeys = [];
 const loadApiKeys = () => {
   try {
-    // Use the same path logic as ensureApiKey
-    let apiKeyFilePath = API_KEY_FILE || path.join(__dirname, 'data', 'apikeys.json');
-    if (!API_KEY_FILE) {
-      const appdataPath = path.join(__dirname, 'appdata', 'scanner-map', 'data', 'apikeys.json');
-      if (fs.existsSync(path.dirname(appdataPath))) {
-        apiKeyFilePath = appdataPath;
-      }
-    }
-    
-    if (fs.existsSync(apiKeyFilePath)) {
-      const data = fs.readFileSync(apiKeyFilePath, 'utf8');
+    if (fs.existsSync(API_KEY_FILE)) {
+      const data = fs.readFileSync(API_KEY_FILE, 'utf8');
       apiKeys = JSON.parse(data);
       logger.info(`Loaded ${apiKeys.length} API keys.`);
     } else {
@@ -5742,63 +5479,17 @@ app.use((err, req, res, next) => {
 let server;
 let discordClientReady = false;
 
-/**
- * Check for updates on startup if enabled
- */
-async function checkForUpdatesOnStartup() {
-  try {
-    const UpdateChecker = require('./scripts/installer/update-checker');
-    const updateChecker = new UpdateChecker(__dirname);
-    
-    // Check if auto-update is enabled
-    const configPath = path.join(__dirname, 'data', 'update-config.json');
-    if (!fs.existsSync(configPath)) {
-      return; // Auto-update not configured
-    }
-    
-    const config = fs.readJSONSync(configPath);
-    if (!config.autoUpdateCheck) {
-      return; // Auto-update disabled
-    }
-    
-    // Check for updates (non-blocking)
-    setTimeout(async () => {
-      try {
-        const updateInfo = await updateChecker.checkForUpdates();
-        if (updateInfo.updateAvailable) {
-          logger.info(`\n📦 Update available! Current: ${updateInfo.currentVersion}, Latest: ${updateInfo.latestVersion}`);
-          logger.info(`   Download: ${updateInfo.downloadUrl}\n`);
-        }
-      } catch (err) {
-        // Silently fail - don't interrupt startup
-      }
-    }, 5000); // Wait 5 seconds after startup
-  } catch (err) {
-    // Silently fail - don't interrupt startup
-  }
-}
-
 async function startBotServices() {
   try {
     // Start the Express server for bot API endpoints
-    // Check for updates on startup if enabled
-    checkForUpdatesOnStartup().catch(err => {
-      logger.warn(`Update check failed: ${err.message}`);
-    });
-
     server = app.listen(PORT_NUM, () => {
       logger.info(`Bot server is running on port ${PORT_NUM}`);
     });
 
-    // Login to Discord only if enabled
-    if (ENABLE_DISCORD && ENABLE_DISCORD.toLowerCase() === 'true' && DISCORD_TOKEN) {
-      await client.login(DISCORD_TOKEN);
-      discordClientReady = true;
-      logger.info('Discord bot logged in successfully.');
-    } else {
-      logger.info('Discord bot disabled (ENABLE_DISCORD=false or no token provided)');
-      discordClientReady = false;
-    }
+    // Login to Discord
+    await client.login(DISCORD_TOKEN);
+    discordClientReady = true;
+    logger.info('Discord bot logged in successfully.');
 
   } catch (error) {
     logger.error('Error starting bot services:', error);

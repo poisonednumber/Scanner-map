@@ -12,7 +12,7 @@ const config = {
     defaultZoom: 13,
     maxZoom: 18, // Changing this may break tracking new calls!
     minZoom: 6,
-    attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V3.1.0',
+    attribution: '&copy; OpenStreetMap contributors &copy; Scanner Map V2.0',
     timeZone: 'America/New_York', // Time zone for display
   },
    
