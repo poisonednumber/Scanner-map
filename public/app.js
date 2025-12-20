@@ -1,19 +1,23 @@
 // app.js
 
 // Global variables
-let map, markerGroups;
-const markers = {};
-let allMarkers = {}; // Store all markers for filtering
+// Map variables - now managed by MapModule (map and markerGroups are accessed via MapModule)
+// Note: map, markerGroups, markers, and allMarkers are declared in map.js, so we just reference them here
+var map, markerGroups, markers, allMarkers; // Will be set from MapModule (using var to avoid redeclaration error)
+// markers and allMarkers are managed by map.js module
+// currentMapMode, dayLayer, nightLayer, satelliteLayer, and toggleModeButton are declared in map.js
 let timeRangeHours; // Time range from config
-let currentMapMode = 'day'; // Possible values: 'day', 'night', 'satellite'
-let dayLayer, nightLayer, satelliteLayer; // Declare layers globally
+
+// Map module reference (will be set after map.js loads)
+let MapModule = null;
 let socket; // Socket.IO
 let currentSearchTerm = ''; // Current search term
-const wavesurfers = {}; // Store WaveSurfer instances
-let audioContext = null; // Initialize explicitly as null
+// wavesurfers, audioContext, and globalVolumeLevel are declared in audio.js (which loads first)
+// We can reference them here since they're declared with var (globally accessible)
+
 let heatmapLayer; // Heatmap layer
 let heatmapIntensity; // Intensity for heatmap
-let toggleModeButton; // Button to toggle map modes
+// toggleModeButton is declared in map.js
 let liveAudioStream = null;
 let isLiveStreamPlaying = false;
 let audioContainer = null;
@@ -21,7 +25,8 @@ let currentSessionToken = null;
 let selectedCategory = null;
 let timestampUpdateInterval = null;
 let isNewCallAudioMuted = false;
-let isTrackingNewCalls = true; // Default to true so tracking is enabled by defaultlet additionalWavesurfers = {};
+let isTrackingNewCalls = true; // Default to true so tracking is enabled by default
+let additionalWavesurfers = {};
 const talkgroupPageLimit = 30; // How many calls to fetch per page
 let currentTalkgroupOffset = 0;
 let isLoadingMoreTalkgroupCalls = false;
@@ -40,8 +45,7 @@ let talkgroupPollingInterval = null; // Interval ID for polling
 let talkgroupModalAutoplay = true; // Default autoplay to true
 let lastCallTimestampInModal = null; // Track the newest timestamp shown in modal
 
-// NEW: Global Volume Level
-let globalVolumeLevel = 0.5; // Default to 50% volume
+// globalVolumeLevel is declared in audio.js (which loads first)
 
 // NEW: Variable to store original mute state
 let originalMuteStateBeforeModal = false;
@@ -816,112 +820,115 @@ function attemptAutoplay() {
     }
 }
 
-// Initialize map
+// Initialize map - now uses MapModule if available
 function initMap() {
-    // Initialize the map with the configuration center and zoom level
-    map = L.map('map', {
-        center: appConfig.map.defaultCenter,
-        zoom: appConfig.map.defaultZoom,
-        maxZoom: appConfig.map.maxZoom,
-        minZoom: appConfig.map.minZoom,
-        zoomControl: !isMobile(),
-        tap: true
-    });
+    // Use MapModule if available, otherwise fall back to inline implementation
+    if (window.MapModule) {
+        MapModule = window.MapModule;
+        MapModule.initMap(appConfig, isMobile, setupEventListeners, loadCalls, timeRangeHours, addPermanentHouseMarkers);
+        // Sync global variables from module
+        map = MapModule.getMap();
+        markerGroups = MapModule.getMarkerGroups();
+        // Note: markers and allMarkers are managed by the module but we keep local refs for compatibility
+    } else {
+        // Fallback to original inline implementation
+        map = L.map('map', {
+            center: appConfig.map.defaultCenter,
+            zoom: appConfig.map.defaultZoom,
+            maxZoom: appConfig.map.maxZoom,
+            minZoom: appConfig.map.minZoom,
+            zoomControl: !isMobile(),
+            tap: true
+        });
 
-    // Day layer using OpenStreetMap
-    dayLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
+        dayLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    // Add CSS for dark mode tiles
-    const style = document.createElement('style');
-    style.textContent = `
-        .dark-mode-tiles {
-            filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
-        }
-        .dark-mode-tiles img {
-            background: #0e1216;
-        }
-        
-        /* Preserve marker colors */
-        .leaflet-marker-icon,
-        .leaflet-marker-shadow,
-        .marker-cluster-small,
-        .marker-cluster-medium,
-        .marker-cluster-large {
-            filter: none !important;
-        }
-    `;
-    document.head.appendChild(style);
-
-    // Night layer using filtered OpenStreetMap
-    nightLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true,
-        className: 'dark-mode-tiles'
-    });
-
-    // Satellite view using two layers combined
-    const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
-        attribution: appConfig.map.attribution,
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
-
-    const satelliteLabels = L.tileLayer(appConfig.mapStyles.satelliteLabelsLayer, {
-        attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: appConfig.map.maxZoom,
-        crossOrigin: true
-    });
-
-    satelliteLayer = L.layerGroup([satelliteBase, satelliteLabels]);
-
-    dayLayer.addTo(map);
-
-    markerGroups = L.markerClusterGroup({
-        iconCreateFunction: function(cluster) {
-            const childCount = cluster.getChildCount();
-            let c = ' marker-cluster-';
-            if (childCount < 10) {
-                c += 'small';
-            } else if (childCount < 100) {
-                c += 'medium';
-            } else {
-                c += 'large';
+        const style = document.createElement('style');
+        style.textContent = `
+            .dark-mode-tiles {
+                filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
             }
+            .dark-mode-tiles img {
+                background: #0e1216;
+            }
+            
+            .leaflet-marker-icon,
+            .leaflet-marker-shadow,
+            .marker-cluster-small,
+            .marker-cluster-medium,
+            .marker-cluster-large {
+                filter: none !important;
+            }
+        `;
+        document.head.appendChild(style);
 
-            return L.divIcon({
-                html: '<div><span>' + childCount + '</span></div>',
-                className: 'marker-cluster' + c,
-                iconSize: L.point(40, 40)
-            });
-        },
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: true,
-        zoomToBoundsOnClick: true,
-        maxClusterRadius: 55,
-        spiderfyDistanceMultiplier: 2
-    });
+        nightLayer = L.tileLayer(appConfig.mapStyles.dayLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true,
+            className: 'dark-mode-tiles'
+        });
 
-    map.addLayer(markerGroups);
+        const satelliteBase = L.tileLayer(appConfig.mapStyles.satelliteBaseLayer, {
+            attribution: appConfig.map.attribution,
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    if (isMobile()) {
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-} else {
-    L.control.zoom({ position: 'topright' }).addTo(map);
-}
+        const satelliteLabels = L.tileLayer(appConfig.mapStyles.satelliteLabelsLayer, {
+            attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            maxZoom: appConfig.map.maxZoom,
+            crossOrigin: true
+        });
 
-    setupEventListeners();
-    L.control.scale().addTo(map);
-    loadCalls(timeRangeHours);
+        satelliteLayer = L.layerGroup([satelliteBase, satelliteLabels]);
+        dayLayer.addTo(map);
 
-    map.on('zoomend', function() {
-        console.log('Current zoom level:', map.getZoom());
-        addPermanentHouseMarkers();
-    });
+        markerGroups = L.markerClusterGroup({
+            iconCreateFunction: function(cluster) {
+                const childCount = cluster.getChildCount();
+                let c = ' marker-cluster-';
+                if (childCount < 10) {
+                    c += 'small';
+                } else if (childCount < 100) {
+                    c += 'medium';
+                } else {
+                    c += 'large';
+                }
+                return L.divIcon({
+                    html: '<div><span>' + childCount + '</span></div>',
+                    className: 'marker-cluster' + c,
+                    iconSize: L.point(40, 40)
+                });
+            },
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: true,
+            zoomToBoundsOnClick: true,
+            maxClusterRadius: 55,
+            spiderfyDistanceMultiplier: 2
+        });
+
+        map.addLayer(markerGroups);
+
+        if (isMobile()) {
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+        } else {
+            L.control.zoom({ position: 'topright' }).addTo(map);
+        }
+
+        setupEventListeners();
+        L.control.scale().addTo(map);
+        loadCalls(timeRangeHours);
+
+        map.on('zoomend', function() {
+            console.log('Current zoom level:', map.getZoom());
+            addPermanentHouseMarkers();
+        });
+    }
 }
 
 // Event Listeners Setup
@@ -945,26 +952,30 @@ function setupEventListeners() {
     });
 }
 
-// Toggle Map Mode (Day, Night, Satellite)
+// Toggle Map Mode (Day, Night, Satellite) - now uses MapModule if available
 function toggleMapMode() {
-    if (currentMapMode === 'day') {
-        map.removeLayer(dayLayer);
-        nightLayer.addTo(map);
-        currentMapMode = 'night';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Night';
-    } else if (currentMapMode === 'night') {
-        map.removeLayer(nightLayer);
-        satelliteLayer.addTo(map);
-        currentMapMode = 'satellite';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Satellite';
-    } else if (currentMapMode === 'satellite') {
-        map.removeLayer(satelliteLayer);
-        dayLayer.addTo(map);
-        currentMapMode = 'day';
-        // Use direct text assignment
-        toggleModeButton.textContent = 'Day';
+    if (window.MapModule && MapModule.toggleMapMode) {
+        MapModule.toggleMapMode();
+        // Sync currentMapMode from module
+        currentMapMode = MapModule.getCurrentMapMode();
+    } else {
+        // Fallback to original implementation
+        if (currentMapMode === 'day') {
+            map.removeLayer(dayLayer);
+            nightLayer.addTo(map);
+            currentMapMode = 'night';
+            toggleModeButton.textContent = 'Night';
+        } else if (currentMapMode === 'night') {
+            map.removeLayer(nightLayer);
+            satelliteLayer.addTo(map);
+            currentMapMode = 'satellite';
+            toggleModeButton.textContent = 'Satellite';
+        } else if (currentMapMode === 'satellite') {
+            map.removeLayer(satelliteLayer);
+            dayLayer.addTo(map);
+            currentMapMode = 'day';
+            toggleModeButton.textContent = 'Day';
+        }
     }
 }
 
@@ -3588,10 +3599,49 @@ function setupUserManagement() {
         });
     }
     
+    // Service Configuration button click
+    const serviceConfigBtn = document.getElementById('service-config-btn');
+    if (serviceConfigBtn) {
+        serviceConfigBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showServiceConfigModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
+    // Setup Wizard button click
+    const setupWizardBtn = document.getElementById('setup-wizard-btn');
+    if (setupWizardBtn) {
+        setupWizardBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('[Setup Wizard] Button clicked');
+            showSetupWizard();
+            if (dropdownContent) {
+                dropdownContent.classList.remove('show');
+            }
+        });
+    } else {
+        console.error('[Setup Wizard] Setup wizard button not found!');
+    }
+    
+    // Settings button click
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showSettingsModal();
+            dropdownContent.classList.remove('show');
+        });
+    }
+    
     // Setup modal forms
     setupAddUserForm();
     setupModalCancelButtons();
     setupCallPurgeModal();
+    setupServiceConfigModal();
+    setupSetupWizard();
+    setupSettingsModal();
 }
 
 function showAddUserModal() {
@@ -3906,10 +3956,101 @@ function setupSidebarToggle() {
 // REMOVED DOMContentLoaded listener - initializeApp is called directly now
 // document.addEventListener('DOMContentLoaded', initializeApp);
 
-document.addEventListener('DOMContentLoaded', initializeApp); // Re-add DOMContentLoaded listener
+// Check for wizard parameter immediately on page load (before DOMContentLoaded)
+(function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    const hasWizardParam = urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard';
+    
+    if (hasWizardParam) {
+        console.log('[App] Wizard parameter detected on page load, will open after initialization');
+        // Store flag for later use
+        window._pendingWizardOpen = true;
+    }
+})();
+
+// Initialize app when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    // DOM is already ready, initialize immediately
+    initializeApp();
+}
+
+// Register service worker with automatic cache clearing
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+        try {
+            // First, unregister all old service workers and clear old caches
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            for (const registration of registrations) {
+                // Unregister old service workers
+                await registration.unregister();
+                console.log('[Service Worker] Unregistered old service worker');
+            }
+            
+            // Clear all old caches
+            if ('caches' in window) {
+                const cacheNames = await caches.keys();
+                for (const cacheName of cacheNames) {
+                    // Only delete old caches (not the current one)
+                    if (cacheName !== 'scanner-map-v3.1.0') {
+                        await caches.delete(cacheName);
+                        console.log('[Service Worker] Deleted old cache:', cacheName);
+                    }
+                }
+            }
+            
+            // Now register the new service worker
+            const registration = await navigator.serviceWorker.register('/sw.js', {
+                updateViaCache: 'none' // Always check for updates
+            });
+            
+            console.log('[Service Worker] Registered successfully:', registration.scope);
+            
+            // Force update check on registration
+            await registration.update();
+            
+            // Check for updates periodically
+            registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                console.log('[Service Worker] New worker found, installing...');
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed') {
+                        if (navigator.serviceWorker.controller) {
+                            // New service worker available, activate it immediately
+                            console.log('[Service Worker] New version available, activating...');
+                            newWorker.postMessage({ type: 'SKIP_WAITING' });
+                            // Reload page to use new service worker
+                            window.location.reload();
+                        } else {
+                            // First time installation
+                            console.log('[Service Worker] Installed successfully');
+                        }
+                    }
+                });
+            });
+            
+            // Listen for controller change (new service worker activated)
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                console.log('[Service Worker] New controller activated, reloading...');
+                window.location.reload();
+            });
+            
+        } catch (error) {
+            console.error('[Service Worker] Registration failed:', error);
+        }
+    });
+}
 
 function initializeApp() {
     console.log("[App] Initializing..."); // Add log
+    
+    // Force check for wizard URL parameter immediately
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    const hasWizardParam = urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard' || window._pendingWizardOpen;
+    
     // Initialize configuration variables from the config
     timeRangeHours = appConfig.time.defaultTimeRangeHours;
     heatmapIntensity = appConfig.heatmap.defaultIntensity;
@@ -3933,7 +4074,7 @@ function initializeApp() {
     setupLiveFeed();
     setupUserLocationButton(); // ADDED: Setup for the new location button
     loadCalls(timeRangeHours);
-    setupUserManagement();
+    setupUserManagement(); // This calls setupSetupWizard() internally
     setupSidebarToggle();
 
     // Initialize the category sidebar content dynamically
@@ -3948,6 +4089,62 @@ function initializeApp() {
     // Set up periodic admin status check
     setInterval(checkAdminStatus, 30000); // Check every 30 seconds
     
+    // Helper function to check and show Setup Wizard or Quick Start modal
+    const checkAndShowWizard = () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const hash = window.location.hash;
+        
+        // Check for setup wizard (new)
+        if (urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard') {
+            console.log('[App] Setup wizard URL parameter/hash detected');
+            const modal = document.getElementById('setup-wizard-modal');
+            console.log('[App] Modal element:', modal ? 'found' : 'NOT FOUND');
+            console.log('[App] showSetupWizard function:', typeof showSetupWizard);
+            
+            // Ensure modal exists and function is available
+            if (!modal) {
+                console.error('[App] Setup wizard modal not found in DOM');
+                return false;
+            }
+            
+            if (typeof showSetupWizard !== 'function') {
+                console.error('[App] showSetupWizard function not available yet');
+                return false;
+            }
+            
+            console.log('[App] Auto-opening Setup Wizard from URL parameter/hash');
+            // Use requestAnimationFrame to ensure DOM is fully ready
+            requestAnimationFrame(() => {
+                setTimeout(() => {
+                    try {
+                        showSetupWizard();
+                        // Remove the query parameter and hash from URL (clean URL)
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                        return true; // Successfully opened
+                    } catch (error) {
+                        console.error('[App] Error opening wizard:', error);
+                        return false;
+                    }
+                }, 50);
+            });
+            return true; // Will attempt to open
+        }
+        
+        // Check for quickstart (legacy, kept for compatibility)
+        if (urlParams.get('quickstart') === '1') {
+            const modal = document.getElementById('quick-start-modal');
+            if (modal && typeof showQuickStartModal === 'function') {
+                console.log('[App] Auto-opening Quick Start modal from URL parameter');
+                showQuickStartModal();
+                // Remove the query parameter from URL (clean URL)
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return true;
+            }
+            return false;
+        }
+        return true; // Not a wizard URL, nothing to do
+    };
+    
     fetch('/api/sessions/current')
         .then(response => response.json())
         .then(data => {
@@ -3955,19 +4152,90 @@ function initializeApp() {
             setupSessionManagement();
             // Re-check admin status after session setup
             checkAdminStatus();
+            
+            // Try to show Setup Wizard or Quick Start modal after session setup completes
+            if (!checkAndShowWizard()) {
+                // If modal not ready, wait a bit and retry
+                setTimeout(checkAndShowWizard, 500);
+            }
         })
         .catch(error => {
             console.error('Error getting current session:', error);
             setupSessionManagement();
+            
+            // Try to show Setup Wizard or Quick Start modal even if session fetch failed
+            if (!checkAndShowWizard()) {
+                setTimeout(checkAndShowWizard, 500);
+            }
         });
     
     loadCalls(timeRangeHours);
+    
+    // Also try to show Setup Wizard or Quick Start modal after a delay (in case session fetch is slow)
+    setTimeout(() => {
+        checkAndShowWizard();
+    }, 2000);
+    
+    // If wizard parameter is present, try multiple times with increasing delays
+    if (hasWizardParam) {
+        // Try immediately after setupUserManagement (which sets up the wizard)
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after setupUserManagement (attempt 1)');
+            checkAndShowWizard();
+        }, 100);
+        
+        // Try again after a short delay
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 2)');
+            checkAndShowWizard();
+        }, 500);
+        
+        // Try again after longer delay (in case of slow initialization)
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 3)');
+            checkAndShowWizard();
+        }, 1500);
+        
+        // Final attempt
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 4)');
+            checkAndShowWizard();
+        }, 3000);
+        
+        // Clear the pending flag
+        window._pendingWizardOpen = false;
+    }
 }
+
+// Also check on window load event (after all resources are loaded, including deferred scripts)
+window.addEventListener('load', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    if (urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard') {
+        console.log('[App] Window loaded, final check for wizard parameter');
+        setTimeout(() => {
+            const modal = document.getElementById('setup-wizard-modal');
+            if (modal && typeof showSetupWizard === 'function') {
+                console.log('[App] Opening wizard on window load event');
+                showSetupWizard();
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+                console.warn('[App] Wizard not ready on window load - modal:', !!modal, 'function:', typeof showSetupWizard);
+            }
+        }, 200);
+    }
+});
 // Function to load and display summary
 function loadSummary() {
   fetch('/summary.json')
     .then(response => {
       if (!response.ok) {
+        // Summary file doesn't exist yet (404) - this is normal on first run
+        if (response.status === 404) {
+          // Return a rejected promise with a special marker so we can handle it silently
+          return Promise.reject({ status: 404, is404: true });
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       return response.json();
@@ -4044,6 +4312,11 @@ function loadSummary() {
 
     })
     .catch(error => {
+      // Silently ignore 404 errors (summary file doesn't exist yet - normal on first run)
+      if (error.is404 || (error.status === 404)) {
+        return; // Don't log or display anything for 404
+      }
+      // Only log other errors
       console.error('Error loading or processing summary:', error);
       const ticker = document.querySelector('.ticker');
       if (ticker) {
@@ -5523,5 +5796,4006 @@ function getSelectedTimeRange() {
         };
     }
 }
+
+// Service Configuration Functions
+function showServiceConfigModal() {
+    const modal = document.getElementById('service-config-modal');
+    if (modal) {
+        loadServiceConfig();
+        modal.style.display = 'block';
+    }
+}
+
+function loadServiceConfig() {
+    fetch('/api/config/services')
+        .then(response => response.json())
+        .then(data => {
+            const ollamaUrlInput = document.getElementById('ollama-url');
+            const icadUrlInput = document.getElementById('icad-url');
+            
+            if (ollamaUrlInput) {
+                ollamaUrlInput.value = data.ollama?.url || '';
+            }
+            if (icadUrlInput) {
+                icadUrlInput.value = data.icad?.url || '';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service config:', error);
+            showNotification('Error loading service configuration', 'error');
+        });
+}
+
+function setupServiceConfigModal() {
+    const saveBtn = document.getElementById('save-service-config-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            const icadUrl = document.getElementById('icad-url').value.trim();
+            
+            fetch('/api/config/services', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ollama: { url: ollamaUrl || undefined },
+                    icad: { url: icadUrl || undefined }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(data.message || 'Configuration saved. Restart services for changes to take effect.', 'success');
+                    document.getElementById('service-config-modal').style.display = 'none';
+                } else {
+                    showNotification(data.error || 'Error saving configuration', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error saving service config:', error);
+                showNotification('Error saving service configuration', 'error');
+            });
+        });
+    }
+}
+
+// Setup Wizard Functions
+let wizardCurrentStep = 1;
+const wizardTotalSteps = 6;
+let wizardConfig = {};
+
+function showSetupWizard() {
+    const modal = document.getElementById('setup-wizard-modal');
+    if (modal) {
+        console.log('[Setup Wizard] Opening wizard modal');
+        wizardCurrentStep = 1;
+        wizardConfig = {};
+        updateWizardProgress();
+        showWizardStep(1);
+        startSystemDetection();
+        modal.style.display = 'block';
+        console.log('[Setup Wizard] Modal display set to block');
+    } else {
+        console.error('[Setup Wizard] Modal element not found!');
+    }
+}
+
+// Auto-advance past installation type step if already detected
+function autoSelectInstallationType(detections) {
+    if (detections && detections.installationType) {
+        const installType = detections.installationType;
+        wizardConfig.installationType = installType;
+        
+        // Select the radio button
+        const radio = document.querySelector(`input[name="installation-type"][value="${installType}"]`);
+        if (radio) {
+            radio.checked = true;
+            // Trigger change event to update UI
+            radio.dispatchEvent(new Event('change'));
+        }
+        
+        // Show a message that it was auto-detected
+        const warningsDiv = document.getElementById('wizard-install-warnings');
+        if (warningsDiv) {
+            warningsDiv.style.display = 'block';
+            warningsDiv.style.backgroundColor = 'rgba(0, 255, 0, 0.1)';
+            warningsDiv.style.borderColor = 'var(--primary-color)';
+            warningsDiv.innerHTML = `
+                <p style="margin: 0; color: var(--primary-color);">
+                    ✓ Installation type automatically detected: <strong>${installType === 'docker' ? 'Docker' : installType === 'hybrid' ? 'Hybrid' : 'Local'}</strong>
+                </p>
+            `;
+        }
+    }
+}
+
+function closeSetupWizard() {
+    const modal = document.getElementById('setup-wizard-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function updateWizardProgress() {
+    try {
+        const percent = Math.round((wizardCurrentStep / wizardTotalSteps) * 100);
+        const stepIndicator = document.getElementById('wizard-step-indicator');
+        const progressPercent = document.getElementById('wizard-progress-percent');
+        const progressBar = document.getElementById('wizard-progress-bar');
+        
+        if (stepIndicator) {
+            stepIndicator.textContent = `Step ${wizardCurrentStep} of ${wizardTotalSteps}`;
+        }
+        if (progressPercent) {
+            progressPercent.textContent = `${percent}%`;
+        }
+        if (progressBar) {
+            progressBar.style.width = `${percent}%`;
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error updating progress:', error);
+    }
+}
+
+function showWizardStep(step) {
+    try {
+        // Validate step number
+        if (step < 1 || step > wizardTotalSteps) {
+            console.error('[Setup Wizard] Invalid step number:', step);
+            return;
+        }
+        
+        // Skip step 2 (installation type) if already detected (only when going forward)
+        // Don't skip when going back - allow user to see/change it
+        const isStep2Skipped = (step === 2 && wizardConfig.system && wizardConfig.system.installationType);
+        if (isStep2Skipped && wizardCurrentStep > 2) {
+            // Only skip if we're going forward, not backward
+            console.log('[Setup Wizard] Skipping installation type step, already detected:', wizardConfig.system.installationType);
+            // Auto-advance to step 3
+            step = 3;
+            wizardCurrentStep = 3;
+        }
+        
+        // Hide all steps
+        document.querySelectorAll('.wizard-step').forEach(s => {
+            s.classList.remove('active');
+            s.style.display = 'none';
+        });
+        
+        // Show current step
+        const stepEl = document.getElementById(`wizard-step-${step}`);
+        if (stepEl) {
+            stepEl.classList.add('active');
+            stepEl.style.display = 'block';
+        } else {
+            console.error('[Setup Wizard] Step element not found:', `wizard-step-${step}`);
+            return;
+        }
+        
+        // Update navigation buttons
+        const prevBtn = document.getElementById('wizard-prev-btn');
+        const nextBtn = document.getElementById('wizard-next-btn');
+        const applyBtn = document.getElementById('wizard-apply-btn');
+        const finishBtn = document.getElementById('wizard-finish-btn');
+        
+        // Calculate effective step for button display (account for skipped step 2)
+        const effectiveStep = (step === 2 && isStep2Skipped) ? 3 : step;
+        const canGoBack = effectiveStep > 1;
+        const canGoNext = effectiveStep < wizardTotalSteps;
+        
+        if (prevBtn) prevBtn.style.display = canGoBack ? 'inline-block' : 'none';
+        if (nextBtn) nextBtn.style.display = canGoNext ? 'inline-block' : 'none';
+        if (applyBtn) applyBtn.style.display = effectiveStep === wizardTotalSteps ? 'inline-block' : 'none';
+        if (finishBtn) finishBtn.style.display = 'none';
+        
+        // Load step-specific data
+        if (step === 1) {
+            // Already detecting in showSetupWizard
+        } else if (step === 4) {
+            if (typeof detectSDRDevices === 'function') {
+                detectSDRDevices();
+            }
+        } else if (step === 6) {
+            if (typeof generateReviewSummary === 'function') {
+                generateReviewSummary();
+            }
+        }
+        
+        updateWizardProgress();
+    } catch (error) {
+        console.error('[Setup Wizard] Error in showWizardStep:', error);
+        showNotification('Error displaying wizard step. Please refresh and try again.', 'error');
+    }
+}
+
+function wizardNext() {
+    try {
+        // Validate current step before proceeding
+        if (!validateWizardStep(wizardCurrentStep)) {
+            return; // Validation failed, don't proceed
+        }
+        
+        if (wizardCurrentStep < wizardTotalSteps) {
+            let nextStep = wizardCurrentStep + 1;
+            
+            // Skip step 2 if installation type is already detected
+            if (nextStep === 2 && wizardConfig.system && wizardConfig.system.installationType) {
+                nextStep = 3;
+            }
+            
+            wizardCurrentStep = nextStep;
+            showWizardStep(wizardCurrentStep);
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in wizardNext:', error);
+        showNotification('Error advancing to next step. Please try again.', 'error');
+    }
+}
+
+function wizardPrevious() {
+    try {
+        if (wizardCurrentStep > 1) {
+            let prevStep = wizardCurrentStep - 1;
+            
+            // If going back from step 3 and step 2 is skipped, go to step 1
+            if (prevStep === 2 && wizardConfig.system && wizardConfig.system.installationType) {
+                prevStep = 1;
+            }
+            
+            wizardCurrentStep = prevStep;
+            showWizardStep(wizardCurrentStep);
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in wizardPrevious:', error);
+        showNotification('Error going to previous step. Please try again.', 'error');
+    }
+}
+
+function validateWizardStep(step) {
+    try {
+        // Validation logic for each step
+        if (step === 2) {
+            // Skip validation if installation type is already set from detection
+            if (wizardConfig.system && wizardConfig.system.installationType) {
+                wizardConfig.installationType = wizardConfig.system.installationType;
+                return true;
+            }
+            
+            const selected = document.querySelector('input[name="installation-type"]:checked');
+            if (!selected) {
+                showNotification('Please select an installation type', 'error');
+                return false;
+            }
+            wizardConfig.installationType = selected.value;
+        } else if (step === 3) {
+            const cityEl = document.getElementById('wizard-geocoding-city');
+            const stateEl = document.getElementById('wizard-geocoding-state');
+            const countryEl = document.getElementById('wizard-geocoding-country');
+            const countiesEl = document.getElementById('wizard-geocoding-counties');
+            
+            if (!cityEl || !stateEl) {
+                console.error('[Setup Wizard] Location input elements not found');
+                return true; // Don't block if elements don't exist
+            }
+            
+            const city = cityEl.value.trim();
+            const state = stateEl.value.trim();
+            
+            if (!city || !state) {
+                showNotification('Please enter at least city and state', 'error');
+                return false;
+            }
+            
+            wizardConfig.location = {
+                city,
+                state,
+                country: (countryEl ? countryEl.value.trim() : '') || 'us',
+                counties: countiesEl ? countiesEl.value.trim() : ''
+            };
+        }
+        return true;
+    } catch (error) {
+        console.error('[Setup Wizard] Error validating step:', error);
+        // Don't block progression on validation errors
+        return true;
+    }
+}
+
+function startSystemDetection() {
+    const details = document.getElementById('wizard-detection-details');
+    if (!details) {
+        console.error('[Setup Wizard] Detection details element not found');
+        return;
+    }
+    
+    const statusItems = details.querySelectorAll('div');
+    let completed = 0;
+    
+    fetch('/api/wizard/detect-system')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                const detections = data.systemInfo || data.detections || {};
+                
+                // Update detection status
+                statusItems.forEach((item, index) => {
+                    setTimeout(() => {
+                        const icon = item.querySelector('span');
+                        if (icon) {
+                            icon.textContent = '✓';
+                            icon.style.color = '#00ff00';
+                        }
+                        completed++;
+                        if (completed === statusItems.length) {
+                            showDetectionResults(detections);
+                        }
+                    }, index * 300);
+                });
+                
+                wizardConfig.system = detections;
+                
+                // Auto-select installation type if detected
+                if (detections.installationType) {
+                    autoSelectInstallationType(detections);
+                }
+            } else {
+                console.error('[Setup Wizard] System detection failed:', data.error);
+            }
+        })
+        .catch(error => {
+            console.error('[Setup Wizard] Error detecting system:', error);
+            showNotification('Error detecting system. Continuing with defaults.', 'error');
+        });
+}
+
+function showDetectionResults(detections) {
+    const statusEl = document.getElementById('wizard-detection-status');
+    const resultsEl = document.getElementById('wizard-detection-results');
+    const summaryEl = document.getElementById('wizard-detection-summary');
+    
+    if (statusEl) statusEl.style.display = 'none';
+    if (resultsEl) resultsEl.style.display = 'block';
+    
+    if (summaryEl) {
+        let summary = '';
+        summary += `OS: ${detections.os || 'Unknown'} (${detections.arch || 'Unknown'})\n`;
+        summary += `CPU: ${detections.cpu || 'Unknown'} (${detections.cpuCores || 'Unknown'} cores)\n`;
+        summary += `RAM: ${detections.ram || 'Unknown'}\n`;
+        if (detections.gpu) {
+            summary += `GPU: ${detections.gpu.name || 'Unknown'} (${detections.gpu.vendor || 'Unknown'})\n`;
+        }
+        summary += `Docker: ${detections.docker ? 'Available' : 'Not available'}\n`;
+        summary += `SDR Devices: ${detections.sdrDevices?.length || 0} detected\n`;
+        summaryEl.textContent = summary;
+    }
+}
+
+function detectSDRDevices() {
+    fetch('/api/wizard/detect-sdr')
+        .then(response => response.json())
+        .then(data => {
+            const devicesEl = document.getElementById('wizard-sdr-devices');
+            if (devicesEl && data.success) {
+                const devices = data.devices || [];
+                if (devices.length === 0) {
+                    devicesEl.innerHTML = '<div style="padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;"><span style="color: #ffaa00;">⚠️ No SDR devices detected</span><br><small>You can still configure channels manually or use network-based SDR</small></div>';
+                } else {
+                    devicesEl.innerHTML = devices.map((device, index) => `
+                        <div style="padding: 10px; margin: 5px 0; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+                            <strong>${device.type || 'Unknown'}</strong> - ${device.name || 'Device ' + (index + 1)}<br>
+                            <small>Serial: ${device.serial || 'N/A'} | Driver: ${device.driver || 'N/A'}</small>
+                        </div>
+                    `).join('');
+                    const rescanBtn = document.getElementById('wizard-rescan-sdr-btn');
+                    if (rescanBtn) rescanBtn.style.display = 'inline-block';
+                }
+                wizardConfig.sdrDevices = devices;
+            }
+        })
+        .catch(error => {
+            console.error('Error detecting SDR devices:', error);
+        });
+}
+
+function generateReviewSummary() {
+    const reviewEl = document.getElementById('wizard-review-content');
+    if (!reviewEl) return;
+    
+    let summary = '';
+    summary += `Installation Type: ${wizardConfig.installationType || 'Not selected'}\n`;
+    summary += `Location: ${wizardConfig.location?.city || ''}, ${wizardConfig.location?.state || ''}\n`;
+    summary += `SDR Devices: ${wizardConfig.sdrDevices?.length || 0}\n`;
+    summary += `Radio Software: ${document.getElementById('wizard-radio-software')?.value || 'Auto-detect'}\n`;
+    summary += `Transcription: ${document.getElementById('wizard-transcription-mode')?.value || 'local'}\n`;
+    summary += `AI Provider: ${document.getElementById('wizard-ai-provider')?.value || 'ollama'}\n`;
+    
+    reviewEl.textContent = summary;
+}
+
+function wizardAutoDetectService(serviceName, defaultPort, inputId) {
+    fetch(`/api/wizard/detect-service?service=${serviceName}&port=${defaultPort}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.url) {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.value = data.url;
+                    showNotification(`Auto-detected ${serviceName} at ${data.url}`, 'success');
+                }
+            } else {
+                showNotification(`Could not auto-detect ${serviceName}`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error detecting ${serviceName}:`, error);
+            showNotification(`Error detecting ${serviceName}`, 'error');
+        });
+}
+
+// Settings Modal Functions
+function showSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) {
+        // Reset to first tab
+        switchSettingsTab('general');
+        // Load current settings
+        loadAllSettings();
+        modal.style.display = 'block';
+    }
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function switchSettingsTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.settings-tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    // Remove active from all tabs
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    // Show selected tab content
+    const tabContent = document.getElementById(`settings-${tabName}-tab`);
+    const tabButton = document.querySelector(`.settings-tab[data-tab="${tabName}"]`);
+    if (tabContent) {
+        tabContent.classList.add('active');
+    }
+    if (tabButton) {
+        tabButton.classList.add('active');
+    }
+    
+    // Load tab-specific data
+    if (tabName === 'api-keys') {
+        loadAPIKeysDisplay();
+    } else if (tabName === 'services') {
+        loadSettingsServiceStatus();
+    } else if (tabName === 'models') {
+        loadSettingsModelRecommendations();
+        loadSettingsInstalledModels();
+    } else if (tabName === 'logs') {
+        refreshLogs();
+        const autoRefresh = document.getElementById('logs-auto-refresh');
+        if (autoRefresh && autoRefresh.checked) {
+            startLogsAutoRefresh();
+        }
+    }
+}
+
+// Load all settings from server
+function loadAllSettings() {
+    fetch('/api/settings')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.settings) {
+                const s = data.settings;
+                
+                // General settings
+                if (s.webserverPort) document.getElementById('settings-webserver-port').value = s.webserverPort;
+                if (s.botPort) document.getElementById('settings-bot-port').value = s.botPort;
+                if (s.publicDomain) document.getElementById('settings-public-domain').value = s.publicDomain;
+                if (s.timezone) document.getElementById('settings-timezone').value = s.timezone;
+                if (s.authEnabled !== undefined) document.getElementById('settings-auth-enabled').checked = s.authEnabled;
+                
+                // Map settings
+                if (s.mapCenter) {
+                    document.getElementById('settings-map-center-lat').value = s.mapCenter.lat || '';
+                    document.getElementById('settings-map-center-lng').value = s.mapCenter.lng || '';
+                }
+                if (s.mapZoom) document.getElementById('settings-map-zoom').value = s.mapZoom;
+                if (s.defaultTimeRange) document.getElementById('settings-default-time-range').value = s.defaultTimeRange;
+                if (s.trackNewCalls !== undefined) document.getElementById('settings-track-new-calls').checked = s.trackNewCalls;
+                
+                // Audio settings
+                if (s.globalVolume !== undefined) {
+                    document.getElementById('settings-global-volume').value = s.globalVolume;
+                    document.getElementById('settings-volume-display').textContent = Math.round(s.globalVolume * 100) + '%';
+                }
+                if (s.muteNewCalls !== undefined) document.getElementById('settings-mute-new-calls').checked = s.muteNewCalls;
+                if (s.autoplayEnabled !== undefined) document.getElementById('settings-autoplay-enabled').checked = s.autoplayEnabled;
+                
+                // Geocoding settings
+                if (s.geocodingProvider) document.getElementById('settings-geocoding-provider').value = s.geocodingProvider;
+                if (s.geocodingCity) document.getElementById('settings-geocoding-city').value = s.geocodingCity;
+                if (s.geocodingState) document.getElementById('settings-geocoding-state').value = s.geocodingState;
+                if (s.geocodingCountry) document.getElementById('settings-geocoding-country').value = s.geocodingCountry;
+                if (s.geocodingCounties) document.getElementById('settings-geocoding-counties').value = s.geocodingCounties;
+                
+                // Transcription settings - only show if enabled
+                if (s.transcriptionEnabled !== false) {
+                    if (s.transcriptionMode) {
+                        const transcriptionSelect = document.getElementById('settings-transcription-mode-select');
+                        if (transcriptionSelect) {
+                            transcriptionSelect.value = s.transcriptionMode;
+                            document.getElementById('settings-transcription-mode').value = s.transcriptionMode;
+                        }
+                        updateTranscriptionSettingsVisibility();
+                    }
+                    if (s.icadUrl) {
+                        document.getElementById('settings-icad-url').value = s.icadUrl;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-icad-url')) {
+                            document.getElementById('settings-services-icad-url').value = s.icadUrl;
+                        }
+                        // Extract port from URL if present, or use provided port
+                        const port = s.icadPort || (s.icadUrl.match(/:(\d+)/) ? s.icadUrl.match(/:(\d+)/)[1] : '9912');
+                        if (document.getElementById('settings-icad-port')) {
+                            document.getElementById('settings-icad-port').value = port;
+                        }
+                    }
+                    if (s.fasterWhisperUrl) {
+                        document.getElementById('settings-faster-whisper-url').value = s.fasterWhisperUrl;
+                        // Extract port from URL if present, or use provided port
+                        const port = s.fasterWhisperPort || (s.fasterWhisperUrl.match(/:(\d+)/) ? s.fasterWhisperUrl.match(/:(\d+)/)[1] : '8000');
+                        if (document.getElementById('settings-faster-whisper-port')) {
+                            document.getElementById('settings-faster-whisper-port').value = port;
+                        }
+                    }
+                } else {
+                    // Hide transcription tab if disabled
+                    const transcriptionTab = document.querySelector('.settings-tab[data-tab="transcription"]');
+                    if (transcriptionTab) transcriptionTab.style.display = 'none';
+                }
+                
+                // AI settings - only show if enabled
+                if (s.aiEnabled !== false) {
+                    if (s.aiProvider) {
+                        const aiSelect = document.getElementById('settings-ai-provider-select');
+                        if (aiSelect) {
+                            aiSelect.value = s.aiProvider;
+                            document.getElementById('settings-ai-provider').value = s.aiProvider;
+                        }
+                        updateAISettingsVisibility();
+                    }
+                    if (s.ollamaUrl) {
+                        document.getElementById('settings-ollama-url').value = s.ollamaUrl;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-ollama-url')) {
+                            document.getElementById('settings-services-ollama-url').value = s.ollamaUrl;
+                        }
+                        // Extract port from URL if present, or use provided port
+                        const port = s.ollamaPort || (s.ollamaUrl.match(/:(\d+)/) ? s.ollamaUrl.match(/:(\d+)/)[1] : '11434');
+                        if (document.getElementById('settings-ollama-port')) {
+                            document.getElementById('settings-ollama-port').value = port;
+                        }
+                    }
+                    if (s.ollamaModel) {
+                        document.getElementById('settings-ollama-model').value = s.ollamaModel;
+                        // Also update services tab
+                        if (document.getElementById('settings-services-ollama-model')) {
+                            document.getElementById('settings-services-ollama-model').value = s.ollamaModel;
+                        }
+                    }
+                    if (s.openaiModel) document.getElementById('settings-openai-model').value = s.openaiModel;
+                } else {
+                    // Hide AI tab if disabled
+                    const aiTab = document.querySelector('.settings-tab[data-tab="ai"]');
+                    if (aiTab) aiTab.style.display = 'none';
+                }
+                
+                // Discord settings
+                if (s.discordEnabled !== undefined) {
+                    document.getElementById('settings-discord-enabled').checked = s.discordEnabled;
+                    updateDiscordSettingsVisibility();
+                }
+                if (s.discordChannel) document.getElementById('settings-discord-channel').value = s.discordChannel;
+                if (s.discordAISummaries !== undefined) document.getElementById('settings-discord-ai-summaries').checked = s.discordAISummaries;
+                
+                // Storage settings
+                if (s.storageMode) {
+                    document.getElementById('settings-storage-mode').value = s.storageMode;
+                    updateStorageSettingsVisibility();
+                }
+                if (s.s3Endpoint) document.getElementById('settings-s3-endpoint').value = s.s3Endpoint;
+                if (s.s3Bucket) document.getElementById('settings-s3-bucket').value = s.s3Bucket;
+                if (s.s3Region) document.getElementById('settings-s3-region').value = s.s3Region;
+                
+                // Display settings
+                if (s.heatmapIntensity) {
+                    document.getElementById('settings-heatmap-intensity').value = s.heatmapIntensity;
+                    document.getElementById('settings-heatmap-intensity-display').textContent = s.heatmapIntensity;
+                }
+                if (s.heatmapEnabled !== undefined) document.getElementById('settings-heatmap-enabled').checked = s.heatmapEnabled;
+                if (s.maxMarkers) document.getElementById('settings-max-markers').value = s.maxMarkers;
+                if (s.clusterMarkers !== undefined) document.getElementById('settings-cluster-markers').checked = s.clusterMarkers;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading settings:', error);
+        });
+}
+
+function updateTranscriptionSettingsVisibility() {
+    const select = document.getElementById('settings-transcription-mode-select');
+    const mode = select ? select.value : 'local';
+    
+    // Update hidden input
+    const hiddenInput = document.getElementById('settings-transcription-mode');
+    if (hiddenInput) hiddenInput.value = mode;
+    
+    // Show/hide settings sections
+    document.getElementById('transcription-icad-settings').style.display = mode === 'icad' ? 'block' : 'none';
+    document.getElementById('transcription-faster-whisper-settings').style.display = mode === 'faster-whisper' ? 'block' : 'none';
+    
+    // Update iCAD web UI link
+    if (mode === 'icad') {
+        updateICADWebUILink();
+    }
+}
+
+function updateAISettingsVisibility() {
+    const select = document.getElementById('settings-ai-provider-select');
+    const provider = select ? select.value : 'ollama';
+    
+    // Update hidden input
+    const hiddenInput = document.getElementById('settings-ai-provider');
+    if (hiddenInput) hiddenInput.value = provider;
+    
+    // Show/hide settings sections
+    document.getElementById('ai-openai-settings').style.display = provider === 'openai' ? 'block' : 'none';
+    document.getElementById('ai-ollama-settings').style.display = provider === 'ollama' ? 'block' : 'none';
+}
+
+function updateICADWebUILink() {
+    const urlInput = document.getElementById('settings-icad-url');
+    const portInput = document.getElementById('settings-icad-port');
+    const linkBtn = document.getElementById('icad-webui-link-btn');
+    const linkContainer = document.getElementById('icad-webui-link');
+    
+    if (urlInput && portInput && linkBtn && linkContainer) {
+        const url = urlInput.value || 'http://localhost';
+        const port = portInput.value || '9912';
+        
+        // Extract base URL (remove port if present)
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        const webUIUrl = `${baseUrl}:${port}`;
+        
+        linkBtn.href = webUIUrl;
+        linkContainer.style.display = 'block';
+    }
+}
+
+function updateDiscordSettingsVisibility() {
+    const enabled = document.getElementById('settings-discord-enabled').checked;
+    document.getElementById('discord-settings-content').style.display = enabled ? 'block' : 'none';
+}
+
+function updateStorageSettingsVisibility() {
+    const mode = document.getElementById('settings-storage-mode').value;
+    document.getElementById('storage-s3-settings').style.display = mode === 's3' ? 'block' : 'none';
+}
+
+function loadAPIKeysDisplay() {
+    fetch('/api/settings/api-keys')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const keysList = document.getElementById('api-keys-list');
+                if (keysList) {
+                    keysList.innerHTML = Object.entries(data.keys || {}).map(([name, value]) => {
+                        const masked = value ? value.substring(0, 4) + '...' + value.substring(value.length - 4) : 'Not set';
+                        return `<div><strong>${name}:</strong> ${masked}</div>`;
+                    }).join('');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading API keys:', error);
+        });
+}
+
+// Settings save functions
+function saveGeneralSettings() {
+    const settings = {
+        webserverPort: parseInt(document.getElementById('settings-webserver-port').value),
+        botPort: parseInt(document.getElementById('settings-bot-port').value),
+        publicDomain: document.getElementById('settings-public-domain').value,
+        timezone: document.getElementById('settings-timezone').value,
+        authEnabled: document.getElementById('settings-auth-enabled').checked
+    };
+    saveSettings('general', settings);
+}
+
+function saveMapSettings() {
+    const settings = {
+        mapCenter: {
+            lat: parseFloat(document.getElementById('settings-map-center-lat').value),
+            lng: parseFloat(document.getElementById('settings-map-center-lng').value)
+        },
+        mapZoom: parseInt(document.getElementById('settings-map-zoom').value),
+        defaultTimeRange: parseInt(document.getElementById('settings-default-time-range').value),
+        trackNewCalls: document.getElementById('settings-track-new-calls').checked
+    };
+    saveSettings('map', settings);
+}
+
+function saveAudioSettings() {
+    const settings = {
+        globalVolume: parseFloat(document.getElementById('settings-global-volume').value),
+        muteNewCalls: document.getElementById('settings-mute-new-calls').checked,
+        autoplayEnabled: document.getElementById('settings-autoplay-enabled').checked
+    };
+    saveSettings('audio', settings);
+}
+
+function saveGeocodingSettings() {
+    const settings = {
+        geocodingProvider: document.getElementById('settings-geocoding-provider').value,
+        geocodingCity: document.getElementById('settings-geocoding-city').value,
+        geocodingState: document.getElementById('settings-geocoding-state').value,
+        geocodingCountry: document.getElementById('settings-geocoding-country').value,
+        geocodingCounties: document.getElementById('settings-geocoding-counties').value
+    };
+    saveSettings('geocoding', settings);
+}
+
+function saveTranscriptionSettings() {
+    const select = document.getElementById('settings-transcription-mode-select');
+    const mode = select ? select.value : 'local';
+    
+    const settings = {
+        transcriptionMode: mode
+    };
+    
+    // Only include settings for the selected mode
+    if (mode === 'icad') {
+        const url = document.getElementById('settings-icad-url').value || 'http://localhost';
+        const port = document.getElementById('settings-icad-port').value || '9912';
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.icadUrl = `${baseUrl}:${port}`;
+        const apiKey = document.getElementById('settings-icad-api-key').value;
+        if (apiKey) settings.icadApiKey = apiKey;
+    } else if (mode === 'faster-whisper') {
+        const url = document.getElementById('settings-faster-whisper-url').value || 'http://localhost';
+        const port = document.getElementById('settings-faster-whisper-port').value || '8000';
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.fasterWhisperUrl = `${baseUrl}:${port}`;
+    }
+    
+    saveSettings('transcription', settings);
+}
+
+function saveServicesSettings() {
+    const settings = {
+        ollamaUrl: document.getElementById('settings-services-ollama-url').value,
+        ollamaModel: document.getElementById('settings-services-ollama-model').value,
+        icadUrl: document.getElementById('settings-services-icad-url').value
+    };
+    const icadKey = document.getElementById('settings-services-icad-api-key').value;
+    if (icadKey) settings.icadApiKey = icadKey;
+    
+    saveSettings('services', settings);
+}
+
+function saveAISettings() {
+    const select = document.getElementById('settings-ai-provider-select');
+    const provider = select ? select.value : 'ollama';
+    
+    const settings = {
+        aiProvider: provider
+    };
+    
+    // Only include settings for the selected provider
+    if (provider === 'openai') {
+        settings.openaiModel = document.getElementById('settings-openai-model').value;
+        const openaiKey = document.getElementById('settings-openai-api-key').value;
+        if (openaiKey) settings.openaiApiKey = openaiKey;
+    } else if (provider === 'ollama') {
+        const urlInput = document.getElementById('settings-ollama-url');
+        const url = urlInput ? urlInput.value || 'http://localhost' : 'http://localhost';
+        // Extract port from URL if present, otherwise use default
+        let port = '11434';
+        const urlMatch = url.match(/:(\d+)/);
+        if (urlMatch) {
+            port = urlMatch[1];
+        }
+        const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
+        settings.ollamaUrl = `${baseUrl}:${port}`;
+        const modelInput = document.getElementById('settings-ollama-model');
+        if (modelInput) {
+            settings.ollamaModel = modelInput.value;
+        }
+    }
+    
+    saveSettings('ai', settings);
+}
+
+function saveDiscordSettings() {
+    const settings = {
+        discordEnabled: document.getElementById('settings-discord-enabled').checked,
+        discordChannel: document.getElementById('settings-discord-channel').value,
+        discordAISummaries: document.getElementById('settings-discord-ai-summaries').checked
+    };
+    const token = document.getElementById('settings-discord-token').value;
+    if (token) settings.discordToken = token;
+    saveSettings('discord', settings);
+}
+
+function saveStorageSettings() {
+    const settings = {
+        storageMode: document.getElementById('settings-storage-mode').value,
+        s3Endpoint: document.getElementById('settings-s3-endpoint').value,
+        s3Bucket: document.getElementById('settings-s3-bucket').value,
+        s3Region: document.getElementById('settings-s3-region').value
+    };
+    const accessKey = document.getElementById('settings-s3-access-key').value;
+    const secretKey = document.getElementById('settings-s3-secret-key').value;
+    if (accessKey) settings.s3AccessKey = accessKey;
+    if (secretKey) settings.s3SecretKey = secretKey;
+    saveSettings('storage', settings);
+}
+
+function saveDisplaySettings() {
+    const settings = {
+        heatmapIntensity: parseInt(document.getElementById('settings-heatmap-intensity').value),
+        heatmapEnabled: document.getElementById('settings-heatmap-enabled').checked,
+        maxMarkers: parseInt(document.getElementById('settings-max-markers').value),
+        clusterMarkers: document.getElementById('settings-cluster-markers').checked
+    };
+    saveSettings('display', settings);
+}
+
+function saveAPIKeys() {
+    const keys = {};
+    const googleKey = document.getElementById('settings-google-maps-key').value;
+    const locationiqKey = document.getElementById('settings-locationiq-key').value;
+    if (googleKey) keys.googleMapsKey = googleKey;
+    if (locationiqKey) keys.locationiqKey = locationiqKey;
+    if (Object.keys(keys).length === 0) {
+        showNotification('No API keys to save', 'info');
+        return;
+    }
+    saveSettings('api-keys', keys);
+}
+
+function saveSettings(category, settings) {
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, settings })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(`${category} settings saved successfully`, 'success');
+                loadAllSettings();
+            } else {
+                showNotification(data.error || `Error saving ${category} settings`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error saving ${category} settings:`, error);
+            showNotification(`Error saving ${category} settings`, 'error');
+        });
+}
+
+function setupSettingsModal() {
+    // Settings tab switching
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.dataset.tab;
+            switchSettingsTab(tabName);
+        });
+    });
+    
+    // Transcription mode dropdown
+    const transcriptionSelect = document.getElementById('settings-transcription-mode-select');
+    if (transcriptionSelect) {
+        transcriptionSelect.addEventListener('change', updateTranscriptionSettingsVisibility);
+    }
+    
+    // AI provider dropdown
+    const aiProviderSelect = document.getElementById('settings-ai-provider-select');
+    if (aiProviderSelect) {
+        aiProviderSelect.addEventListener('change', updateAISettingsVisibility);
+    }
+    
+    // iCAD URL/Port changes - update web UI link
+    const icadUrl = document.getElementById('settings-icad-url');
+    const icadPort = document.getElementById('settings-icad-port');
+    if (icadUrl) icadUrl.addEventListener('input', updateICADWebUILink);
+    if (icadPort) icadPort.addEventListener('input', updateICADWebUILink);
+    
+    // Discord enabled change
+    const discordEnabled = document.getElementById('settings-discord-enabled');
+    if (discordEnabled) {
+        discordEnabled.addEventListener('change', updateDiscordSettingsVisibility);
+    }
+    
+    // Storage mode change
+    const storageMode = document.getElementById('settings-storage-mode');
+    if (storageMode) {
+        storageMode.addEventListener('change', updateStorageSettingsVisibility);
+    }
+    
+    // Volume slider
+    const volumeSlider = document.getElementById('settings-global-volume');
+    if (volumeSlider) {
+        volumeSlider.addEventListener('input', function() {
+            const display = document.getElementById('settings-volume-display');
+            if (display) display.textContent = Math.round(this.value * 100) + '%';
+        });
+    }
+    
+    // Heatmap intensity slider
+    const heatmapSlider = document.getElementById('settings-heatmap-intensity');
+    if (heatmapSlider) {
+        heatmapSlider.addEventListener('input', function() {
+            const display = document.getElementById('settings-heatmap-intensity-display');
+            if (display) display.textContent = this.value;
+        });
+    }
+    
+    // Show API keys checkbox
+    const showAPIKeys = document.getElementById('settings-show-api-keys');
+    if (showAPIKeys) {
+        showAPIKeys.addEventListener('change', function() {
+            const display = document.getElementById('api-keys-display');
+            if (display) {
+                display.style.display = this.checked ? 'block' : 'none';
+                if (this.checked) {
+                    loadAPIKeysDisplay();
+                }
+            }
+        });
+    }
+    
+    // External services action button
+    const externalServicesBtn = document.getElementById('external-services-action-btn');
+    if (externalServicesBtn) {
+        externalServicesBtn.addEventListener('click', handleExternalServicesAction);
+    }
+    
+    // Logs tab setup
+    const logsAutoRefresh = document.getElementById('logs-auto-refresh');
+    const logsFilter = document.getElementById('logs-filter');
+    if (logsAutoRefresh) {
+        logsAutoRefresh.addEventListener('change', function() {
+            if (this.checked) {
+                startLogsAutoRefresh();
+            } else {
+                stopLogsAutoRefresh();
+            }
+        });
+    }
+    if (logsFilter) {
+        logsFilter.addEventListener('change', refreshLogs);
+    }
+    
+    // Save buttons
+    const saveButtons = {
+        'save-general-settings-btn': saveGeneralSettings,
+        'save-services-settings-btn': saveServicesSettings,
+        'save-map-settings-btn': saveMapSettings,
+        'save-audio-settings-btn': saveAudioSettings,
+        'save-geocoding-settings-btn': saveGeocodingSettings,
+        'save-transcription-settings-btn': saveTranscriptionSettings,
+        'save-ai-settings-btn': saveAISettings,
+        'save-discord-settings-btn': saveDiscordSettings,
+        'save-storage-settings-btn': saveStorageSettings,
+        'save-display-settings-btn': saveDisplaySettings,
+        'save-api-keys-btn': saveAPIKeys
+    };
+    
+    Object.entries(saveButtons).forEach(([id, handler]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('click', handler);
+    });
+}
+
+// Old Quick Start functions removed - replaced by Setup Wizard
+
+function setupSetupWizard() {
+    // Wizard navigation buttons
+    const nextBtn = document.getElementById('wizard-next-btn');
+    const prevBtn = document.getElementById('wizard-prev-btn');
+    const applyBtn = document.getElementById('wizard-apply-btn');
+    const finishBtn = document.getElementById('wizard-finish-btn');
+    
+    if (nextBtn) nextBtn.addEventListener('click', wizardNext);
+    if (prevBtn) prevBtn.addEventListener('click', wizardPrevious);
+    if (applyBtn) applyBtn.addEventListener('click', applyWizardConfiguration);
+    if (finishBtn) finishBtn.addEventListener('click', closeSetupWizard);
+    
+    // Installation type selection
+    document.querySelectorAll('input[name="installation-type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const installType = this.value;
+            wizardConfig.installationType = installType;
+            updateInstallationWarnings(installType);
+        });
+    });
+    
+    // Location detection
+    const detectLocationBtn = document.getElementById('wizard-detect-location-btn');
+    if (detectLocationBtn) {
+        detectLocationBtn.addEventListener('click', wizardDetectLocation);
+    }
+    
+    // SDR rescan
+    const rescanSdrBtn = document.getElementById('wizard-rescan-sdr-btn');
+    if (rescanSdrBtn) {
+        rescanSdrBtn.addEventListener('click', detectSDRDevices);
+    }
+    
+    // Channel import
+    const importRadioRefBtn = document.getElementById('wizard-import-radioreference-btn');
+    const importCustomBtn = document.getElementById('wizard-import-custom-csv-btn');
+    const channelFileInput = document.getElementById('wizard-channel-file');
+    const channelDropZone = document.getElementById('wizard-channel-drop-zone');
+    
+    if (importRadioRefBtn) {
+        importRadioRefBtn.addEventListener('click', () => {
+            document.getElementById('wizard-import-section').style.display = 'block';
+            wizardConfig.importType = 'radioreference';
+        });
+    }
+    if (importCustomBtn) {
+        importCustomBtn.addEventListener('click', () => {
+            document.getElementById('wizard-import-section').style.display = 'block';
+            wizardConfig.importType = 'custom';
+        });
+    }
+    if (channelFileInput) {
+        channelFileInput.addEventListener('change', handleWizardChannelImport);
+    }
+    if (channelDropZone) {
+        channelDropZone.addEventListener('click', () => channelFileInput?.click());
+        channelDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            channelDropZone.style.borderColor = 'var(--primary-color)';
+        });
+        channelDropZone.addEventListener('dragleave', () => {
+            channelDropZone.style.borderColor = 'var(--border-color)';
+        });
+        channelDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            channelDropZone.style.borderColor = 'var(--border-color)';
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.csv')) {
+                channelFileInput.files = files;
+                handleWizardChannelImport({ target: channelFileInput });
+            }
+        });
+    }
+    
+    // Transcription mode change
+    const transcriptionMode = document.getElementById('wizard-transcription-mode');
+    if (transcriptionMode) {
+        transcriptionMode.addEventListener('change', function() {
+            document.getElementById('wizard-transcription-icad-settings').style.display = 
+                this.value === 'icad' ? 'block' : 'none';
+            document.getElementById('wizard-transcription-openai-settings').style.display = 
+                this.value === 'openai' ? 'block' : 'none';
+        });
+    }
+    
+    // AI provider change
+    const aiProvider = document.getElementById('wizard-ai-provider');
+    if (aiProvider) {
+        aiProvider.addEventListener('change', function() {
+            document.getElementById('wizard-ai-ollama-settings').style.display = 
+                this.value === 'ollama' ? 'block' : 'none';
+            document.getElementById('wizard-ai-openai-settings').style.display = 
+                this.value === 'openai' ? 'block' : 'none';
+        });
+    }
+    
+    // Clear import
+    const clearImportBtn = document.getElementById('wizard-clear-import-btn');
+    if (clearImportBtn) {
+        clearImportBtn.addEventListener('click', () => {
+            wizardConfig.importedChannels = null;
+            wizardConfig.importedFrequencies = null;
+            document.getElementById('wizard-imported-channels').style.display = 'none';
+        });
+    }
+}
+
+function updateInstallationWarnings(installType) {
+    const warningsEl = document.getElementById('wizard-install-warnings');
+    if (!warningsEl) return;
+    
+    let warnings = [];
+    if (installType === 'docker' && !wizardConfig.system?.docker) {
+        warnings.push('⚠️ Docker is not available. Please install Docker first.');
+    }
+    if (installType === 'local' && wizardConfig.system?.docker) {
+        warnings.push('ℹ️ Docker is available but you chose local installation.');
+    }
+    
+    if (warnings.length > 0) {
+        warningsEl.innerHTML = warnings.map(w => `<div style="padding: 10px; margin: 5px 0; background-color: rgba(255, 170, 0, 0.1); border: 1px solid #ffaa00; border-radius: 4px;">${w}</div>`).join('');
+        warningsEl.style.display = 'block';
+    } else {
+        warningsEl.style.display = 'none';
+    }
+}
+
+function wizardDetectLocation() {
+    const statusEl = document.getElementById('wizard-location-detect-status');
+    if (statusEl) statusEl.textContent = 'Detecting...';
+    
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                
+                // Reverse geocode to get address
+                fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const address = data.address || {};
+                        if (document.getElementById('wizard-geocoding-city')) {
+                            document.getElementById('wizard-geocoding-city').value = address.city || address.town || address.village || '';
+                        }
+                        if (document.getElementById('wizard-geocoding-state')) {
+                            document.getElementById('wizard-geocoding-state').value = address.state || address.region || '';
+                        }
+                        if (document.getElementById('wizard-geocoding-country')) {
+                            document.getElementById('wizard-geocoding-country').value = (address.country_code || 'us').toLowerCase();
+                        }
+                        
+                        if (statusEl) statusEl.textContent = '✓ Location detected';
+                        if (statusEl) statusEl.style.color = '#00ff00';
+                        
+                        // Show map
+                        const mapContainer = document.getElementById('wizard-location-map-container');
+                        if (mapContainer) {
+                            mapContainer.style.display = 'block';
+                            if (!window.wizardMap) {
+                                window.wizardMap = L.map('wizard-location-map-container').setView([lat, lng], 13);
+                                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(window.wizardMap);
+                                L.marker([lat, lng]).addTo(window.wizardMap).bindPopup('Your location').openPopup();
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error reverse geocoding:', error);
+                        if (statusEl) statusEl.textContent = 'Location detected but address lookup failed';
+                    });
+            },
+            (error) => {
+                if (statusEl) {
+                    statusEl.textContent = 'Location detection failed. Please enter manually.';
+                    statusEl.style.color = '#ff0000';
+                }
+            }
+        );
+    } else {
+        if (statusEl) {
+            statusEl.textContent = 'Geolocation not supported. Please enter manually.';
+            statusEl.style.color = '#ff0000';
+        }
+    }
+}
+
+function handleWizardChannelImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        
+        // Detect format (RadioReference or custom)
+        const isRadioReference = headers.includes('decimal') && headers.includes('alpha tag');
+        
+        let talkgroups = [];
+        let frequencies = [];
+        
+        for (let i = 1; i < lines.length && i < 11; i++) {
+            const values = lines[i].split(',').map(v => v.trim());
+            if (isRadioReference) {
+                const decIndex = headers.indexOf('decimal');
+                const alphaIndex = headers.indexOf('alpha tag');
+                const descIndex = headers.indexOf('description');
+                if (decIndex >= 0 && values[decIndex]) {
+                    talkgroups.push({
+                        dec: values[decIndex],
+                        alpha: alphaIndex >= 0 ? values[alphaIndex] : '',
+                        description: descIndex >= 0 ? values[descIndex] : ''
+                    });
+                }
+            }
+        }
+        
+        // Show preview
+        const previewEl = document.getElementById('wizard-import-preview');
+        if (previewEl) {
+            previewEl.style.display = 'block';
+            previewEl.textContent = `Found ${talkgroups.length} talkgroups in preview (first 10 rows)\nFull file will be processed on import.`;
+        }
+        
+        // Process full file
+        processWizardChannelFile(text, isRadioReference);
+    };
+    reader.readAsText(file);
+}
+
+function processWizardChannelFile(text, isRadioReference) {
+    const lines = text.split('\n').filter(l => l.trim());
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    
+    let talkgroups = [];
+    let frequencies = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        if (isRadioReference) {
+            const decIndex = headers.indexOf('decimal');
+            const hexIndex = headers.indexOf('hex');
+            const alphaIndex = headers.indexOf('alpha tag');
+            const modeIndex = headers.indexOf('mode');
+            const descIndex = headers.indexOf('description');
+            const tagIndex = headers.indexOf('tag');
+            const countyIndex = headers.indexOf('county');
+            
+            if (decIndex >= 0 && values[decIndex]) {
+                talkgroups.push({
+                    dec: parseInt(values[decIndex]),
+                    hex: hexIndex >= 0 ? values[hexIndex] : '',
+                    alphaTag: alphaIndex >= 0 ? values[alphaIndex] : '',
+                    mode: modeIndex >= 0 ? values[modeIndex] : '',
+                    description: descIndex >= 0 ? values[descIndex] : '',
+                    tag: tagIndex >= 0 ? values[tagIndex] : '',
+                    county: countyIndex >= 0 ? values[countyIndex] : ''
+                });
+            }
+        }
+    }
+    
+    wizardConfig.importedChannels = talkgroups;
+    wizardConfig.importedFrequencies = frequencies;
+    
+    // Update UI
+    const importedEl = document.getElementById('wizard-imported-channels');
+    if (importedEl) {
+        importedEl.style.display = 'block';
+        document.getElementById('wizard-imported-count').textContent = talkgroups.length;
+        document.getElementById('wizard-imported-freq-count').textContent = frequencies.length;
+    }
+    
+    showNotification(`Imported ${talkgroups.length} talkgroups and ${frequencies.length} frequencies`, 'success');
+}
+
+function applyWizardConfiguration() {
+    // Collect all configuration
+    const config = {
+        installationType: wizardConfig.installationType,
+        location: wizardConfig.location,
+        sdrDevices: wizardConfig.sdrDevices || [],
+        radioSoftware: document.getElementById('wizard-radio-software')?.value || '',
+        transcriptionMode: document.getElementById('wizard-transcription-mode')?.value || 'local',
+        aiProvider: document.getElementById('wizard-ai-provider')?.value || 'ollama',
+        importedChannels: wizardConfig.importedChannels || [],
+        importedFrequencies: wizardConfig.importedFrequencies || []
+    };
+    
+    // Add service-specific config
+    if (config.transcriptionMode === 'icad') {
+        config.icadUrl = document.getElementById('wizard-icad-url')?.value || '';
+    } else if (config.transcriptionMode === 'openai') {
+        config.openaiApiKey = document.getElementById('wizard-openai-api-key')?.value || '';
+    }
+    
+    if (config.aiProvider === 'ollama') {
+        config.ollamaUrl = document.getElementById('wizard-ollama-url')?.value || '';
+        config.ollamaModel = document.getElementById('wizard-ollama-model')?.value || 'llama3.1:8b';
+    } else if (config.aiProvider === 'openai') {
+        config.openaiAiApiKey = document.getElementById('wizard-openai-ai-api-key')?.value || '';
+        config.openaiModel = document.getElementById('wizard-openai-model')?.value || 'gpt-4o-mini';
+    }
+    
+    // Validate
+    const errors = validateWizardConfig(config);
+    if (errors.length > 0) {
+        const errorsEl = document.getElementById('wizard-validation-errors');
+        const errorsContent = document.getElementById('wizard-validation-errors-content');
+        if (errorsEl && errorsContent) {
+            errorsEl.style.display = 'block';
+            errorsContent.innerHTML = errors.map(e => `<div>• ${e}</div>`).join('');
+        }
+        return;
+    }
+    
+    // Apply configuration
+    const progressEl = document.getElementById('wizard-apply-progress');
+    const statusEl = document.getElementById('wizard-apply-status');
+    const progressBar = document.getElementById('wizard-apply-progress-bar');
+    
+    if (progressEl) progressEl.style.display = 'block';
+    if (statusEl) statusEl.textContent = 'Generating configuration...';
+    if (progressBar) progressBar.style.width = '20%';
+    
+    fetch('/api/wizard/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (progressBar) progressBar.style.width = '100%';
+                if (statusEl) statusEl.textContent = 'Configuration applied successfully!';
+                
+                setTimeout(() => {
+                    const successEl = document.getElementById('wizard-apply-success');
+                    const applyBtn = document.getElementById('wizard-apply-btn');
+                    if (progressEl) progressEl.style.display = 'none';
+                    if (successEl) successEl.style.display = 'block';
+                    if (applyBtn) applyBtn.style.display = 'none';
+                    const finishBtn = document.getElementById('wizard-finish-btn');
+                    if (finishBtn) finishBtn.style.display = 'inline-block';
+                }, 1000);
+            } else {
+                if (statusEl) statusEl.textContent = `Error: ${data.error || 'Unknown error'}`;
+                showNotification('Error applying configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error applying configuration:', error);
+            if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+            showNotification('Error applying configuration', 'error');
+        });
+}
+
+function validateWizardConfig(config) {
+    const errors = [];
+    
+    if (!config.installationType) {
+        errors.push('Installation type is required');
+    }
+    if (!config.location || !config.location.city || !config.location.state) {
+        errors.push('Location (city and state) is required');
+    }
+    if (config.transcriptionMode === 'openai' && !config.openaiApiKey) {
+        errors.push('OpenAI API key is required for OpenAI Whisper API');
+    }
+    if (config.aiProvider === 'openai' && !config.openaiAiApiKey) {
+        errors.push('OpenAI API key is required for OpenAI AI provider');
+    }
+    
+    return errors;
+}
+
+// Radio Software Detection and Configuration Functions
+function setupRadioSoftwareConfig() {
+    const detectBtn = document.getElementById('detect-radio-software-btn');
+    const configureBtn = document.getElementById('configure-trunkrecorder-btn');
+    const statusContent = document.getElementById('radio-software-status-content');
+    const previewDiv = document.getElementById('trunkrecorder-config-preview');
+    const previewContent = document.getElementById('trunkrecorder-config-preview-content');
+    const saveBtn = document.getElementById('trunkrecorder-config-save-btn');
+    const cancelBtn = document.getElementById('trunkrecorder-config-cancel-btn');
+    const resultsDiv = document.getElementById('trunkrecorder-config-results');
+    
+    let previewConfig = null;
+    
+    // Load status on tab open
+    const softwareConfigTab = document.getElementById('radio-software-config-subtab');
+    if (softwareConfigTab) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    if (softwareConfigTab.classList.contains('active')) {
+                        loadRadioSoftwareStatus();
+                    }
+                }
+            });
+        });
+        observer.observe(softwareConfigTab, { attributes: true });
+    }
+    
+    function loadRadioSoftwareStatus() {
+        fetch('/api/radio/detect-software')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.detected) {
+                    const detected = data.detected;
+                    let html = '<ul style="list-style: none; padding: 0;">';
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>TrunkRecorder:</strong> 
+                        <span style="color: ${detected.trunkrecorder ? '#00ff00' : '#ff0000'};">
+                            ${detected.trunkrecorder ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                        ${detected.trunkrecorder && detected.details.trunkrecorder ? `<br><small style="color: #888;">Path: ${detected.details.trunkrecorder.configPath}</small>` : ''}
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>SDRTrunk:</strong> 
+                        <span style="color: ${detected.sdtrunk ? '#00ff00' : '#ff0000'};">
+                            ${detected.sdtrunk ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>OP25:</strong> 
+                        <span style="color: ${detected.op25 ? '#00ff00' : '#ff0000'};">
+                            ${detected.op25 ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += `<li style="margin: 5px 0;">
+                        <strong>rdio-scanner:</strong> 
+                        <span style="color: ${detected.rdioScanner ? '#00ff00' : '#ff0000'};">
+                            ${detected.rdioScanner ? '✓ Detected' : '✗ Not Detected'}
+                        </span>
+                    </li>`;
+                    
+                    html += '</ul>';
+                    
+                    if (statusContent) statusContent.innerHTML = html;
+                    
+                    // Show configure button if TrunkRecorder is detected
+                    if (detected.trunkrecorder && configureBtn) {
+                        configureBtn.style.display = 'inline-block';
+                    } else if (configureBtn) {
+                        configureBtn.style.display = 'none';
+                    }
+                } else {
+                    if (statusContent) statusContent.innerHTML = '<span style="color: #ff0000;">Error loading detection status</span>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading radio software status:', error);
+                if (statusContent) statusContent.innerHTML = '<span style="color: #ff0000;">Error loading detection status</span>';
+            });
+    }
+    
+    if (detectBtn) {
+        detectBtn.addEventListener('click', function() {
+            loadRadioSoftwareStatus();
+        });
+    }
+    
+    if (configureBtn) {
+        configureBtn.addEventListener('click', function() {
+            // Generate preview
+            fetch('/api/radio/configure-trunkrecorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ preview: true })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.config) {
+                        previewConfig = data.config;
+                        if (previewContent) {
+                            previewContent.textContent = JSON.stringify(data.config, null, 2);
+                        }
+                        if (previewDiv) previewDiv.style.display = 'block';
+                        if (resultsDiv) resultsDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error generating configuration preview', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error generating config preview:', error);
+                    showNotification('Error generating configuration preview', 'error');
+                });
+        });
+    }
+    
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            if (!previewConfig) {
+                showNotification('No configuration to save', 'error');
+                return;
+            }
+            
+            fetch('/api/radio/configure-trunkrecorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ preview: false })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (resultsDiv) {
+                            resultsDiv.style.display = 'block';
+                            resultsDiv.style.backgroundColor = 'rgba(0, 255, 0, 0.2)';
+                            resultsDiv.innerHTML = `<strong>Success!</strong><br>Configuration saved to: ${data.configPath || 'config.json'}<br>API Key: ${data.apiKey || 'N/A'}`;
+                        }
+                        showNotification('TrunkRecorder configuration saved successfully', 'success');
+                        if (previewDiv) previewDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error saving configuration', 'error');
+                        if (resultsDiv) {
+                            resultsDiv.style.display = 'block';
+                            resultsDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+                            resultsDiv.innerHTML = `<strong>Error:</strong> ${data.error || 'Unknown error'}`;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving config:', error);
+                    showNotification('Error saving configuration', 'error');
+                });
+        });
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (previewDiv) previewDiv.style.display = 'none';
+            if (resultsDiv) resultsDiv.style.display = 'none';
+            previewConfig = null;
+        });
+    }
+}
+
+// Location Configuration Functions
+function loadLocationConfig() {
+    fetch('/api/location/config')
+        .then(response => response.json())
+        .then(data => {
+            const cityInput = document.getElementById('geocoding-city');
+            const stateInput = document.getElementById('geocoding-state');
+            const countryInput = document.getElementById('geocoding-country');
+            const countiesInput = document.getElementById('geocoding-counties');
+            
+            if (cityInput) cityInput.value = data.city || '';
+            if (stateInput) stateInput.value = data.state || '';
+            if (countryInput) countryInput.value = data.country || '';
+            if (countiesInput) countiesInput.value = data.targetCounties || '';
+        })
+        .catch(error => {
+            console.error('Error loading location config:', error);
+        });
+}
+
+function detectUserLocation() {
+    const statusEl = document.getElementById('location-detect-status');
+    if (!navigator.geolocation) {
+        if (statusEl) statusEl.textContent = 'Geolocation is not supported by this browser.';
+        return;
+    }
+    
+    if (statusEl) statusEl.textContent = 'Detecting location...';
+    
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            
+            // Send to API to get location details
+            fetch('/api/location/detect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ lat, lon })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.location) {
+                    const loc = data.location;
+                    const cityInput = document.getElementById('geocoding-city');
+                    const stateInput = document.getElementById('geocoding-state');
+                    const countryInput = document.getElementById('geocoding-country');
+                    const countiesInput = document.getElementById('geocoding-counties');
+                    
+                    if (cityInput) cityInput.value = loc.city || '';
+                    if (stateInput) stateInput.value = loc.state || '';
+                    if (countryInput) countryInput.value = loc.country || '';
+                    if (countiesInput) countiesInput.value = loc.county || '';
+                    
+                    if (statusEl) statusEl.textContent = `Detected: ${loc.displayName}`;
+                    
+                    // TODO: Show map with radius circle (Phase 2A - can be enhanced later)
+                } else {
+                    if (statusEl) statusEl.textContent = 'Could not detect location details.';
+                }
+            })
+            .catch(error => {
+                console.error('Error detecting location:', error);
+                if (statusEl) statusEl.textContent = 'Error detecting location.';
+            });
+        },
+        function(error) {
+            if (statusEl) statusEl.textContent = 'Location detection failed: ' + error.message;
+        }
+    );
+}
+
+function saveLocationConfig() {
+    const city = document.getElementById('geocoding-city').value.trim();
+    const state = document.getElementById('geocoding-state').value.trim();
+    const country = document.getElementById('geocoding-country').value.trim();
+    const counties = document.getElementById('geocoding-counties').value.trim();
+    
+    fetch('/api/location/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ city, state, country, targetCounties: counties })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'Location configuration saved.', 'success');
+        } else {
+            showNotification(data.error || 'Error saving location configuration', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error saving location config:', error);
+        showNotification('Error saving location configuration', 'error');
+    });
+}
+
+// System Status Functions
+const installationProgress = {
+    docker: null,
+    nodejs: null,
+    python: null
+};
+
+function loadGPUStatus() {
+    fetch('/api/system/gpu-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const statusText = document.getElementById('gpu-status-text');
+                const gpuName = document.getElementById('gpu-name');
+                const gpuCheckbox = document.getElementById('gpu-enabled-checkbox');
+                const toolkitSection = document.getElementById('nvidia-toolkit-section');
+                
+                if (data.available && data.primary) {
+                    const brand = data.primary.brand || 'nvidia';
+                    const brandName = brand.charAt(0).toUpperCase() + brand.slice(1);
+                    if (statusText) statusText.textContent = `✓ ${brandName} GPU Detected`;
+                    if (statusText) statusText.style.color = '#00ff00';
+                    if (gpuName) gpuName.textContent = `GPU: ${data.primary.name || 'Unknown'}`;
+                    if (toolkitSection && brand === 'nvidia' && !data.toolkitInstalled) {
+                        toolkitSection.style.display = 'block';
+                    } else if (toolkitSection) {
+                        toolkitSection.style.display = 'none';
+                    }
+                    
+                    // Update service install buttons based on compatibility
+                    if (data.serviceCompatibility) {
+                        updateServiceButtons(data.serviceCompatibility);
+                    }
+                } else {
+                    if (statusText) statusText.textContent = '✗ No GPU Detected';
+                    if (statusText) statusText.style.color = '#ff0000';
+                    if (toolkitSection) toolkitSection.style.display = 'none';
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading GPU status:', error);
+        });
+}
+
+function updateServiceButtons(compatibility) {
+    // Disable/enable service install buttons based on GPU compatibility
+    const ollamaDockerBtn = document.getElementById('install-ollama-docker-btn');
+    const ollamaLocalBtn = document.getElementById('install-ollama-local-btn');
+    const icadDockerBtn = document.getElementById('install-icad-docker-btn');
+    const icadLocalBtn = document.getElementById('install-icad-local-btn');
+    const fasterWhisperBtn = document.getElementById('install-faster-whisper-local-btn');
+    
+    if (ollamaDockerBtn && compatibility.ollama) {
+        if (!compatibility.ollama.docker) {
+            ollamaDockerBtn.disabled = true;
+            ollamaDockerBtn.title = compatibility.ollama.reason || 'Not supported with current GPU';
+        } else {
+            ollamaDockerBtn.disabled = false;
+            ollamaDockerBtn.title = '';
+        }
+    }
+    
+    if (ollamaLocalBtn && compatibility.ollama) {
+        if (!compatibility.ollama.local) {
+            ollamaLocalBtn.disabled = true;
+            ollamaLocalBtn.title = compatibility.ollama.reason || 'Not supported with current GPU';
+        } else {
+            ollamaLocalBtn.disabled = false;
+            ollamaLocalBtn.title = '';
+        }
+    }
+    
+    if (icadDockerBtn && compatibility.icad) {
+        if (!compatibility.icad.supported || !compatibility.icad.docker) {
+            icadDockerBtn.disabled = true;
+            icadDockerBtn.title = compatibility.icad.reason || 'Not supported with current GPU';
+        } else {
+            icadDockerBtn.disabled = false;
+            icadDockerBtn.title = '';
+        }
+    }
+    
+    if (icadLocalBtn && compatibility.icad) {
+        if (!compatibility.icad.supported || !compatibility.icad.local) {
+            icadLocalBtn.disabled = true;
+            icadLocalBtn.title = compatibility.icad.reason || 'Not supported with current GPU';
+        } else {
+            icadLocalBtn.disabled = false;
+            icadLocalBtn.title = '';
+        }
+    }
+    
+    if (fasterWhisperBtn && compatibility['faster-whisper']) {
+        if (!compatibility['faster-whisper'].supported) {
+            fasterWhisperBtn.disabled = true;
+            fasterWhisperBtn.title = compatibility['faster-whisper'].reason || 'Not supported with current GPU';
+        } else {
+            fasterWhisperBtn.disabled = false;
+            fasterWhisperBtn.title = '';
+        }
+    }
+}
+
+function saveGPUConfig(enabled) {
+    fetch('/api/system/configure-gpu', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(data.message || 'GPU configuration saved.', 'success');
+            } else {
+                showNotification(data.error || 'Error saving GPU configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving GPU config:', error);
+            showNotification('Error saving GPU configuration', 'error');
+        });
+}
+
+function installNvidiaToolkit() {
+    const btn = document.getElementById('install-nvidia-toolkit-btn');
+    if (btn) btn.disabled = true;
+    
+    fetch('/api/system/install-nvidia-toolkit', {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('NVIDIA Container Toolkit installed successfully', 'success');
+                loadGPUStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error installing NVIDIA Container Toolkit', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error installing NVIDIA Container Toolkit:', error);
+            showNotification('Error installing NVIDIA Container Toolkit', 'error');
+        })
+        .finally(() => {
+            if (btn) btn.disabled = false;
+        });
+}
+
+function loadAutoStartStatus() {
+    fetch('/api/system/autostart-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const statusText = document.getElementById('autostart-status-text');
+                const checkbox = document.getElementById('autostart-enabled-checkbox');
+                
+                if (statusText) {
+                    statusText.textContent = data.enabled ? '✓ Enabled' : '✗ Disabled';
+                    statusText.style.color = data.enabled ? '#00ff00' : '#ff0000';
+                }
+                if (checkbox) {
+                    checkbox.checked = data.enabled || false;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading auto-start status:', error);
+        });
+}
+
+function saveAutoStartConfig(enabled) {
+    fetch('/api/system/configure-autostart', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Auto-start configuration saved.', 'success');
+                loadAutoStartStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error saving auto-start configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving auto-start config:', error);
+            showNotification('Error saving auto-start configuration', 'error');
+        });
+}
+
+function loadSystemStatus() {
+    fetch('/api/system/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                
+                // Show installation mode
+                const modeText = document.getElementById('installation-mode-text');
+                const modeDesc = document.getElementById('installation-mode-description');
+                if (modeText) {
+                    if (status.runningInDocker) {
+                        modeText.textContent = 'Docker Container';
+                        modeText.style.color = '#00ccff';
+                        if (modeDesc) modeDesc.textContent = 'Running inside Docker. Services will be installed as Docker containers.';
+                    } else {
+                        modeText.textContent = 'Local Installation';
+                        modeText.style.color = '#00ff00';
+                        if (modeDesc) modeDesc.textContent = 'Running locally. Services will be installed as native applications.';
+                    }
+                }
+                
+                // Docker status
+                const dockerStatus = document.getElementById('docker-status');
+                const installDockerBtn = document.getElementById('install-docker-btn');
+                if (dockerStatus) {
+                    if (status.runningInDocker) {
+                        dockerStatus.textContent = '✓ Running in Docker';
+                        dockerStatus.style.color = '#00ccff';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else if (status.docker.installed && status.docker.daemonRunning) {
+                        dockerStatus.textContent = '✓ Installed & Running';
+                        dockerStatus.style.color = '#00ff00';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else if (status.docker.installed) {
+                        dockerStatus.textContent = '⚠ Installed (not running)';
+                        dockerStatus.style.color = '#ffff00';
+                        if (installDockerBtn) installDockerBtn.style.display = 'none';
+                    } else {
+                        dockerStatus.textContent = '✗ Not Installed';
+                        dockerStatus.style.color = '#ff0000';
+                        // Only show install button if not running in Docker and can install
+                        if (installDockerBtn && status.docker.canInstall !== false) {
+                            installDockerBtn.style.display = 'inline-block';
+                            installDockerBtn.disabled = false;
+                        } else if (installDockerBtn) {
+                            installDockerBtn.style.display = 'none';
+                        }
+                    }
+                }
+                
+                // Node.js status
+                const nodejsStatus = document.getElementById('nodejs-status');
+                const installNodejsBtn = document.getElementById('install-nodejs-btn');
+                if (nodejsStatus) {
+                    if (status.nodejs.installed) {
+                        nodejsStatus.textContent = `✓ ${status.nodejs.version || 'Installed'}`;
+                        nodejsStatus.style.color = '#00ff00';
+                        if (installNodejsBtn) installNodejsBtn.style.display = 'none';
+                    } else {
+                        nodejsStatus.textContent = '✗ Not Installed';
+                        nodejsStatus.style.color = '#ff0000';
+                        if (installNodejsBtn) {
+                            installNodejsBtn.style.display = 'inline-block';
+                            installNodejsBtn.disabled = false;
+                        }
+                    }
+                }
+                
+                // Python status
+                const pythonStatus = document.getElementById('python-status');
+                const installPythonBtn = document.getElementById('install-python-btn');
+                if (pythonStatus) {
+                    if (status.python.installed) {
+                        pythonStatus.textContent = `✓ ${status.python.version || 'Installed'}`;
+                        pythonStatus.style.color = '#00ff00';
+                        if (installPythonBtn) installPythonBtn.style.display = 'none';
+                    } else {
+                        pythonStatus.textContent = '✗ Not Installed';
+                        pythonStatus.style.color = '#ff0000';
+                        if (installPythonBtn) {
+                            installPythonBtn.style.display = 'inline-block';
+                            installPythonBtn.disabled = false;
+                        }
+                    }
+                }
+                
+                // Service status
+                if (status.services) {
+                    // Ollama
+                    const ollamaStatus = document.getElementById('ollama-status');
+                    const installOllamaLocalBtn = document.getElementById('install-ollama-local-btn');
+                    const installOllamaDockerBtn = document.getElementById('install-ollama-docker-btn');
+                    if (ollamaStatus) {
+                        if (status.services.ollama.running) {
+                            ollamaStatus.textContent = `✓ Running (${status.services.ollama.url || 'localhost:11434'})`;
+                            ollamaStatus.style.color = '#00ff00';
+                            if (installOllamaLocalBtn) installOllamaLocalBtn.style.display = 'none';
+                            if (installOllamaDockerBtn) installOllamaDockerBtn.style.display = 'none';
+                        } else if (status.services.ollama.installed) {
+                            ollamaStatus.textContent = '⚠ Installed (not running)';
+                            ollamaStatus.style.color = '#ffff00';
+                            if (installOllamaLocalBtn) installOllamaLocalBtn.style.display = 'none';
+                            if (installOllamaDockerBtn) installOllamaDockerBtn.style.display = 'none';
+                        } else {
+                            ollamaStatus.textContent = '✗ Not Installed';
+                            ollamaStatus.style.color = '#ff0000';
+                            if (installOllamaLocalBtn) {
+                                installOllamaLocalBtn.style.display = 'inline-block';
+                                installOllamaLocalBtn.disabled = false;
+                            }
+                            if (installOllamaDockerBtn && status.docker.daemonRunning) {
+                                installOllamaDockerBtn.style.display = 'inline-block';
+                                installOllamaDockerBtn.disabled = false;
+                            }
+                        }
+                    }
+                    
+                    // faster-whisper
+                    const fasterWhisperStatus = document.getElementById('faster-whisper-status');
+                    const installFasterWhisperBtn = document.getElementById('install-faster-whisper-btn');
+                    if (fasterWhisperStatus) {
+                        if (status.services.fasterWhisper.installed) {
+                            fasterWhisperStatus.textContent = '✓ Installed';
+                            fasterWhisperStatus.style.color = '#00ff00';
+                            if (installFasterWhisperBtn) installFasterWhisperBtn.style.display = 'none';
+                        } else {
+                            fasterWhisperStatus.textContent = '✗ Not Installed';
+                            fasterWhisperStatus.style.color = '#ff0000';
+                            if (installFasterWhisperBtn) {
+                                installFasterWhisperBtn.style.display = 'inline-block';
+                                installFasterWhisperBtn.disabled = false;
+                            }
+                        }
+                    }
+                    
+                    // iCAD Transcribe
+                    const icadStatus = document.getElementById('icad-status');
+                    const installIcadLocalBtn = document.getElementById('install-icad-local-btn');
+                    const installIcadDockerBtn = document.getElementById('install-icad-docker-btn');
+                    if (icadStatus) {
+                        if (status.services.icadTranscribe.running) {
+                            icadStatus.textContent = `✓ Running (${status.services.icadTranscribe.url || 'localhost:9912'})`;
+                            icadStatus.style.color = '#00ff00';
+                            if (installIcadLocalBtn) installIcadLocalBtn.style.display = 'none';
+                            if (installIcadDockerBtn) installIcadDockerBtn.style.display = 'none';
+                        } else if (status.services.icadTranscribe.installed) {
+                            icadStatus.textContent = '⚠ Installed (not running)';
+                            icadStatus.style.color = '#ffff00';
+                            if (installIcadLocalBtn) installIcadLocalBtn.style.display = 'none';
+                            if (installIcadDockerBtn) installIcadDockerBtn.style.display = 'none';
+                        } else {
+                            icadStatus.textContent = '✗ Not Installed';
+                            icadStatus.style.color = '#ff0000';
+                            if (installIcadLocalBtn) {
+                                installIcadLocalBtn.style.display = 'inline-block';
+                                installIcadLocalBtn.disabled = false;
+                            }
+                            if (installIcadDockerBtn && status.docker.daemonRunning) {
+                                installIcadDockerBtn.style.display = 'inline-block';
+                                installIcadDockerBtn.disabled = false;
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading system status:', error);
+        });
+    
+    // Load system info
+    fetch('/api/system/info')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.info) {
+                const info = data.info;
+                const infoContent = document.getElementById('system-info-content');
+                if (infoContent) {
+                    infoContent.innerHTML = `
+                        <div><strong>Platform:</strong> ${info.platform} ${info.arch}</div>
+                        <div><strong>OS:</strong> ${info.type} ${info.release}</div>
+                        <div><strong>Hostname:</strong> ${info.hostname}</div>
+                        <div><strong>CPUs:</strong> ${info.cpus}</div>
+                        <div><strong>Node.js:</strong> ${info.nodeVersion}</div>
+                        ${info.npmVersion ? `<div><strong>npm:</strong> ${info.npmVersion}</div>` : ''}
+                    `;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading system info:', error);
+        });
+    
+    // Load model recommendations
+    loadModelRecommendations();
+    
+    // Load service status
+    loadServiceStatus();
+}
+
+function loadModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('model-recommendations-content');
+                if (content) {
+                    let html = `<div style="margin-bottom: 15px;"><strong>Hardware:</strong> ${recs.hardware.type} (${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'})</div>`;
+                    html += `<div style="margin-bottom: 15px; padding: 10px; background-color: rgba(0, 51, 0, 0.2); border-radius: 4px;">${recs.summary.bestFor}</div>`;
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-top: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 10px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+            const content = document.getElementById('model-recommendations-content');
+            if (content) {
+                content.textContent = 'Error loading recommendations';
+            }
+        });
+}
+
+function loadServiceStatus() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                const content = document.getElementById('service-status-content');
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>Ollama:</strong> `;
+                    if (status.ollama.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.ollama.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.ollama.url})</span>`;
+                        }
+                        if (status.ollama.models && status.ollama.models.length > 0) {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em;">Models: ${status.ollama.models.join(', ')}</div>`;
+                        } else {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em; color: #ffaa00;">No models installed</div>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // iCAD status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>iCAD Transcribe:</strong> `;
+                    if (status.icad.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.icad.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.icad.url})</span>`;
+                        }
+                        html += `<div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">Models are managed automatically by iCAD</div>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // faster-whisper status
+                    html += `<div>`;
+                    html += `<strong>faster-whisper:</strong> `;
+                    if (status.fasterWhisper.installed) {
+                        html += `<span style="color: #00ff00;">✓ Installed</span>`;
+                        html += `<div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">Models download automatically on first use</div>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Installed</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service status:', error);
+            const content = document.getElementById('service-status-content');
+            if (content) {
+                content.textContent = 'Error loading service status';
+            }
+        });
+}
+
+// Auto-refresh service status every 30 seconds when System Status tab is active
+let serviceStatusInterval = null;
+function startServiceStatusAutoRefresh() {
+    if (serviceStatusInterval) {
+        clearInterval(serviceStatusInterval);
+    }
+    serviceStatusInterval = setInterval(() => {
+        const systemTab = document.querySelector('.quick-start-tab[data-tab="system"]');
+        if (systemTab && systemTab.classList.contains('active')) {
+            loadServiceStatus();
+        }
+    }, 30000); // Refresh every 30 seconds
+}
+
+// Stop auto-refresh when tab is not active
+function stopServiceStatusAutoRefresh() {
+    if (serviceStatusInterval) {
+        clearInterval(serviceStatusInterval);
+        serviceStatusInterval = null;
+    }
+}
+
+function pullOllamaModel(modelName) {
+    if (!modelName) {
+        showNotification('Please select a model to pull', 'error');
+        return;
+    }
+    
+    if (!confirm(`Pull Ollama model "${modelName}"? This may take several minutes.`)) {
+        return;
+    }
+    
+    fetch('/api/models/pull-ollama', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ modelName })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                showNotification(`Pulling model ${modelName}...`, 'success');
+                pollModelPullStatus('ollama', data.jobId, modelName);
+            } else {
+                showNotification(data.error || 'Error starting model pull', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error pulling model:', error);
+            showNotification('Error pulling model', 'error');
+        });
+}
+
+function pollModelPullStatus(service, jobId, modelName) {
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        console.log(`[${service}] Pulling ${modelName}: ${job.progress}%`);
+                        setTimeout(poll, 2000);
+                    } else if (job.status === 'completed') {
+                        showNotification(`${modelName} pulled successfully!`, 'success');
+                        loadServiceStatus(); // Refresh status
+                        loadModelRecommendations(); // Refresh recommendations
+                        // Also refresh if in settings
+                        if (typeof loadSettingsInstalledModels === 'function') {
+                            loadSettingsInstalledModels();
+                        }
+                        if (typeof loadQuickStartInstalledModels === 'function') {
+                            loadQuickStartInstalledModels();
+                        }
+                    } else if (job.status === 'failed') {
+                        showNotification(job.error || `Failed to pull ${modelName}`, 'error');
+                    }
+                } else {
+                    showNotification('Model pull status unknown', 'error');
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling model pull status:`, error);
+                showNotification('Error checking pull status', 'error');
+            });
+    };
+    
+    poll();
+}
+
+// External services action handler
+let externalServicesActionState = 'configure'; // 'configure', 'launch', 'load'
+function handleExternalServicesAction() {
+    const btn = document.getElementById('external-services-action-btn');
+    const textSpan = document.getElementById('external-services-action-text');
+    
+    if (externalServicesActionState === 'configure') {
+        // Auto-detect and configure services
+        showNotification('Auto-detecting service URLs...', 'info');
+        
+        Promise.all([
+            autoDetectServiceUrl('ollama', 11434, 'settings-services-ollama-url'),
+            autoDetectServiceUrl('icad-transcribe', 9912, 'settings-services-icad-url')
+        ]).then(() => {
+            showNotification('Service URLs auto-detected', 'success');
+            externalServicesActionState = 'launch';
+            if (textSpan) textSpan.textContent = 'Launch Services';
+        }).catch(err => {
+            showNotification('Error detecting services: ' + err.message, 'error');
+        });
+    } else if (externalServicesActionState === 'launch') {
+        // Launch/start services (if Docker)
+        showNotification('Checking service status...', 'info');
+        loadSettingsServiceStatus();
+        externalServicesActionState = 'load';
+        if (textSpan) textSpan.textContent = 'Load Service Status';
+    } else if (externalServicesActionState === 'load') {
+        // Refresh service status
+        loadSettingsServiceStatus();
+        showNotification('Service status refreshed', 'success');
+        externalServicesActionState = 'configure';
+        if (textSpan) textSpan.textContent = 'Configure & Launch Services';
+    }
+}
+
+// Logs functions
+let logsAutoRefreshInterval = null;
+function startLogsAutoRefresh() {
+    if (logsAutoRefreshInterval) return;
+    logsAutoRefreshInterval = setInterval(refreshLogs, 5000);
+}
+
+function stopLogsAutoRefresh() {
+    if (logsAutoRefreshInterval) {
+        clearInterval(logsAutoRefreshInterval);
+        logsAutoRefreshInterval = null;
+    }
+}
+
+function refreshLogs() {
+    const filter = document.getElementById('logs-filter');
+    const filterValue = filter ? filter.value : 'all';
+    const content = document.getElementById('logs-content');
+    
+    if (!content) return;
+    
+    fetch(`/api/logs?filter=${filterValue}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.logs) {
+                content.textContent = data.logs;
+                // Auto-scroll to bottom
+                const container = document.getElementById('logs-container');
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            } else {
+                content.textContent = 'No logs available';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading logs:', error);
+            content.textContent = 'Error loading logs: ' + error.message;
+        });
+}
+
+function clearLogsDisplay() {
+    const content = document.getElementById('logs-content');
+    if (content) {
+        content.textContent = '';
+    }
+}
+
+function downloadLogs() {
+    const filter = document.getElementById('logs-filter');
+    const filterValue = filter ? filter.value : 'all';
+    
+    fetch(`/api/logs?filter=${filterValue}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.logs) {
+                const blob = new Blob([data.logs], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scanner-map-logs-${filterValue}-${new Date().toISOString().split('T')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showNotification('Logs downloaded', 'success');
+            } else {
+                showNotification('No logs to download', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error downloading logs:', error);
+            showNotification('Error downloading logs', 'error');
+        });
+}
+
+// Settings-specific functions
+function loadSettingsServiceStatus() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const status = data.status;
+                const content = document.getElementById('settings-service-status-content');
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>Ollama:</strong> `;
+                    if (status.ollama.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.ollama.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.ollama.url})</span>`;
+                        }
+                        if (status.ollama.models && status.ollama.models.length > 0) {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em;">Installed models: ${status.ollama.models.join(', ')}</div>`;
+                        } else {
+                            html += `<div style="margin-top: 5px; font-size: 0.9em; color: #ffaa00;">No models installed</div>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // iCAD status
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += `<strong>iCAD Transcribe:</strong> `;
+                    if (status.icad.running) {
+                        html += `<span style="color: #00ff00;">✓ Running</span>`;
+                        if (status.icad.url) {
+                            html += ` <span style="font-size: 0.9em; opacity: 0.8;">(${status.icad.url})</span>`;
+                        }
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Running</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    // faster-whisper status
+                    html += `<div>`;
+                    html += `<strong>faster-whisper:</strong> `;
+                    if (status.fasterWhisper.installed) {
+                        html += `<span style="color: #00ff00;">✓ Installed</span>`;
+                    } else {
+                        html += `<span style="color: #ff0000;">✗ Not Installed</span>`;
+                    }
+                    html += `</div>`;
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading service status:', error);
+            const content = document.getElementById('settings-service-status-content');
+            if (content) {
+                content.textContent = 'Error loading service status';
+            }
+        });
+}
+
+function loadSettingsModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('settings-model-recommendations-content');
+                const hardwareInfo = document.getElementById('settings-hardware-info');
+                
+                if (hardwareInfo) {
+                    hardwareInfo.innerHTML = `
+                        <div><strong>Type:</strong> ${recs.hardware.type}</div>
+                        <div><strong>VRAM/RAM:</strong> ${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'}</div>
+                        <div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">${recs.summary.bestFor}</div>
+                    `;
+                }
+                
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.ollama.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="settings-ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('settings-ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+        });
+}
+
+function loadSettingsInstalledModels() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status && data.status.ollama) {
+                const content = document.getElementById('settings-installed-models-content');
+                if (content) {
+                    if (data.status.ollama.models && data.status.ollama.models.length > 0) {
+                        let html = '<div style="display: flex; flex-direction: column; gap: 5px;">';
+                        data.status.ollama.models.forEach(model => {
+                            html += `<div style="padding: 5px; background-color: rgba(0, 0, 0, 0.2); border-radius: 4px;"><code>${model}</code></div>`;
+                        });
+                        html += '</div>';
+                        content.innerHTML = html;
+                    } else {
+                        content.innerHTML = '<div style="color: #ffaa00;">No models installed. Pull a model using the recommendations above or the manual pull section.</div>';
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading installed models:', error);
+        });
+}
+
+function pullModelFromSettings() {
+    const modelName = document.getElementById('settings-pull-model-name').value.trim();
+    if (!modelName) {
+        showNotification('Please enter a model name', 'error');
+        return;
+    }
+    
+    const statusEl = document.getElementById('settings-pull-model-status');
+    if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #ffff00;">Starting pull...</span>';
+    }
+    
+    pullOllamaModel(modelName);
+    
+    // Update status via polling
+    const pollStatus = setInterval(() => {
+        fetch('/api/services/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.status && data.status.ollama) {
+                    if (data.status.ollama.models && data.status.ollama.models.includes(modelName)) {
+                        if (statusEl) {
+                            statusEl.innerHTML = `<span style="color: #00ff00;">✓ Model ${modelName} installed!</span>`;
+                        }
+                        clearInterval(pollStatus);
+                        loadSettingsInstalledModels();
+                    }
+                }
+            })
+            .catch(() => {});
+    }, 3000);
+    
+    setTimeout(() => clearInterval(pollStatus), 300000); // Stop after 5 minutes
+}
+
+function autoDetectServiceUrl(serviceName, port, inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    
+    input.value = 'Detecting...';
+    input.disabled = true;
+    
+    fetch('/api/system/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status) {
+                const runningInDocker = data.status.runningInDocker;
+                let detectedUrl;
+                
+                if (runningInDocker) {
+                    // Docker-to-Docker: Use service name
+                    detectedUrl = `http://${serviceName}:${port}`;
+                } else {
+                    // Local-to-Docker or Local-to-Local: Use localhost
+                    detectedUrl = `http://localhost:${port}`;
+                }
+                
+                input.value = detectedUrl;
+                input.disabled = false;
+                showNotification(`Auto-detected URL: ${detectedUrl}`, 'success');
+            } else {
+                input.value = `http://localhost:${port}`;
+                input.disabled = false;
+                showNotification('Using default localhost URL', 'info');
+            }
+        })
+        .catch(error => {
+            console.error('Error auto-detecting URL:', error);
+            input.value = `http://localhost:${port}`;
+            input.disabled = false;
+            showNotification('Using default localhost URL', 'info');
+        });
+}
+
+function useRecommendedOllamaModel() {
+    const recommended = document.getElementById('ai-ollama-recommended-model');
+    if (recommended && recommended.textContent) {
+        document.getElementById('settings-ollama-model').value = recommended.textContent.trim();
+        showNotification('Recommended model set', 'success');
+    }
+}
+
+// Quick Start Models Tab functions
+function loadQuickStartModelRecommendations() {
+    fetch('/api/models/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.recommendations) {
+                const recs = data.recommendations;
+                const content = document.getElementById('quickstart-model-recommendations-content');
+                const hardwareInfo = document.getElementById('quickstart-hardware-info');
+                
+                if (hardwareInfo) {
+                    hardwareInfo.innerHTML = `
+                        <div><strong>Type:</strong> ${recs.hardware.type}</div>
+                        <div><strong>VRAM/RAM:</strong> ${recs.hardware.vramGB || 0}GB ${recs.hardware.hasGPU ? 'VRAM' : 'RAM'}</div>
+                        <div style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">${recs.summary.bestFor}</div>
+                    `;
+                }
+                
+                if (content) {
+                    let html = '';
+                    
+                    // Ollama recommendations
+                    if (recs.ollama) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🤖 Ollama (AI - Address Extraction, Summarization):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.ollama.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.ollama.description}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Use cases: ${recs.ollama.useCases ? recs.ollama.useCases.join(', ') : 'AI tasks'}</div>`;
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.ollama.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `<div style="margin-top: 10px;">`;
+                        html += `<button type="button" class="install-btn" onclick="pullOllamaModel('${recs.ollama.recommended}')">Pull Recommended Model</button>`;
+                        if (recs.ollama.alternatives && recs.ollama.alternatives.length > 0) {
+                            html += `<select id="quickstart-ollama-alternative-select" style="margin-left: 10px; padding: 5px;">`;
+                            html += `<option value="">Or choose alternative...</option>`;
+                            recs.ollama.alternatives.forEach(alt => {
+                                html += `<option value="${alt}">${alt}</option>`;
+                            });
+                            html += `</select>`;
+                            html += `<button type="button" class="install-btn" onclick="pullOllamaModel(document.getElementById('quickstart-ollama-alternative-select').value)" style="margin-left: 5px;">Pull</button>`;
+                        }
+                        html += `</div></div>`;
+                    }
+                    
+                    // Whisper recommendations
+                    if (recs.whisper) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🎤 Whisper (Transcription):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.whisper.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.whisper.description}</div>`;
+                        if (recs.whisper.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.whisper.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.whisper.publicSafetyScore || 'N/A'}/10</div>`;
+                        html += `</div>`;
+                    }
+                    
+                    // iCAD recommendations
+                    if (recs.icad) {
+                        html += `<div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                        html += `<strong>🚨 iCAD Transcribe (Public Safety Optimized):</strong><br>`;
+                        html += `<div style="margin-top: 5px;">Recommended: <code>${recs.icad.recommended}</code></div>`;
+                        html += `<div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">${recs.icad.description}</div>`;
+                        if (recs.icad.bestFor) {
+                            html += `<div style="font-size: 0.9em; margin-top: 5px;">Best for: ${recs.icad.bestFor}</div>`;
+                        }
+                        html += `<div style="font-size: 0.9em; margin-top: 5px;">Public Safety Score: ${recs.icad.publicSafetyScore || 'N/A'}/10</div>`;
+                        if (recs.icad.warning) {
+                            html += `<div style="font-size: 0.9em; color: #ffaa00; margin-top: 5px;">⚠ ${recs.icad.warning}</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading model recommendations:', error);
+        });
+}
+
+function loadQuickStartInstalledModels() {
+    fetch('/api/services/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.status && data.status.ollama) {
+                const content = document.getElementById('quickstart-installed-models-content');
+                if (content) {
+                    if (data.status.ollama.models && data.status.ollama.models.length > 0) {
+                        let html = '<div style="display: flex; flex-direction: column; gap: 5px;">';
+                        data.status.ollama.models.forEach(model => {
+                            html += `<div style="padding: 5px; background-color: rgba(0, 0, 0, 0.2); border-radius: 4px;"><code>${model}</code></div>`;
+                        });
+                        html += '</div>';
+                        content.innerHTML = html;
+                    } else {
+                        content.innerHTML = '<div style="color: #ffaa00;">No models installed. Pull a model using the recommendations above.</div>';
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading installed models:', error);
+        });
+}
+
+function pullModelFromQuickStart() {
+    const modelName = document.getElementById('quickstart-pull-model-name').value.trim();
+    if (!modelName) {
+        showNotification('Please enter a model name', 'error');
+        return;
+    }
+    
+    const statusEl = document.getElementById('quickstart-pull-model-status');
+    if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #ffff00;">Starting pull...</span>';
+    }
+    
+    pullOllamaModel(modelName);
+    
+    // Update status via polling
+    const pollStatus = setInterval(() => {
+        fetch('/api/services/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.status && data.status.ollama) {
+                    if (data.status.ollama.models && data.status.ollama.models.includes(modelName)) {
+                        if (statusEl) {
+                            statusEl.innerHTML = `<span style="color: #00ff00;">✓ Model ${modelName} installed!</span>`;
+                        }
+                        clearInterval(pollStatus);
+                        loadQuickStartInstalledModels();
+                    }
+                }
+            })
+            .catch(() => {});
+    }, 3000);
+    
+    setTimeout(() => clearInterval(pollStatus), 300000); // Stop after 5 minutes
+}
+
+// Update Management Functions
+function loadUpdateStatus() {
+    fetch('/api/updates/check')
+        .then(response => response.json())
+        .then(data => {
+            const currentVersionEl = document.getElementById('current-version');
+            const latestVersionEl = document.getElementById('latest-version');
+            const updateBadge = document.getElementById('update-available-badge');
+            const installUpdateBtn = document.getElementById('install-update-btn');
+            
+            if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || 'Unknown';
+            if (latestVersionEl) latestVersionEl.textContent = data.latestVersion || 'Unknown';
+            
+            if (data.updateAvailable) {
+                if (updateBadge) updateBadge.style.display = 'block';
+                if (installUpdateBtn) installUpdateBtn.style.display = 'inline-block';
+            } else {
+                if (updateBadge) updateBadge.style.display = 'none';
+                if (installUpdateBtn) installUpdateBtn.style.display = 'none';
+            }
+        })
+        .catch(error => {
+            console.error('Error checking updates:', error);
+        });
+    
+    // Load auto-update config
+    fetch('/api/updates/config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.config) {
+                const checkbox = document.getElementById('auto-update-checkbox');
+                if (checkbox) {
+                    checkbox.checked = data.config.autoUpdateCheck || false;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading update config:', error);
+        });
+}
+
+function checkForUpdates() {
+    const checkBtn = document.getElementById('check-updates-btn');
+    if (checkBtn) checkBtn.disabled = true;
+    
+    fetch('/api/updates/check')
+        .then(response => response.json())
+        .then(data => {
+            loadUpdateStatus(); // Reload to update UI
+            if (data.updateAvailable) {
+                showNotification('Update available!', 'success');
+            } else {
+                showNotification('You are running the latest version.', 'success');
+            }
+        })
+        .catch(error => {
+            console.error('Error checking updates:', error);
+            showNotification('Error checking for updates', 'error');
+        })
+        .finally(() => {
+            if (checkBtn) checkBtn.disabled = false;
+        });
+}
+
+function installUpdate() {
+    if (!confirm('This will update the application. Continue?')) {
+        return;
+    }
+    
+    const installBtn = document.getElementById('install-update-btn');
+    if (installBtn) installBtn.disabled = true;
+    
+    fetch('/api/updates/install', {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(data.message || 'Update installed. Please restart the application.', 'success');
+                loadUpdateStatus(); // Reload to update UI
+            } else {
+                showNotification(data.error || 'Error installing update', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error installing update:', error);
+            showNotification('Error installing update', 'error');
+        })
+        .finally(() => {
+            if (installBtn) installBtn.disabled = false;
+        });
+}
+
+function saveUpdateConfig(enabled) {
+    fetch('/api/updates/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ autoUpdateCheck: enabled })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Auto-update configuration saved.', 'success');
+            } else {
+                showNotification(data.error || 'Error saving update config', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving update config:', error);
+            showNotification('Error saving update configuration', 'error');
+        });
+}
+
+// Radio Configuration Functions - Talkgroups
+function loadTalkgroups() {
+    fetch('/api/radio/talkgroups')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.talkgroups) {
+                const tbody = document.getElementById('talkgroups-table-body');
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    if (data.talkgroups.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="8">No talkgroups configured</td></tr>';
+                    } else {
+                        data.talkgroups.forEach(tg => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${tg.id || ''}</td>
+                                <td>${tg.hex || ''}</td>
+                                <td>${tg.alpha_tag || ''}</td>
+                                <td>${tg.mode || ''}</td>
+                                <td>${tg.description || ''}</td>
+                                <td>${tg.tag || ''}</td>
+                                <td>${tg.county || ''}</td>
+                                <td>
+                                    <button onclick="editTalkgroup('${tg.id}')">Edit</button>
+                                    <button onclick="deleteTalkgroup('${tg.id}')">Delete</button>
+                                </td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading talkgroups:', error);
+        });
+}
+
+function showTalkgroupEditForm(talkgroupId = null) {
+    const form = document.getElementById('talkgroup-edit-form');
+    const title = document.getElementById('talkgroup-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        
+        if (talkgroupId) {
+            if (title) title.textContent = 'Edit Talkgroup';
+            // Load existing talkgroup data
+            fetch(`/api/radio/talkgroups`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.talkgroups) {
+                        const tg = data.talkgroups.find(t => t.id.toString() === talkgroupId.toString());
+                        if (tg) {
+                            document.getElementById('talkgroup-dec').value = tg.id || '';
+                            document.getElementById('talkgroup-hex').value = tg.hex || '';
+                            document.getElementById('talkgroup-alpha-tag').value = tg.alpha_tag || '';
+                            document.getElementById('talkgroup-mode').value = tg.mode || '';
+                            document.getElementById('talkgroup-description').value = tg.description || '';
+                            document.getElementById('talkgroup-tag').value = tg.tag || '';
+                            document.getElementById('talkgroup-county').value = tg.county || '';
+                            document.getElementById('talkgroup-dec').disabled = true; // Can't change ID
+                        }
+                    }
+                });
+        } else {
+            if (title) title.textContent = 'Add Talkgroup';
+            // Clear form
+            document.getElementById('talkgroup-dec').value = '';
+            document.getElementById('talkgroup-hex').value = '';
+            document.getElementById('talkgroup-alpha-tag').value = '';
+            document.getElementById('talkgroup-mode').value = '';
+            document.getElementById('talkgroup-description').value = '';
+            document.getElementById('talkgroup-tag').value = '';
+            document.getElementById('talkgroup-county').value = '';
+            document.getElementById('talkgroup-dec').disabled = false;
+        }
+    }
+}
+
+function editTalkgroup(id) {
+    showTalkgroupEditForm(id);
+}
+
+function deleteTalkgroup(id) {
+    if (!confirm(`Delete talkgroup ${id}?`)) {
+        return;
+    }
+    
+    fetch(`/api/radio/talkgroups/${id}`, {
+        method: 'DELETE'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Talkgroup deleted successfully', 'success');
+                loadTalkgroups();
+            } else {
+                showNotification(data.error || 'Error deleting talkgroup', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting talkgroup:', error);
+            showNotification('Error deleting talkgroup', 'error');
+        });
+}
+
+function saveTalkgroup() {
+    const id = document.getElementById('talkgroup-dec').value.trim();
+    if (!id) {
+        showNotification('DEC (ID) is required', 'error');
+        return;
+    }
+    
+    const data = {
+        id: id,
+        hex: document.getElementById('talkgroup-hex').value.trim() || null,
+        alpha_tag: document.getElementById('talkgroup-alpha-tag').value.trim() || null,
+        mode: document.getElementById('talkgroup-mode').value.trim() || null,
+        description: document.getElementById('talkgroup-description').value.trim() || null,
+        tag: document.getElementById('talkgroup-tag').value.trim() || null,
+        county: document.getElementById('talkgroup-county').value.trim() || null
+    };
+    
+    fetch('/api/radio/talkgroups', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showNotification('Talkgroup saved successfully', 'success');
+                document.getElementById('talkgroup-edit-form').style.display = 'none';
+                loadTalkgroups();
+            } else {
+                showNotification(result.error || 'Error saving talkgroup', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving talkgroup:', error);
+            showNotification('Error saving talkgroup', 'error');
+        });
+}
+
+// Radio Configuration Functions - Frequencies
+function loadFrequencies() {
+    fetch('/api/radio/frequencies')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.frequencies) {
+                const tbody = document.getElementById('frequencies-table-body');
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    if (data.frequencies.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4">No frequencies configured</td></tr>';
+                    } else {
+                        data.frequencies.forEach(freq => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${freq.id || ''}</td>
+                                <td>${freq.frequency || ''}</td>
+                                <td>${freq.description || ''}</td>
+                                <td>
+                                    <button onclick="editFrequency('${freq.id}')">Edit</button>
+                                    <button onclick="deleteFrequency('${freq.id}')">Delete</button>
+                                </td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading frequencies:', error);
+        });
+}
+
+function showFrequencyEditForm(frequencyId = null) {
+    const form = document.getElementById('frequency-edit-form');
+    const title = document.getElementById('frequency-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        
+        if (frequencyId) {
+            if (title) title.textContent = 'Edit Frequency';
+            // Load existing frequency data
+            fetch(`/api/radio/frequencies`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.frequencies) {
+                        const freq = data.frequencies.find(f => f.id.toString() === frequencyId.toString());
+                        if (freq) {
+                            document.getElementById('frequency-site-id').value = freq.id || '';
+                            document.getElementById('frequency-value').value = freq.frequency || '';
+                            document.getElementById('frequency-description').value = freq.description || '';
+                        }
+                    }
+                });
+        } else {
+            if (title) title.textContent = 'Add Frequency';
+            // Clear form
+            document.getElementById('frequency-site-id').value = '';
+            document.getElementById('frequency-value').value = '';
+            document.getElementById('frequency-description').value = '';
+        }
+    }
+}
+
+function editFrequency(id) {
+    showFrequencyEditForm(id);
+}
+
+function deleteFrequency(id) {
+    if (!confirm(`Delete frequency ${id}?`)) {
+        return;
+    }
+    
+    fetch(`/api/radio/frequencies/${id}`, {
+        method: 'DELETE'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Frequency deleted successfully', 'success');
+                loadFrequencies();
+            } else {
+                showNotification(data.error || 'Error deleting frequency', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting frequency:', error);
+            showNotification('Error deleting frequency', 'error');
+        });
+}
+
+function saveFrequency() {
+    const frequency = document.getElementById('frequency-value').value.trim();
+    if (!frequency) {
+        showNotification('Frequency is required', 'error');
+        return;
+    }
+    
+    const siteId = document.getElementById('frequency-site-id').value.trim();
+    const data = {
+        frequency: frequency,
+        description: document.getElementById('frequency-description').value.trim() || null
+    };
+    
+    if (siteId) {
+        data.id = parseInt(siteId);
+    }
+    
+    fetch('/api/radio/frequencies', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showNotification('Frequency saved successfully', 'success');
+                document.getElementById('frequency-edit-form').style.display = 'none';
+                loadFrequencies();
+            } else {
+                showNotification(result.error || 'Error saving frequency', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving frequency:', error);
+            showNotification('Error saving frequency', 'error');
+        });
+}
+
+function installService(service, useDocker) {
+    const serviceNames = {
+        'ollama': 'Ollama',
+        'faster-whisper': 'faster-whisper',
+        'icad-transcribe': 'iCAD Transcribe'
+    };
+    
+    const serviceName = serviceNames[service] || service;
+    const installType = useDocker ? 'Docker' : 'Local';
+    
+    if (!confirm(`Install ${serviceName} as ${installType} installation?`)) {
+        return;
+    }
+    
+    // Map service name for API endpoint
+    const apiServiceName = service === 'icad-transcribe' ? 'icad-transcribe' : service;
+    const endpoint = `/api/system/install-${apiServiceName}`;
+    const btnId = `install-${service}${useDocker ? '-docker' : '-local'}-btn`;
+    const btn = document.getElementById(btnId);
+    // Map status element ID (icad vs icad-transcribe)
+    const statusElId = service === 'icad-transcribe' ? 'icad-status' : `${service}-status`;
+    const statusEl = document.getElementById(statusElId);
+    
+    if (btn) btn.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = '⏳ Starting installation...';
+        statusEl.style.color = '#ffff00';
+    }
+    
+    fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ useDocker })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                showNotification(`${serviceName} installation started.`, 'success');
+                // Poll for installation status using the existing function
+                pollServiceInstallationStatus(apiServiceName, data.jobId, btnId);
+            } else {
+                if (statusEl) {
+                    statusEl.textContent = '✗ Installation failed';
+                    statusEl.style.color = '#ff0000';
+                }
+                if (btn) btn.disabled = false;
+                showNotification(data.error || `Error starting ${serviceName} installation`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error installing ${serviceName}:`, error);
+            if (statusEl) {
+                statusEl.textContent = '✗ Installation error';
+                statusEl.style.color = '#ff0000';
+            }
+            if (btn) btn.disabled = false;
+            showNotification(`Error installing ${serviceName}`, 'error');
+        });
+}
+
+function pollServiceInstallationStatus(service, jobId, btnId) {
+    const statusEl = document.getElementById(`${service}-status`);
+    const btn = document.getElementById(btnId);
+    
+    // Map service names for display
+    const serviceNames = {
+        'ollama': 'Ollama',
+        'faster-whisper': 'faster-whisper',
+        'icad-transcribe': 'iCAD Transcribe'
+    };
+    const displayName = serviceNames[service] || service;
+    
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        if (statusEl) {
+                            statusEl.textContent = `⏳ Installing... (${Math.round(job.progress || 0)}%)`;
+                            statusEl.style.color = '#ffff00';
+                        }
+                        // Show output if available
+                        if (job.output && job.output.length > 0) {
+                            const lastOutput = job.output[job.output.length - 1];
+                            if (lastOutput && lastOutput.length < 100) {
+                                // Show last output line if it's short
+                                console.log(`[${displayName}] ${lastOutput}`);
+                            }
+                        }
+                        setTimeout(poll, 2000);
+                    } else if (job.status === 'completed') {
+                        if (statusEl) {
+                            statusEl.textContent = '✓ Installation complete';
+                            statusEl.style.color = '#00ff00';
+                        }
+                        if (btn) btn.style.display = 'none';
+                        showNotification(`${displayName} installed successfully`, 'success');
+                        setTimeout(() => loadSystemStatus(), 2000);
+                    } else if (job.status === 'failed') {
+                        if (statusEl) {
+                            statusEl.textContent = '✗ Installation failed';
+                            statusEl.style.color = '#ff0000';
+                        }
+                        if (btn) btn.disabled = false;
+                        const errorMsg = job.error || `${displayName} installation failed`;
+                        showNotification(errorMsg, 'error');
+                        console.error(`[${displayName}] Installation failed:`, job.error);
+                        if (job.output && job.output.length > 0) {
+                            console.error(`[${displayName}] Output:`, job.output);
+                        }
+                    }
+                } else {
+                    if (statusEl) statusEl.textContent = '✗ Installation status unknown';
+                    if (btn) btn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling ${displayName} installation status:`, error);
+                if (statusEl) statusEl.textContent = '✗ Status check failed';
+                if (btn) btn.disabled = false;
+            });
+    };
+    
+    poll();
+}
+
+function installDependency(type) {
+    const btn = document.getElementById(`install-${type}-btn`);
+    const statusEl = document.getElementById(`${type}-status`);
+    
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = '⏳ Installing...';
+    
+    fetch(`/api/system/install-${type}`, {
+        method: 'POST'
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.jobId) {
+                installationProgress[type] = data.jobId;
+                pollInstallationStatus(type, data.jobId);
+            } else {
+                if (statusEl) statusEl.textContent = '✗ Installation failed';
+                if (btn) btn.disabled = false;
+                showNotification(data.error || 'Installation failed', 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error starting ${type} installation:`, error);
+            if (statusEl) statusEl.textContent = '✗ Installation error';
+            if (btn) btn.disabled = false;
+            showNotification(`Error starting ${type} installation`, 'error');
+        });
+}
+
+function pollInstallationStatus(type, jobId) {
+    const statusEl = document.getElementById(`${type}-status`);
+    const btn = document.getElementById(`install-${type}-btn`);
+    
+    const poll = () => {
+        fetch(`/api/system/install-status/${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.job) {
+                    const job = data.job;
+                    
+                    if (job.status === 'running') {
+                        if (statusEl) statusEl.textContent = `⏳ Installing... (${job.progress || 0}%)`;
+                        setTimeout(poll, 2000); // Poll every 2 seconds
+                    } else if (job.status === 'completed') {
+                        if (statusEl) statusEl.textContent = '✓ Installation complete';
+                        if (statusEl) statusEl.style.color = '#00ff00';
+                        if (btn) btn.style.display = 'none';
+                        installationProgress[type] = null;
+                        showNotification(`${type} installed successfully`, 'success');
+                        // Reload system status to update versions
+                        setTimeout(() => loadSystemStatus(), 2000);
+                    } else if (job.status === 'failed') {
+                        if (statusEl) statusEl.textContent = '✗ Installation failed';
+                        if (statusEl) statusEl.style.color = '#ff0000';
+                        if (btn) btn.disabled = false;
+                        installationProgress[type] = null;
+                        showNotification(job.error || `${type} installation failed`, 'error');
+                    }
+                } else {
+                    // Job not found or expired
+                    if (statusEl) statusEl.textContent = '✗ Installation status unknown';
+                    if (btn) btn.disabled = false;
+                    installationProgress[type] = null;
+                }
+            })
+            .catch(error => {
+                console.error(`Error polling ${type} installation status:`, error);
+                if (statusEl) statusEl.textContent = '✗ Status check failed';
+                if (btn) btn.disabled = false;
+                installationProgress[type] = null;
+            });
+    };
+    
+    poll();
+}
+
+// CSV Import Functions
+function setupCSVImport(type) {
+    const importBtn = document.getElementById(`import-${type}-csv-btn`);
+    const importSection = document.getElementById(`${type}-csv-import-section`);
+    const fileInput = document.getElementById(`${type}-csv-file`);
+    const dropZone = document.getElementById(`${type}-csv-drop-zone`);
+    const previewDiv = document.getElementById(`${type}-csv-preview`);
+    const previewContent = document.getElementById(`${type}-csv-preview-content`);
+    const previewErrors = document.getElementById(`${type}-csv-preview-errors`);
+    const importBtn2 = document.getElementById(`${type}-csv-import-btn`);
+    const cancelBtn = document.getElementById(`${type}-csv-cancel-btn`);
+    const progressDiv = document.getElementById(`${type}-csv-progress`);
+    const resultsDiv = document.getElementById(`${type}-csv-results`);
+    const mergeCheckbox = document.getElementById(`${type}-csv-merge`);
+    
+    let selectedFile = null;
+    let previewData = null;
+    
+    // Show/hide import section
+    if (importBtn) {
+        importBtn.addEventListener('click', function() {
+            if (importSection) {
+                importSection.style.display = importSection.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+    }
+    
+    // File input change
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                selectedFile = e.target.files[0];
+                previewCSVFile(selectedFile, type);
+            }
+        });
+    }
+    
+    // Drag and drop
+    if (dropZone) {
+        dropZone.addEventListener('click', function() {
+            if (fileInput) fileInput.click();
+        });
+        
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = 'rgba(0, 255, 0, 0.1)';
+        });
+        
+        dropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = '';
+        });
+        
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.style.backgroundColor = '';
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                selectedFile = e.dataTransfer.files[0];
+                if (fileInput) fileInput.files = e.dataTransfer.files;
+                previewCSVFile(selectedFile, type);
+            }
+        });
+    }
+    
+    // Preview CSV
+    function previewCSVFile(file, csvType) {
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        fetch(`/api/radio/import-preview?type=${csvType}`, {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    previewData = data;
+                    if (previewContent) {
+                        let html = '<table style="width: 100%; font-size: 12px;"><thead><tr>';
+                        if (csvType === 'talkgroups') {
+                            html += '<th>DEC</th><th>HEX</th><th>Alpha Tag</th><th>Mode</th><th>Description</th><th>Tag</th><th>County</th>';
+                        } else {
+                            html += '<th>Site ID</th><th>Frequency</th><th>Description</th>';
+                        }
+                        html += '</tr></thead><tbody>';
+                        data.preview.forEach(row => {
+                            html += '<tr>';
+                            if (csvType === 'talkgroups') {
+                                html += `<td>${row.DEC || row['DEC'] || ''}</td>`;
+                                html += `<td>${row.HEX || row['HEX'] || ''}</td>`;
+                                html += `<td>${row['Alpha Tag'] || row['alpha_tag'] || ''}</td>`;
+                                html += `<td>${row.Mode || row['Mode'] || ''}</td>`;
+                                html += `<td>${row.Description || row['Description'] || ''}</td>`;
+                                html += `<td>${row.Tag || row['Tag'] || ''}</td>`;
+                                html += `<td>${row.County || row['County'] || ''}</td>`;
+                            } else {
+                                html += `<td>${row['Site ID'] || row['site_id'] || ''}</td>`;
+                                html += `<td>${row.Frequency || row['Frequency'] || ''}</td>`;
+                                html += `<td>${row.Description || row['Description'] || ''}</td>`;
+                            }
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        previewContent.innerHTML = html;
+                    }
+                    if (previewErrors) {
+                        if (data.errors && data.errors.length > 0) {
+                            previewErrors.innerHTML = '<strong>Validation Errors:</strong><br>' + data.errors.join('<br>');
+                        } else {
+                            previewErrors.innerHTML = '';
+                        }
+                    }
+                    if (previewDiv) previewDiv.style.display = 'block';
+                } else {
+                    showNotification(data.error || 'Error previewing CSV', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error previewing CSV:', error);
+                showNotification('Error previewing CSV file', 'error');
+            });
+    }
+    
+    // Import CSV
+    if (importBtn2) {
+        importBtn2.addEventListener('click', function() {
+            if (!selectedFile) {
+                showNotification('Please select a CSV file first', 'error');
+                return;
+            }
+            
+            const merge = mergeCheckbox ? mergeCheckbox.checked : false;
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            
+            if (progressDiv) progressDiv.style.display = 'block';
+            if (importBtn2) importBtn2.disabled = true;
+            
+            fetch(`/api/radio/import-csv?type=${type}&merge=${merge}`, {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (progressDiv) progressDiv.style.display = 'none';
+                    if (importBtn2) importBtn2.disabled = false;
+                    
+                    if (data.success !== false) {
+                        let message = `Imported ${data.imported} ${type}`;
+                        if (data.skipped > 0) {
+                            message += `, skipped ${data.skipped}`;
+                        }
+                        if (data.errors && data.errors.length > 0) {
+                            message += `, ${data.errors.length} errors`;
+                            if (resultsDiv) {
+                                resultsDiv.style.display = 'block';
+                                resultsDiv.style.backgroundColor = 'rgba(255, 255, 0, 0.2)';
+                                resultsDiv.innerHTML = `<strong>Import Results:</strong><br>${message}<br><strong>Errors:</strong><br>${data.errors.slice(0, 10).join('<br>')}${data.errors.length > 10 ? '<br>...' : ''}`;
+                            }
+                        } else {
+                            showNotification(message, 'success');
+                            if (resultsDiv) resultsDiv.style.display = 'none';
+                        }
+                        
+                        // Reload the list
+                        if (type === 'talkgroups') {
+                            loadTalkgroups();
+                        } else {
+                            loadFrequencies();
+                        }
+                        
+                        // Reset form
+                        if (fileInput) fileInput.value = '';
+                        selectedFile = null;
+                        if (previewDiv) previewDiv.style.display = 'none';
+                    } else {
+                        showNotification(data.error || 'Error importing CSV', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error importing CSV:', error);
+                    if (progressDiv) progressDiv.style.display = 'none';
+                    if (importBtn2) importBtn2.disabled = false;
+                    showNotification('Error importing CSV file', 'error');
+                });
+        });
+    }
+    
+    // Cancel
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (fileInput) fileInput.value = '';
+            selectedFile = null;
+            if (previewDiv) previewDiv.style.display = 'none';
+            if (progressDiv) progressDiv.style.display = 'none';
+            if (resultsDiv) resultsDiv.style.display = 'none';
+        });
+    }
+}
+
+// AI Commands Functions
+function setupAICommands() {
+    const commandInput = document.getElementById('ai-command-input');
+    const submitBtn = document.getElementById('ai-command-submit-btn');
+    const voiceBtn = document.getElementById('ai-command-voice-btn');
+    const historyDiv = document.getElementById('ai-command-history');
+    const parsingDiv = document.getElementById('ai-command-parsing');
+    const parsingResultDiv = document.getElementById('ai-command-parsing-result');
+    const voiceFeedbackDiv = document.getElementById('ai-voice-feedback');
+    const voiceStatusDiv = document.getElementById('ai-voice-status');
+    const examplesList = document.getElementById('command-examples-list');
+    
+    let commandHistory = JSON.parse(localStorage.getItem('ai-command-history') || '[]');
+    let recognition = null;
+    
+    // Load command examples
+    function loadCommandExamples() {
+        fetch('/api/ai/command-examples')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.examples) {
+                    let html = '';
+                    Object.keys(data.examples).forEach(category => {
+                        html += `<div style="margin-bottom: 15px;"><strong>${category.charAt(0).toUpperCase() + category.slice(1)}:</strong>`;
+                        data.examples[category].forEach(example => {
+                            html += `<div style="margin: 5px 0; padding: 5px; background-color: rgba(0, 255, 0, 0.1); border-radius: 4px; cursor: pointer;" class="command-example" data-command="${example.text}">${example.text}</div>`;
+                        });
+                        html += '</div>';
+                    });
+                    if (examplesList) examplesList.innerHTML = html;
+                    
+                    // Add click handlers to examples
+                    document.querySelectorAll('.command-example').forEach(el => {
+                        el.addEventListener('click', function() {
+                            const cmd = this.getAttribute('data-command');
+                            if (commandInput) {
+                                commandInput.value = cmd;
+                                commandInput.focus();
+                            }
+                        });
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error loading command examples:', error);
+            });
+    }
+    
+    // Render command history
+    function renderHistory() {
+        if (!historyDiv) return;
+        
+        if (commandHistory.length === 0) {
+            historyDiv.innerHTML = '<div style="color: #888; font-style: italic;">No commands yet. Try entering a command above.</div>';
+            return;
+        }
+        
+        let html = '';
+        commandHistory.slice().reverse().forEach((item, index) => {
+            const date = new Date(item.timestamp);
+            html += `<div style="margin-bottom: 15px; padding: 10px; border-bottom: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <strong>Command:</strong>
+                    <span style="color: #888; font-size: 12px;">${date.toLocaleTimeString()}</span>
+                </div>
+                <div style="margin-bottom: 5px; color: var(--primary-color);">${item.command}</div>
+                <div style="margin-bottom: 5px;"><strong>Intent:</strong> ${item.parsed?.intent || 'unknown'}</div>
+                ${item.parsed?.confidence ? `<div style="margin-bottom: 5px;"><strong>Confidence:</strong> ${(item.parsed.confidence * 100).toFixed(0)}%</div>` : ''}
+                ${item.result ? `<div style="color: ${item.result.success ? '#00ff00' : '#ff0000'};">
+                    ${item.result.success ? '✓ Success' : '✗ Error: ' + (item.result.error || 'Unknown error')}
+                </div>` : ''}
+            </div>`;
+        });
+        historyDiv.innerHTML = html;
+    }
+    
+    // Process command
+    function processCommand(command) {
+        if (!command || !command.trim()) return;
+        
+        // Add to history
+        const historyItem = {
+            command: command,
+            timestamp: new Date().toISOString(),
+            parsed: null,
+            result: null
+        };
+        commandHistory.push(historyItem);
+        if (commandHistory.length > 50) {
+            commandHistory = commandHistory.slice(-50); // Keep last 50
+        }
+        localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+        renderHistory();
+        
+        // Show parsing div
+        if (parsingDiv) parsingDiv.style.display = 'block';
+        if (parsingResultDiv) parsingResultDiv.innerHTML = 'Parsing command...';
+        
+        // Send to API
+        fetch('/api/ai/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ command: command })
+        })
+            .then(response => response.json())
+            .then(data => {
+                // Update history item
+                historyItem.parsed = data.parsed || {};
+                historyItem.result = data;
+                
+                // Update localStorage
+                const index = commandHistory.findIndex(item => item.timestamp === historyItem.timestamp);
+                if (index !== -1) {
+                    commandHistory[index] = historyItem;
+                    localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+                }
+                
+                // Show parsing result
+                if (parsingResultDiv) {
+                    let html = `<div style="margin-bottom: 10px;"><strong>Intent:</strong> ${data.parsed?.intent || 'unknown'}</div>`;
+                    if (data.parsed?.confidence !== undefined) {
+                        html += `<div style="margin-bottom: 10px;"><strong>Confidence:</strong> ${(data.parsed.confidence * 100).toFixed(0)}%</div>`;
+                    }
+                    if (data.parsed?.params) {
+                        html += `<div style="margin-bottom: 10px;"><strong>Parameters:</strong><pre style="background-color: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; font-size: 12px;">${JSON.stringify(data.parsed.params, null, 2)}</pre></div>`;
+                    }
+                    if (data.success) {
+                        html += `<div style="color: #00ff00; margin-top: 10px;">✓ Command parsed successfully</div>`;
+                        // Execute command if needed
+                        executeParsedCommand(data);
+                    } else {
+                        html += `<div style="color: #ff0000; margin-top: 10px;">✗ Error: ${data.error || 'Failed to parse command'}</div>`;
+                    }
+                    parsingResultDiv.innerHTML = html;
+                }
+                
+                renderHistory();
+            })
+            .catch(error => {
+                console.error('Error processing command:', error);
+                if (parsingResultDiv) {
+                    parsingResultDiv.innerHTML = `<div style="color: #ff0000;">Error: ${error.message}</div>`;
+                }
+                historyItem.result = { success: false, error: error.message };
+                const index = commandHistory.findIndex(item => item.timestamp === historyItem.timestamp);
+                if (index !== -1) {
+                    commandHistory[index] = historyItem;
+                    localStorage.setItem('ai-command-history', JSON.stringify(commandHistory));
+                }
+                renderHistory();
+            });
+    }
+    
+    // Execute parsed command
+    function executeParsedCommand(data) {
+        if (!data.parsed || !data.parsed.intent) return;
+        
+        const intent = data.parsed.intent;
+        const params = data.parsed.params || {};
+        
+        // Map intents to actual API calls
+        switch (intent) {
+            case 'add_talkgroup':
+                fetch('/api/radio/talkgroups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: params.id || params.dec,
+                        hex: params.hex || null,
+                        alpha_tag: params.alpha_tag || null,
+                        mode: params.mode || null,
+                        description: params.description || null,
+                        tag: params.tag || null,
+                        county: params.county || null
+                    })
+                })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            showNotification('Talkgroup added successfully', 'success');
+                            if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                        } else {
+                            showNotification(result.error || 'Error adding talkgroup', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        showNotification('Error adding talkgroup', 'error');
+                    });
+                break;
+                
+            case 'delete_talkgroup':
+                const tgId = params.id || params.dec;
+                if (tgId) {
+                    fetch(`/api/radio/talkgroups/${tgId}`, { method: 'DELETE' })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.success) {
+                                showNotification('Talkgroup deleted successfully', 'success');
+                                if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                            } else {
+                                showNotification(result.error || 'Error deleting talkgroup', 'error');
+                            }
+                        })
+                        .catch(error => {
+                            showNotification('Error deleting talkgroup', 'error');
+                        });
+                }
+                break;
+                
+            case 'add_frequency':
+                fetch('/api/radio/frequencies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        frequency: params.frequency,
+                        description: params.description || null,
+                        site_id: params.site_id || null
+                    })
+                })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            showNotification('Frequency added successfully', 'success');
+                            if (typeof loadFrequencies === 'function') loadFrequencies();
+                        } else {
+                            showNotification(result.error || 'Error adding frequency', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        showNotification('Error adding frequency', 'error');
+                    });
+                break;
+                
+            case 'delete_frequency':
+                const freqId = params.id || params.frequency;
+                if (freqId) {
+                    fetch(`/api/radio/frequencies/${freqId}`, { method: 'DELETE' })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.success) {
+                                showNotification('Frequency deleted successfully', 'success');
+                                if (typeof loadFrequencies === 'function') loadFrequencies();
+                            } else {
+                                showNotification(result.error || 'Error deleting frequency', 'error');
+                            }
+                        })
+                        .catch(error => {
+                            showNotification('Error deleting frequency', 'error');
+                        });
+                }
+                break;
+                
+            case 'list_talkgroups':
+                if (typeof loadTalkgroups === 'function') loadTalkgroups();
+                break;
+                
+            case 'list_frequencies':
+                if (typeof loadFrequencies === 'function') loadFrequencies();
+                break;
+        }
+    }
+    
+    // Setup voice recognition
+    function setupVoiceRecognition() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            if (voiceBtn) voiceBtn.style.display = 'none';
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+        
+        recognition.onstart = function() {
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'block';
+            if (voiceStatusDiv) voiceStatusDiv.textContent = 'Listening...';
+            if (voiceBtn) voiceBtn.disabled = true;
+        };
+        
+        recognition.onresult = function(event) {
+            const transcript = event.results[0][0].transcript;
+            if (commandInput) commandInput.value = transcript;
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+            if (voiceBtn) voiceBtn.disabled = false;
+            processCommand(transcript);
+        };
+        
+        recognition.onerror = function(event) {
+            console.error('Speech recognition error:', event.error);
+            if (voiceStatusDiv) voiceStatusDiv.textContent = `Error: ${event.error}`;
+            setTimeout(() => {
+                if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+                if (voiceBtn) voiceBtn.disabled = false;
+            }, 2000);
+        };
+        
+        recognition.onend = function() {
+            if (voiceFeedbackDiv) voiceFeedbackDiv.style.display = 'none';
+            if (voiceBtn) voiceBtn.disabled = false;
+        };
+    }
+    
+    // Event listeners
+    if (submitBtn) {
+        submitBtn.addEventListener('click', function() {
+            if (commandInput && commandInput.value) {
+                processCommand(commandInput.value);
+                commandInput.value = '';
+            }
+        });
+    }
+    
+    if (commandInput) {
+        commandInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                if (commandInput.value) {
+                    processCommand(commandInput.value);
+                    commandInput.value = '';
+                }
+            }
+        });
+    }
+    
+    if (voiceBtn) {
+        voiceBtn.addEventListener('click', function() {
+            if (recognition) {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Error starting voice recognition:', error);
+                }
+            }
+        });
+    }
+    
+    // Load examples and history on tab open
+    const aiCommandsTab = document.getElementById('quick-start-ai-commands-tab');
+    if (aiCommandsTab) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    if (aiCommandsTab.classList.contains('active')) {
+                        loadCommandExamples();
+                        renderHistory();
+                    }
+                }
+            });
+        });
+        observer.observe(aiCommandsTab, { attributes: true });
+    }
+    
+    // Initialize
+    setupVoiceRecognition();
+    renderHistory();
+
+    // Mobile: Add FAB button for AI commands
+    if (window.UtilsModule && window.UtilsModule.isMobile && window.UtilsModule.isMobile()) {
+        const fab = document.createElement('button');
+        fab.className = 'ai-command-fab';
+        fab.innerHTML = '🎤';
+        fab.setAttribute('aria-label', 'Open AI command interface');
+        fab.addEventListener('click', () => {
+            // Open Quick Start modal to AI Commands tab
+            if (typeof showQuickStartModal === 'function') {
+                showQuickStartModal();
+                setTimeout(() => {
+                    const aiTab = document.querySelector('.quick-start-tab[data-tab="ai-commands"]');
+                    if (aiTab) aiTab.click();
+                }, 100);
+            }
+        });
+        document.body.appendChild(fab);
+    }
+}
+
+// Haptic feedback for mobile
+function triggerHapticFeedback(type = 'light') {
+    if ('vibrate' in navigator) {
+        const patterns = {
+            light: 10,
+            medium: 20,
+            heavy: 30
+        };
+        navigator.vibrate(patterns[type] || patterns.light);
+    }
+}
+
+// Make functions global for onclick handlers
+window.editTalkgroup = editTalkgroup;
+window.deleteTalkgroup = deleteTalkgroup;
+window.editFrequency = editFrequency;
+window.deleteFrequency = deleteFrequency;
 
 

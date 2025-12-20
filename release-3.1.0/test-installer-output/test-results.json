@@ -1,0 +1,68 @@
+{
+  "timestamp": "2025-12-19T15:11:01.830Z",
+  "total": 10,
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Docker Quick: Local Whisper + Ollama + TrunkRecorder",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Docker Quick: iCAD + Remote Ollama + SDRTrunk",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Docker Quick: OpenAI Transcription + OpenAI AI + rdio-scanner",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Docker Quick: Remote Transcription + No AI + OP25",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Docker Quick: Remote iCAD + Ollama + No Radio",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Local Quick: Local Whisper + OpenAI + TrunkRecorder",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Local Quick: Remote Transcription + Remote Ollama + No Radio",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Local Quick: OpenAI Transcription + No AI + SDRTrunk",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Docker Advanced: All Services + GPU + S3",
+      "success": true,
+      "error": null,
+      "errors": []
+    },
+    {
+      "name": "Local Advanced: Custom Ports + Google Maps + Auth",
+      "success": true,
+      "error": null,
+      "errors": []
+    }
+  ]
+}

@@ -1,0 +1,318 @@
+# Configuration Reference
+
+[← Back to README](../README.md)
+
+Settings can be configured in two ways:
+1. **Web UI (Recommended)** - Use the Quick Start menu for most settings (see [Web UI Configuration Guide](WEB-UI-CONFIGURATION.md))
+2. **`.env` File** - Direct editing for advanced settings
+
+This document explains all `.env` file options. For web UI configuration, see the [Web UI Configuration Guide](WEB-UI-CONFIGURATION.md).
+
+---
+
+## Port Reference
+
+All services and their default ports:
+
+| Service | Port | Type | Description |
+|---------|------|------|-------------|
+| **Scanner Map Web UI** | `3001` | HTTP | Main web interface |
+| **Scanner Map API** | `3306` | HTTP | Audio upload endpoint |
+| **iCAD Transcribe Web UI** | `9912` | HTTP | Transcription manager |
+| **Ollama API** | `11434` | HTTP | Local AI service (no web UI) |
+| **Faster-Whisper Server** | `8000` | HTTP | Remote transcription (if used) |
+
+### Web Interface URLs
+
+| Interface | URL | Login |
+|-----------|-----|-------|
+| Scanner Map | `http://localhost:3001` | Optional (see Authentication) |
+| iCAD Transcribe | `http://localhost:9912` | `admin` / `changeme123` |
+
+### API Endpoints
+
+| Endpoint | URL | Auth |
+|----------|-----|------|
+| Audio Upload | `http://localhost:3306/api/call-upload` | API Key |
+| iCAD Transcribe | `http://localhost:9912/api/transcribe` | API Key |
+| Ollama Generate | `http://localhost:11434/api/generate` | None |
+
+---
+
+## Quick Reference
+
+| Setting | Required | Default | Description |
+|---------|----------|---------|-------------|
+| `WEBSERVER_PORT` | Yes | `3001` | Web interface port |
+| `BOT_PORT` | Yes | `3306` | API port for audio uploads |
+| `PUBLIC_DOMAIN` | Yes | `localhost` | Domain for audio links |
+| `AI_PROVIDER` | Yes | - | `openai` or `ollama` |
+| `TRANSCRIPTION_MODE` | Yes | `local` | See [Transcription](TRANSCRIPTION.md) |
+
+---
+
+## Core Settings
+
+```env
+# Port for the web interface
+WEBSERVER_PORT=3001
+
+# Port for radio software uploads (TrunkRecorder, SDRTrunk, rdio-scanner, OP25)
+BOT_PORT=3306
+
+# Public domain or IP for audio playback URLs
+PUBLIC_DOMAIN=localhost
+
+# Timezone (affects timestamps in logs and UI)
+TIMEZONE=America/New_York
+```
+
+---
+
+## AI Provider (Required)
+
+**Note:** AI provider is now configured via web UI after installation. The installer uses safe defaults. You can configure it in the web UI under **Settings** → **Service Configuration**, or edit the `.env` file directly.
+
+You must choose an AI provider for address extraction and categorization.
+
+### Option 1: OpenAI (Recommended for accuracy)
+
+```env
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-your-api-key-here
+OPENAI_MODEL=gpt-4o-mini
+```
+
+**Models:**
+- `gpt-4o-mini` - Fast, cheap, good accuracy (recommended)
+- `gpt-4o` - Best accuracy, higher cost
+- `gpt-3.5-turbo` - Cheapest, lower accuracy
+
+### Option 2: Ollama (Free, runs locally)
+
+```env
+AI_PROVIDER=ollama
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+```
+
+**Models (Recommended for 8GB GPU):**
+- `llama3.1:8b` - ⭐ **Best for 8GB GPU** - Excellent balance (~6-7GB VRAM)
+- `mistral:7b` - Faster alternative (~5GB VRAM)
+- `llama3.1:70b` - Best accuracy, requires 16GB+ VRAM
+
+**Note:** Models are automatically pulled during installation. The installer detects your GPU and recommends the best model.
+
+---
+
+## Transcription Mode (Required)
+
+See [Transcription Guide](TRANSCRIPTION.md) for details.
+
+```env
+# Options: local, remote, openai, icad
+TRANSCRIPTION_MODE=local
+
+# For local mode only
+TRANSCRIPTION_DEVICE=cpu  # or 'cuda' for NVIDIA GPU
+```
+
+---
+
+## Geocoding
+
+See [Geocoding Guide](GEOCODING.md) for details.
+
+```env
+# Provider: nominatim (free), locationiq, google
+GEOCODING_PROVIDER=nominatim
+
+# API keys (only needed for LocationIQ or Google)
+LOCATIONIQ_API_KEY=
+GOOGLE_MAPS_API_KEY=
+
+# Location hints for better accuracy
+GEOCODING_STATE=MD
+GEOCODING_CITY=Baltimore
+GEOCODING_COUNTRY=us
+GEOCODING_TARGET_COUNTIES=Baltimore,Baltimore City
+```
+
+---
+
+## Discord Bot (Optional)
+
+See [Discord Guide](DISCORD.md) for setup.
+
+```env
+ENABLE_DISCORD=false
+DISCORD_TOKEN=your-bot-token
+CLIENT_ID=your-client-id
+```
+
+---
+
+## Authentication (Optional)
+
+Enable password protection for the web interface.
+
+```env
+# Enable authentication
+ENABLE_AUTH=false
+WEBSERVER_PASSWORD=your-password
+
+# Session settings
+SESSION_DURATION_DAYS=7
+MAX_SESSIONS_PER_USER=5
+```
+
+When enabled:
+- Users must log in to access the interface
+- Admin user is auto-created on first startup
+- Default username: `admin`, password: from `WEBSERVER_PASSWORD`
+
+---
+
+## Storage
+
+```env
+# Storage mode: local or s3
+STORAGE_MODE=local
+
+# S3 settings (only if STORAGE_MODE=s3)
+S3_ENDPOINT=https://your-s3-endpoint.com
+S3_BUCKET_NAME=scanner-map
+S3_ACCESS_KEY_ID=your-access-key
+S3_SECRET_ACCESS_KEY=your-secret-key
+```
+
+---
+
+## Talk Groups
+
+Configure which talk groups trigger address extraction.
+
+```env
+# Enable talk group filtering
+ENABLE_MAPPED_TALK_GROUPS=true
+
+# Comma-separated talk group IDs (dispatch channels recommended)
+MAPPED_TALK_GROUPS=1001,1002,2001
+
+# Location context for each talk group (helps AI accuracy)
+TALK_GROUP_1001=Baltimore City Fire Dispatch
+TALK_GROUP_1002=Baltimore County Police Dispatch
+TALK_GROUP_2001=Anne Arundel Fire Dispatch
+```
+
+---
+
+## Two-Tone Detection (Optional)
+
+Enable pager tone detection for fire/EMS calls.
+
+```env
+ENABLE_TWO_TONE_MODE=false
+TWO_TONE_TALK_GROUPS=4005
+TWO_TONE_QUEUE_SIZE=1
+TONE_DETECTION_TYPE=auto
+
+# Tone parameters (usually don't need to change)
+TWO_TONE_MIN_TONE_LENGTH=0.7
+TWO_TONE_MAX_TONE_LENGTH=3.0
+TONE_DETECTION_THRESHOLD=0.3
+```
+
+---
+
+## Radio Software Configuration
+
+The installer automatically configures your selected radio software. This setting is stored for reference:
+
+```env
+# Selected radio software (set by installer)
+# Options: trunk-recorder, sdrtrunk, rdio-scanner, op25, none
+RADIO_SOFTWARE=trunk-recorder
+```
+
+**Auto-Configuration:**
+- API keys are automatically generated and injected into all config files
+- Upload URLs are pre-configured for Docker or local installation
+- Configuration files are generated in `appdata/{software}/config/`
+
+**Config File Locations:**
+- **TrunkRecorder:** `appdata/trunk-recorder/config/config.json`
+- **SDRTrunk:** `appdata/sdrtrunk/config/streaming-config.json`
+- **rdio-scanner:** `appdata/rdio-scanner/config/config.json`
+- **OP25:** `appdata/op25/config/config.json`
+
+See [Radio Software Guide](RADIO-SOFTWARE.md) for detailed setup instructions.
+
+---
+
+## API Keys File
+
+API keys for radio software (TrunkRecorder, SDRTrunk, rdio-scanner, OP25) are stored in:
+- **Docker:** `appdata/scanner-map/data/apikeys.json`
+- **Local:** `data/apikeys.json`
+
+This file is auto-generated on first startup. The plain-text key is displayed in the console once and saved to `data/api-key.txt` for easy reference.
+
+---
+
+## Advanced Settings
+
+```env
+# Maximum concurrent transcriptions
+MAX_CONCURRENT_TRANSCRIPTIONS=2
+
+# AI summary lookback period
+SUMMARY_LOOKBACK_HOURS=1
+ASK_AI_LOOKBACK_HOURS=8
+
+# Python command (if not in PATH)
+PYTHON_COMMAND=python3
+
+# Auto-update Python packages on startup
+AUTO_UPDATE_PYTHON_PACKAGES=true
+```
+
+---
+
+## Example Complete Configuration
+
+```env
+# Core
+WEBSERVER_PORT=3001
+BOT_PORT=3306
+PUBLIC_DOMAIN=192.168.1.100
+TIMEZONE=America/New_York
+
+# AI
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-xxx
+OPENAI_MODEL=gpt-4o-mini
+
+# Transcription
+TRANSCRIPTION_MODE=local
+TRANSCRIPTION_DEVICE=cuda
+
+# Geocoding
+GEOCODING_PROVIDER=nominatim
+GEOCODING_STATE=MD
+GEOCODING_CITY=Baltimore
+GEOCODING_COUNTRY=us
+GEOCODING_TARGET_COUNTIES=Baltimore,Baltimore City
+
+# Talk Groups
+ENABLE_MAPPED_TALK_GROUPS=true
+MAPPED_TALK_GROUPS=1001,1002
+TALK_GROUP_1001=Baltimore City Dispatch
+TALK_GROUP_1002=Baltimore County Dispatch
+
+# Optional
+ENABLE_DISCORD=false
+ENABLE_AUTH=false
+STORAGE_MODE=local
+```
+
