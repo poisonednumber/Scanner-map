@@ -136,41 +136,38 @@ find_repository() {
         return 0
     fi
     
-    # Repository not found - offer to clone
-    print_warning "Scanner Map repository not found"
+    # Repository not found - provide instructions
     echo ""
-    read -p "Would you like to clone it now? [Y/n]: " response
-    response=${response:-Y}
-    
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        print_info "Cloning Scanner Map repository..."
-        git clone https://github.com/poisonednumber/Scanner-map.git
-        cd Scanner-map
-        print_success "Repository cloned successfully"
-        return 0
-    else
-        echo ""
-        echo "To install manually:"
-        echo "  git clone https://github.com/poisonednumber/Scanner-map.git"
-        echo "  cd Scanner-map"
-        echo "  ./install.sh"
-        exit 1
-    fi
+    print_error "Scanner Map repository not found."
+    echo ""
+    echo "To install Scanner Map, you have two options:"
+    echo ""
+    echo "  Option 1: Clone the repository first"
+    echo "    git clone https://github.com/poisonednumber/Scanner-map.git"
+    echo "    cd Scanner-map"
+    echo "    ./install.sh"
+    echo ""
+    echo "  Option 2: Run this script from within the cloned repository"
+    echo ""
+    exit 1
 }
 
 # Install npm dependencies
 install_dependencies() {
     print_header "Installing Dependencies"
     
-    if [[ -d "node_modules" ]]; then
+    # Check if critical modules are installed (specifically inquirer)
+    if [[ -d "node_modules/inquirer" ]]; then
         print_success "Dependencies already installed"
     else
         print_info "Installing npm dependencies..."
+        echo "        This may take a few minutes..."
+        echo ""
         
         # Check if npm is available
         if ! command_exists npm; then
-            print_warning "npm not found in PATH"
-            print_info "Node.js may have been just installed."
+            print_warning "npm not found in PATH."
+            echo "        Node.js may have been just installed."
             echo ""
             print_info "The installer needs to be restarted for PATH to update."
             echo ""
@@ -178,25 +175,32 @@ install_dependencies() {
             restart=${restart:-Y}
             
             if [[ "$restart" =~ ^[Yy]$ ]]; then
+                echo ""
                 update_and_restart "$@"
+                exit 0
             else
                 echo ""
                 echo "Please restart the installer manually after Node.js is available in PATH."
-                echo "Run: bash install.sh"
+                echo "Run: ./install.sh"
+                echo ""
                 exit 1
             fi
         fi
         
         # Install dependencies (optional dependencies will be skipped automatically if they fail)
         # Use --no-audit --no-fund to speed up installation
-        if ! npm install --no-audit --no-fund 2>&1; then
-            print_error "Failed to install npm dependencies"
+        npm install --no-audit --no-fund 2>&1 || true  # Continue even if npm install fails, we'll check for inquirer
+        
+        # Check if critical modules are installed
+        if [[ ! -d "node_modules/inquirer" ]]; then
+            echo ""
+            print_error "Failed to install npm dependencies."
             echo ""
             
-            # Check if npm is still available (might have been a PATH issue)
+            # Check if npm command itself failed (PATH issue)
             if ! command_exists npm; then
-                print_warning "npm not found in PATH"
-                print_info "Node.js may have been just installed."
+                print_warning "npm not found in PATH."
+                echo "        Node.js may have been just installed."
                 echo ""
                 print_info "The installer needs to be restarted for PATH to update."
                 echo ""
@@ -204,11 +208,14 @@ install_dependencies() {
                 restart=${restart:-Y}
                 
                 if [[ "$restart" =~ ^[Yy]$ ]]; then
+                    echo ""
                     update_and_restart "$@"
+                    exit 0
                 else
                     echo ""
                     echo "Please restart the installer manually after Node.js is available in PATH."
-                    echo "Run: bash install.sh"
+                    echo "Run: ./install.sh"
+                    echo ""
                     exit 1
                 fi
             else
@@ -217,15 +224,18 @@ install_dependencies() {
                 echo "  2. Run: npm cache clean --force"
                 echo "  3. Check your internet connection"
                 echo "  4. If using Node.js v23+, try Node.js v22 LTS instead"
+                echo ""
                 exit 1
             fi
         fi
         
+        echo ""
         print_success "Dependencies installed successfully"
         echo ""
-        print_info "The installer needs to restart to continue with configuration."
+        echo "The installer needs to restart to continue with configuration."
         echo ""
         read -p "Press Enter to restart the installer..."
+        # Restart the installer without updating (dependencies are already installed)
         restart_installer "$@"
         exit 0
     fi
@@ -241,9 +251,8 @@ main() {
     echo ""
     echo "This installer will:"
     echo "  1. Check prerequisites (Git, Node.js, npm)"
-    echo "  2. Clone the repository if needed"
-    echo "  3. Install npm dependencies"
-    echo "  4. Run interactive setup"
+    echo "  2. Install npm dependencies"
+    echo "  3. Run interactive setup"
     echo ""
     
     # Step 1: Check prerequisites

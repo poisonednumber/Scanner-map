@@ -13,14 +13,16 @@ This document verifies that `install.bat` (Windows) and `install.sh` (Linux/macO
 ### Repository Detection
 - [x] **Current directory**: Both check if already in repository
 - [x] **Subdirectory**: Both check for Scanner-map subdirectory
-- [x] **Clone option**: Linux offers to clone (better UX), Windows shows instructions
+- [x] **Clone instructions**: Both show instructions to clone manually (consistent behavior)
 
 ### Dependency Installation
-- [x] **npm install flags**: Both use `--ignore-optional --no-audit --no-fund`
+- [x] **npm install flags**: Both use `--no-audit --no-fund`
+- [x] **Dependency check**: Both check for critical modules (inquirer) after installation
 - [x] **PATH issue detection**: Both detect when npm is not in PATH
 - [x] **Auto-restart on PATH issue**: Both offer to restart installer
 - [x] **Error handling**: Both provide troubleshooting steps
 - [x] **Node.js v23+ warning in errors**: Both mention v23+ in error messages
+- [x] **Graceful failure**: Both continue even if npm install has warnings, checking for critical modules
 
 ### Auto-Update and Restart
 - [x] **Git repository check**: Both check if in git repo
@@ -37,7 +39,7 @@ This document verifies that `install.bat` (Windows) and `install.sh` (Linux/macO
 
 ## Differences (Intentional)
 
-1. **Repository Cloning**: Linux installer offers to clone the repo automatically, Windows shows instructions (Linux has better UX here, but both work)
+1. **Repository Cloning**: Both show instructions to clone manually (consistent behavior - users must clone first)
 2. **Path Separators**: Windows uses backslashes (`scripts\installer\installer-core.js`), Linux uses forward slashes (`scripts/installer/installer-core.js`) - platform-specific, correct
 3. **Output Formatting**: Linux uses colored output with emoji, Windows uses plain text - both functional, Linux has better UX
 

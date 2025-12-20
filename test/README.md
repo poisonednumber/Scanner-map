@@ -12,7 +12,8 @@ test/
 │   └── *.json                   # Test result files
 ├── tmp/                         # Temporary test files (ignored by git)
 │   └── test-api-key.txt         # API key for test event generator
-└── test-run.bat                 # Test runner script (Windows)
+├── test-run.bat                 # Test runner script (Windows)
+└── test-run.sh                  # Test runner script (Linux/macOS)
 ```
 
 ## Test Scripts
@@ -46,17 +47,26 @@ This will:
 - Send them to the running Scanner Map instance
 - Use API key from `test/tmp/test-api-key.txt` or environment variable
 
-### Test Runner (Windows)
+### Test Runner
 
+**Windows:**
 ```bash
 test\test-run.bat
 ```
 
-This will:
-- Clean up runtime files
-- Start Scanner Map (Docker or local)
+**Linux/macOS:**
+```bash
+bash test/test-run.sh
+```
+
+Both scripts will:
+- Clean up runtime files (data, audio, logs, databases, API keys)
+- Start Scanner Map (Docker or local - you choose)
 - Start test event generator
-- Enable live reload
+- Enable live reload (if available)
+- Open browser to setup wizard
+- Show logs in real-time
+- Clean up on exit
 
 ## Temporary Files
 
