@@ -68,21 +68,27 @@ if (provider === 'nominatim') {
 } else if (provider === 'locationiq') {
   // LocationIQ - requires API key (free tier available)
   if (!LOCATIONIQ_API_KEY) {
-    console.error('ERROR: LOCATIONIQ_API_KEY is required when GEOCODING_PROVIDER=locationiq');
-    console.error('Get a free API key at: https://locationiq.com/');
-    process.exit(1);
+    console.warn('[Geocoding] WARNING: GEOCODING_PROVIDER is set to "locationiq" but LOCATIONIQ_API_KEY is not configured.');
+    console.warn('[Geocoding] Falling back to Nominatim (free, no API key required).');
+    console.warn('[Geocoding] To use LocationIQ, get a free API key at: https://locationiq.com/');
+    console.warn('[Geocoding] Then set LOCATIONIQ_API_KEY in your .env file or via the web UI.');
+    geocodingProvider = 'nominatim'; // Fallback to nominatim instead of exiting
+  } else {
+    geocodingProvider = 'locationiq';
+    console.log('[Geocoding] Using LocationIQ for geocoding');
   }
-  geocodingProvider = 'locationiq';
-  console.log('[Geocoding] Using LocationIQ for geocoding');
 } else if (provider === 'google') {
   // Google Maps - requires API key (paid)
   if (!GOOGLE_MAPS_API_KEY) {
-    console.error('ERROR: GOOGLE_MAPS_API_KEY is required when GEOCODING_PROVIDER=google');
-    console.error('Get an API key at: https://console.cloud.google.com/');
-    process.exit(1);
+    console.warn('[Geocoding] WARNING: GEOCODING_PROVIDER is set to "google" but GOOGLE_MAPS_API_KEY is not configured.');
+    console.warn('[Geocoding] Falling back to Nominatim (free, no API key required).');
+    console.warn('[Geocoding] To use Google Maps, get an API key at: https://console.cloud.google.com/');
+    console.warn('[Geocoding] Then set GOOGLE_MAPS_API_KEY in your .env file or via the web UI.');
+    geocodingProvider = 'nominatim'; // Fallback to nominatim instead of exiting
+  } else {
+    geocodingProvider = 'google';
+    console.log('[Geocoding] Using Google Maps for geocoding');
   }
-  geocodingProvider = 'google';
-  console.log('[Geocoding] Using Google Maps for geocoding');
 } else {
   // Auto-detect based on available API keys (backward compatibility)
   const hasGoogleMaps = !!GOOGLE_MAPS_API_KEY;

@@ -106,18 +106,23 @@ setTimeout(() => {
 const GEOCODING_PROVIDER = process.env.GEOCODING_PROVIDER || '';
 // Handle case-insensitive comparison and empty strings
 const geoProviderLower = GEOCODING_PROVIDER.toLowerCase().trim();
+// Allow any provider to be set - geocoding.js will handle fallback to nominatim if API keys are missing
 const hasGeocoding = geoProviderLower === 'nominatim' || 
-                    (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim() !== '') || 
-                    (LOCATIONIQ_API_KEY && LOCATIONIQ_API_KEY.trim() !== '');
+                    geoProviderLower === 'locationiq' ||
+                    geoProviderLower === 'google' ||
+                    (GOOGLE_MAPS_API_KEY && typeof GOOGLE_MAPS_API_KEY === 'string' && GOOGLE_MAPS_API_KEY.trim() !== '') || 
+                    (LOCATIONIQ_API_KEY && typeof LOCATIONIQ_API_KEY === 'string' && LOCATIONIQ_API_KEY.trim() !== '');
 
 if (!hasGeocoding) {
-  console.error('[Webserver] ERROR: Geocoding service not configured.');
-  console.error('[Webserver] Please set one of the following:');
-  console.error('[Webserver]   - GEOCODING_PROVIDER=nominatim (free, recommended for testing)');
-  console.error('[Webserver]   - GOOGLE_MAPS_API_KEY=your-key-here');
-  console.error('[Webserver]   - LOCATIONIQ_API_KEY=your-key-here');
-  console.error(`[Webserver] Current GEOCODING_PROVIDER value: "${GEOCODING_PROVIDER}"`);
-  process.exit(1);
+  console.warn('[Webserver] WARNING: Geocoding service not configured.');
+  console.warn('[Webserver] Defaulting to Nominatim (free, no API key required).');
+  console.warn('[Webserver] To use a different provider, set one of the following:');
+  console.warn('[Webserver]   - GEOCODING_PROVIDER=nominatim (free, recommended for testing)');
+  console.warn('[Webserver]   - GEOCODING_PROVIDER=locationiq (requires LOCATIONIQ_API_KEY)');
+  console.warn('[Webserver]   - GEOCODING_PROVIDER=google (requires GOOGLE_MAPS_API_KEY)');
+  console.warn(`[Webserver] Current GEOCODING_PROVIDER value: "${GEOCODING_PROVIDER}"`);
+  // Don't exit - just use nominatim as default
+  // geocoding.js will handle the actual provider selection and fallback logic
 }
 
 // Log geocoding API availability
@@ -217,14 +222,37 @@ app.post('/api/config/services', async (req, res) => {
 // Settings API Endpoints
 // Get all settings
 app.get('/api/settings', (req, res) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:219',message:'GET /api/settings called',data:{webserverPort:WEBSERVER_PORT,authEnabled:process.env.ENABLE_AUTH === 'true' || process.env.AUTH_ENABLED === 'true'},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   try {
     const settings = {
-      // General
-      webserverPort: WEBSERVER_PORT,
-      botPort: BOT_PORT || '',
-      publicDomain: PUBLIC_DOMAIN,
-      timezone: process.env.TIMEZONE || 'America/New_York',
-      authEnabled: process.env.AUTH_ENABLED === 'true',
+      // General - Read from process.env to get latest values (may have been updated without restart)
+      webserverPort: (() => {
+        const val = process.env.WEBSERVER_PORT || WEBSERVER_PORT;
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:226',message:'GET webserverPort',data:{processEnv:process.env.WEBSERVER_PORT,constant:WEBSERVER_PORT,result:val},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        return val;
+      })(),
+      botPort: process.env.BOT_PORT || BOT_PORT || '',
+      publicDomain: (() => {
+        // Always read from process.env first (may have been updated), then fallback to constant
+        const val = process.env.PUBLIC_DOMAIN !== undefined ? process.env.PUBLIC_DOMAIN : PUBLIC_DOMAIN;
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:234',message:'GET publicDomain',data:{processEnv:process.env.PUBLIC_DOMAIN,constant:PUBLIC_DOMAIN,result:val,isUndefined:process.env.PUBLIC_DOMAIN===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        return val;
+      })(),
+      timezone: (() => {
+        // Always read from process.env first (may have been updated), then fallback to constant, then default
+        const tz = process.env.TIMEZONE !== undefined ? process.env.TIMEZONE : (TIMEZONE || 'America/New_York');
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:229',message:'GET timezone value',data:{timezone:tz,processEnvTimeZone:process.env.TIMEZONE,constant:TIMEZONE,isUndefined:process.env.TIMEZONE===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        return tz;
+      })(),
+      authEnabled: process.env.ENABLE_AUTH === 'true' || process.env.AUTH_ENABLED === 'true',
       
       // Map
       mapCenter: {
@@ -240,57 +268,67 @@ app.get('/api/settings', (req, res) => {
       muteNewCalls: process.env.MUTE_NEW_CALLS === 'true',
       autoplayEnabled: process.env.AUTOPLAY_ENABLED === 'true',
       
-      // Geocoding
-      geocodingProvider: GEOCODING_PROVIDER || 'nominatim',
+      // Geocoding - Read from process.env to get latest values
+      geocodingProvider: (() => {
+        // Always read from process.env first (may have been updated), then fallback to constant, then default
+        const val = process.env.GEOCODING_PROVIDER !== undefined ? process.env.GEOCODING_PROVIDER : (GEOCODING_PROVIDER || 'nominatim');
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:266',message:'GET geocodingProvider',data:{processEnv:process.env.GEOCODING_PROVIDER,constant:GEOCODING_PROVIDER,result:val,isUndefined:process.env.GEOCODING_PROVIDER===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        return val;
+      })(),
       geocodingCity: process.env.GEOCODING_CITY || '',
       geocodingState: process.env.GEOCODING_STATE || '',
       geocodingCountry: process.env.GEOCODING_COUNTRY || 'us',
-      geocodingCounties: process.env.GEOCODING_COUNTIES || '',
+      geocodingCounties: process.env.GEOCODING_TARGET_COUNTIES || process.env.GEOCODING_COUNTIES || '',
       
-      // Transcription
-      transcriptionMode: TRANSCRIPTION_MODE || 'local',
+      // Transcription - Read from process.env to get latest values
+      transcriptionMode: process.env.TRANSCRIPTION_MODE !== undefined ? process.env.TRANSCRIPTION_MODE : (TRANSCRIPTION_MODE || 'local'),
       transcriptionEnabled: true, // Always enabled, but mode can vary
-      icadUrl: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : '',
+      icadUrl: (process.env.TRANSCRIPTION_MODE || TRANSCRIPTION_MODE) === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : '',
       icadPort: (() => {
-        if (TRANSCRIPTION_MODE !== 'icad') return '9912';
+        const mode = process.env.TRANSCRIPTION_MODE || TRANSCRIPTION_MODE;
+        if (mode !== 'icad') return '9912';
         const url = process.env.ICAD_URL || 'http://localhost:9912';
         const match = url.match(/:(\d+)/);
         return match ? match[1] : '9912';
       })(),
-      icadWebUI: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : null,
-      fasterWhisperUrl: TRANSCRIPTION_MODE === 'faster-whisper' ? (process.env.FASTER_WHISPER_URL || 'http://localhost:8000') : '',
+      icadWebUI: (process.env.TRANSCRIPTION_MODE || TRANSCRIPTION_MODE) === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : null,
+      fasterWhisperUrl: (process.env.TRANSCRIPTION_MODE || TRANSCRIPTION_MODE) === 'faster-whisper' ? (process.env.FASTER_WHISPER_URL || 'http://localhost:8000') : '',
       fasterWhisperPort: (() => {
-        if (TRANSCRIPTION_MODE !== 'faster-whisper') return '8000';
+        const mode = process.env.TRANSCRIPTION_MODE || TRANSCRIPTION_MODE;
+        if (mode !== 'faster-whisper') return '8000';
         const url = process.env.FASTER_WHISPER_URL || 'http://localhost:8000';
         const match = url.match(/:(\d+)/);
         return match ? match[1] : '8000';
       })(),
       
-      // AI
-      aiProvider: AI_PROVIDER || 'ollama',
+      // AI - Read from process.env to get latest values
+      aiProvider: process.env.AI_PROVIDER !== undefined ? process.env.AI_PROVIDER : (AI_PROVIDER || 'ollama'),
       aiEnabled: true, // Always enabled, but provider can vary
-      ollamaUrl: AI_PROVIDER === 'ollama' ? (OLLAMA_URL || 'http://localhost:11434') : '',
+      ollamaUrl: (process.env.AI_PROVIDER || AI_PROVIDER) === 'ollama' ? (process.env.OLLAMA_URL || OLLAMA_URL || 'http://localhost:11434') : '',
       ollamaPort: (() => {
-        if (AI_PROVIDER !== 'ollama') return '11434';
-        const url = OLLAMA_URL || 'http://localhost:11434';
+        const provider = process.env.AI_PROVIDER || AI_PROVIDER;
+        if (provider !== 'ollama') return '11434';
+        const url = process.env.OLLAMA_URL || OLLAMA_URL || 'http://localhost:11434';
         const match = url.match(/:(\d+)/);
         return match ? match[1] : '11434';
       })(),
-      ollamaModel: AI_PROVIDER === 'ollama' ? (process.env.OLLAMA_MODEL || 'llama3.1:8b') : '',
-      openaiModel: AI_PROVIDER === 'openai' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : '',
+      ollamaModel: ((process.env.AI_PROVIDER !== undefined ? process.env.AI_PROVIDER : AI_PROVIDER) || 'ollama') === 'ollama' ? (process.env.OLLAMA_MODEL !== undefined ? process.env.OLLAMA_MODEL : 'llama3.1:8b') : '',
+      openaiModel: (process.env.AI_PROVIDER || AI_PROVIDER) === 'openai' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : '',
       
       // Discord
       discordEnabled: process.env.DISCORD_ENABLED === 'true',
       discordChannel: process.env.DISCORD_CHANNEL_ID || '',
       discordAISummaries: process.env.DISCORD_AI_SUMMARIES === 'true',
       
-      // Storage
-      storageMode: STORAGE_MODE || 'local',
+      // Storage - Read from process.env to get latest values
+      storageMode: process.env.STORAGE_MODE || STORAGE_MODE || 'local',
       s3Endpoint: process.env.S3_ENDPOINT || '',
-      s3Bucket: process.env.S3_BUCKET || '',
+      s3Bucket: process.env.S3_BUCKET_NAME || process.env.S3_BUCKET || '',
       s3Region: process.env.S3_REGION || '',
       
-      // Display
+      // Display - Read from process.env to get latest values
       heatmapIntensity: parseInt(process.env.HEATMAP_INTENSITY || '5'),
       heatmapEnabled: process.env.HEATMAP_ENABLED === 'true',
       maxMarkers: parseInt(process.env.MAX_MARKERS || '1000'),
@@ -306,6 +344,9 @@ app.get('/api/settings', (req, res) => {
 
 // Save settings
 app.post('/api/settings', async (req, res) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:308',message:'POST /api/settings called',data:{category:req.body.category,settingsKeys:Object.keys(req.body.settings || {})},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   try {
     const { category, settings } = req.body;
     const envPath = path.join(process.cwd(), '.env');
@@ -322,8 +363,16 @@ app.post('/api/settings', async (req, res) => {
       if (settings.webserverPort) updates.push({ key: 'WEBSERVER_PORT', value: settings.webserverPort });
       if (settings.botPort) updates.push({ key: 'BOT_PORT', value: settings.botPort });
       if (settings.publicDomain) updates.push({ key: 'PUBLIC_DOMAIN', value: settings.publicDomain });
-      if (settings.timezone) updates.push({ key: 'TIMEZONE', value: settings.timezone });
-      updates.push({ key: 'AUTH_ENABLED', value: settings.authEnabled ? 'true' : 'false' });
+      if (settings.timezone) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:334',message:'Timezone setting received',data:{timezone:settings.timezone,currentProcessEnv:process.env.TIMEZONE},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        updates.push({ key: 'TIMEZONE', value: settings.timezone });
+      }
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:326',message:'General settings processed',data:{authEnabled:settings.authEnabled,currentProcessEnv:process.env.ENABLE_AUTH},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      updates.push({ key: 'ENABLE_AUTH', value: settings.authEnabled ? 'true' : 'false' });
     } else if (category === 'map') {
       if (settings.mapCenter) {
         updates.push({ key: 'MAP_CENTER_LAT', value: settings.mapCenter.lat });
@@ -337,11 +386,14 @@ app.post('/api/settings', async (req, res) => {
       updates.push({ key: 'MUTE_NEW_CALLS', value: settings.muteNewCalls ? 'true' : 'false' });
       updates.push({ key: 'AUTOPLAY_ENABLED', value: settings.autoplayEnabled ? 'true' : 'false' });
     } else if (category === 'geocoding') {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:348',message:'Geocoding settings processed',data:{provider:settings.geocodingProvider,city:settings.geocodingCity,counties:settings.geocodingCounties},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       if (settings.geocodingProvider) updates.push({ key: 'GEOCODING_PROVIDER', value: settings.geocodingProvider });
       if (settings.geocodingCity) updates.push({ key: 'GEOCODING_CITY', value: settings.geocodingCity });
       if (settings.geocodingState) updates.push({ key: 'GEOCODING_STATE', value: settings.geocodingState });
       if (settings.geocodingCountry) updates.push({ key: 'GEOCODING_COUNTRY', value: settings.geocodingCountry });
-      if (settings.geocodingCounties) updates.push({ key: 'GEOCODING_COUNTIES', value: settings.geocodingCounties });
+      if (settings.geocodingCounties) updates.push({ key: 'GEOCODING_TARGET_COUNTIES', value: settings.geocodingCounties });
     } else if (category === 'transcription') {
       if (settings.transcriptionMode) {
         const currentMode = process.env.TRANSCRIPTION_MODE || 'local';
@@ -394,6 +446,24 @@ app.post('/api/settings', async (req, res) => {
         if (settings.openaiModel) updates.push({ key: 'OPENAI_MODEL', value: settings.openaiModel });
         if (settings.openaiApiKey) updates.push({ key: 'OPENAI_API_KEY', value: settings.openaiApiKey });
       }
+    } else if (category === 'services') {
+      // Services settings (Ollama, iCAD URLs and models)
+      if (settings.ollamaUrl) {
+        let ollamaUrl = settings.ollamaUrl;
+        if (!ollamaUrl || ollamaUrl === '' || ollamaUrl.includes('localhost') || ollamaUrl.includes('ollama:')) {
+          ollamaUrl = await detectServiceUrl('ollama', 11434, ollamaUrl);
+        }
+        if (ollamaUrl) updates.push({ key: 'OLLAMA_URL', value: ollamaUrl });
+      }
+      if (settings.ollamaModel) updates.push({ key: 'OLLAMA_MODEL', value: settings.ollamaModel });
+      if (settings.icadUrl) {
+        let icadUrl = settings.icadUrl;
+        if (!icadUrl || icadUrl === '' || icadUrl.includes('localhost') || icadUrl.includes('icad-transcribe:')) {
+          icadUrl = await detectServiceUrl('icad-transcribe', 9912, icadUrl);
+        }
+        if (icadUrl) updates.push({ key: 'ICAD_URL', value: icadUrl });
+      }
+      if (settings.icadApiKey) updates.push({ key: 'ICAD_API_KEY', value: settings.icadApiKey });
     } else if (category === 'discord') {
       updates.push({ key: 'DISCORD_ENABLED', value: settings.discordEnabled ? 'true' : 'false' });
       if (settings.discordChannel) updates.push({ key: 'DISCORD_CHANNEL_ID', value: settings.discordChannel });
@@ -402,10 +472,10 @@ app.post('/api/settings', async (req, res) => {
     } else if (category === 'storage') {
       if (settings.storageMode) updates.push({ key: 'STORAGE_MODE', value: settings.storageMode });
       if (settings.s3Endpoint !== undefined) updates.push({ key: 'S3_ENDPOINT', value: settings.s3Endpoint });
-      if (settings.s3Bucket !== undefined) updates.push({ key: 'S3_BUCKET', value: settings.s3Bucket });
+      if (settings.s3Bucket !== undefined) updates.push({ key: 'S3_BUCKET_NAME', value: settings.s3Bucket });
       if (settings.s3Region !== undefined) updates.push({ key: 'S3_REGION', value: settings.s3Region });
-      if (settings.s3AccessKey) updates.push({ key: 'S3_ACCESS_KEY', value: settings.s3AccessKey });
-      if (settings.s3SecretKey) updates.push({ key: 'S3_SECRET_KEY', value: settings.s3SecretKey });
+      if (settings.s3AccessKey) updates.push({ key: 'S3_ACCESS_KEY_ID', value: settings.s3AccessKey });
+      if (settings.s3SecretKey) updates.push({ key: 'S3_SECRET_ACCESS_KEY', value: settings.s3SecretKey });
     } else if (category === 'display') {
       if (settings.heatmapIntensity) updates.push({ key: 'HEATMAP_INTENSITY', value: settings.heatmapIntensity });
       updates.push({ key: 'HEATMAP_ENABLED', value: settings.heatmapEnabled ? 'true' : 'false' });
@@ -419,14 +489,48 @@ app.post('/api/settings', async (req, res) => {
     // Update .env file
     updates.forEach(({ key, value }) => {
       const regex = new RegExp(`^${key}=.*$`, 'm');
+      const beforeValue = process.env[key];
       if (regex.test(envContent)) {
         envContent = envContent.replace(regex, `${key}=${value}`);
       } else {
         envContent += `\n${key}=${value}`;
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:420',message:'Updating env var in .env file',data:{key,newValue:value,oldProcessEnv:beforeValue},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      // Update process.env immediately for settings that should take effect without restart
+      // Note: Some settings like ports require restart to actually change behavior
+      const immediateUpdateKeys = [
+        'GEOCODING_PROVIDER', 'GEOCODING_CITY', 'GEOCODING_STATE', 'GEOCODING_COUNTRY', 
+        'GEOCODING_TARGET_COUNTIES', 'GEOCODING_COUNTIES', 'ENABLE_AUTH', 'AUTH_ENABLED', 
+        'TIMEZONE', 'PUBLIC_DOMAIN', 'WEBSERVER_PORT', 'BOT_PORT', 'AI_PROVIDER', 
+        'TRANSCRIPTION_MODE', 'OLLAMA_URL', 'OLLAMA_MODEL', 'OPENAI_MODEL', 'ICAD_URL', 
+        'ICAD_API_KEY', 'FASTER_WHISPER_URL', 'STORAGE_MODE', 'DISCORD_ENABLED', 
+        'DISCORD_CHANNEL_ID', 'DISCORD_AI_SUMMARIES', 'DISCORD_TOKEN', 'S3_ENDPOINT',
+        'S3_BUCKET_NAME', 'S3_BUCKET', 'S3_REGION', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY',
+        'HEATMAP_INTENSITY', 'HEATMAP_ENABLED', 'MAX_MARKERS', 'CLUSTER_MARKERS'
+      ];
+      if (immediateUpdateKeys.includes(key)) {
+        const oldValue = process.env[key];
+        // Ensure value is a string (process.env values must be strings)
+        const stringValue = String(value);
+        process.env[key] = stringValue;
+        console.log(`[Settings] Updated process.env[${key}] = "${stringValue}" (was: "${oldValue}")`);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:512',message:'Updated process.env immediately',data:{key,oldValue,newValue:stringValue,wasInList:true,afterUpdate:process.env[key]},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+      } else {
+        console.log(`[Settings] Key "${key}" NOT in immediateUpdateKeys list`);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:519',message:'Key NOT in immediateUpdateKeys',data:{key,value,immediateUpdateKeys:immediateUpdateKeys.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+      }
     });
     
     fs.writeFileSync(envPath, envContent);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:429',message:'Settings saved to .env file',data:{category,updatesCount:updates.length,updates:updates.map(u=>u.key)},timestamp:Date.now(),sessionId:'debug-session',runId:'settings-verify',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     
     res.json({ success: true, message: `${category} settings saved. Restart required for some changes.` });
   } catch (error) {
@@ -3087,9 +3191,104 @@ const io = socketIo(server);
 const db = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) => {
   if (err) {
     console.error('Error opening database', err.message);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3191',message:'Database open error',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
   } else {
     console.log('Connected to the SQLite database.');
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3195',message:'Database connected successfully',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
   }
+});
+
+// Initialize core database tables (webserver may run independently)
+db.serialize(() => {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3200',message:'Starting database table initialization',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+  
+  // Create transcriptions table
+  db.run(`CREATE TABLE IF NOT EXISTS transcriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    talk_group_id TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    transcription TEXT,
+    audio_file_path TEXT,
+    address TEXT,
+    lat REAL,
+    lon REAL,
+    category TEXT
+  )`, (err) => {
+    if (err) {
+      console.error('Error creating transcriptions table:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3215',message:'Error creating transcriptions table',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    } else {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3218',message:'transcriptions table created/verified',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }
+  });
+
+  // Create talk_groups table (CRITICAL - this was missing!)
+  db.run(`CREATE TABLE IF NOT EXISTS talk_groups (
+    id TEXT PRIMARY KEY,
+    hex TEXT,
+    alpha_tag TEXT,
+    mode TEXT,
+    description TEXT,
+    tag TEXT,
+    county TEXT
+  )`, (err) => {
+    if (err) {
+      console.error('Error creating talk_groups table:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3233',message:'Error creating talk_groups table',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    } else {
+      console.log('talk_groups table created/verified');
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3236',message:'talk_groups table created/verified',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }
+  });
+
+  // Create frequencies table
+  db.run(`CREATE TABLE IF NOT EXISTS frequencies (
+    id INTEGER PRIMARY KEY,
+    frequency TEXT,
+    description TEXT
+  )`, (err) => {
+    if (err) {
+      console.error('Error creating frequencies table:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3247',message:'Error creating frequencies table',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    } else {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3250',message:'frequencies table created/verified',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }
+  });
+
+  // Create global_keywords table
+  db.run(`CREATE TABLE IF NOT EXISTS global_keywords (
+    keyword TEXT UNIQUE,
+    talk_group_id TEXT
+  )`, (err) => {
+    if (err) {
+      console.error('Error creating global_keywords table:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3261',message:'Error creating global_keywords table',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    } else {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:3264',message:'global_keywords table created/verified',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }
+  });
 });
 
 db.run(`ALTER TABLE transcriptions ADD COLUMN category TEXT`, err => {
@@ -4268,10 +4467,16 @@ setInterval(checkForLiveFeedCalls, 2500); // Poll for live feed slightly offset,
 
 // Server Startup
 console.log(`[Webserver] Starting server on port ${portNum}...`);
+// #region agent log
+fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4374',message:'Server startup beginning',data:{port:portNum,publicDomain:PUBLIC_DOMAIN},timestamp:Date.now(),sessionId:'debug-session',runId:'server-startup',hypothesisId:'G'})}).catch(()=>{});
+// #endregion
 
 // Handle server errors (must be set before listen)
 server.on('error', (err) => {
   console.error(`[Webserver] ERROR: Failed to start server on port ${portNum}:`, err.message);
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4377',message:'Server error event',data:{error:err.message,code:err.code,port:portNum},timestamp:Date.now(),sessionId:'debug-session',runId:'server-startup',hypothesisId:'G'})}).catch(()=>{});
+  // #endregion
   if (err.code === 'EADDRINUSE') {
     console.error(`[Webserver] Port ${portNum} is already in use. Please:`);
     console.error(`[Webserver]   1. Stop the process using port ${portNum}`);
@@ -4288,6 +4493,9 @@ server.listen(portNum, () => {
   console.log(`[Webserver] ✓ Web server running on port ${portNum}`);
   console.log(`[Webserver] ✓ Audio URL base: http://${PUBLIC_DOMAIN}:${portNum}/audio/`);
   console.log(`[Webserver] ✓ Web UI accessible at: http://${PUBLIC_DOMAIN}:${portNum}/`);
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4391',message:'Server listening successfully',data:{port:portNum,publicDomain:PUBLIC_DOMAIN},timestamp:Date.now(),sessionId:'debug-session',runId:'server-startup',hypothesisId:'G'})}).catch(()=>{});
+  // #endregion
   
   if (authEnabled) {
     console.log('[Webserver] Authentication: ENABLED');
@@ -4300,9 +4508,9 @@ server.listen(portNum, () => {
   // Log geocoding provider status
   if (geoProviderLower === 'nominatim') {
     console.log('[Webserver] Geocoding provider: Nominatim (free, public service)');
-  } else if (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim() !== '') {
+  } else if (GOOGLE_MAPS_API_KEY && typeof GOOGLE_MAPS_API_KEY === 'string' && GOOGLE_MAPS_API_KEY.trim() !== '') {
     console.log('[Webserver] Geocoding provider: Google Maps');
-  } else if (LOCATIONIQ_API_KEY && LOCATIONIQ_API_KEY.trim() !== '') {
+  } else if (LOCATIONIQ_API_KEY && typeof LOCATIONIQ_API_KEY === 'string' && LOCATIONIQ_API_KEY.trim() !== '') {
     console.log('[Webserver] Geocoding provider: LocationIQ');
   }
 });
@@ -4410,6 +4618,30 @@ app.get('/api/wizard/detect-system', async (req, res) => {
     const { execSync } = require('child_process');
     const fs = require('fs');
     
+    // Default detections - will be populated with available info
+    const detections = {
+      os: 'unknown',
+      arch: 'unknown',
+      cpu: 'Unknown',
+      cpuCores: 0,
+      ram: 'Unknown',
+      docker: false,
+      runningInDocker: false,
+      installationType: 'local',
+      sdrDevices: []
+    };
+    
+    // Safely get OS info
+    try {
+      detections.os = os.platform() || 'unknown';
+      detections.arch = os.arch() || 'unknown';
+      detections.cpu = os.cpus()[0]?.model || 'Unknown';
+      detections.cpuCores = os.cpus().length || 0;
+      detections.ram = `${Math.round(os.totalmem() / 1024 / 1024 / 1024)}GB`;
+    } catch (err) {
+      console.warn('[System Detection] Error getting OS info:', err.message);
+    }
+    
     // Check if running inside Docker container
     let runningInDocker = false;
     try {
@@ -4417,44 +4649,41 @@ app.get('/api/wizard/detect-system', async (req, res) => {
       if (fs.existsSync('/.dockerenv')) {
         runningInDocker = true;
       }
-      // Check cgroup (Linux)
+      // Check cgroup (Linux) - only if file exists
       if (!runningInDocker && fs.existsSync('/proc/self/cgroup')) {
-        const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
-        if (cgroup.includes('docker') || cgroup.includes('containerd')) {
-          runningInDocker = true;
+        try {
+          const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+          if (cgroup.includes('docker') || cgroup.includes('containerd')) {
+            runningInDocker = true;
+          }
+        } catch (err) {
+          // Can't read cgroup, continue
         }
       }
       // Check environment variables
       if (!runningInDocker && (process.env.DOCKER_CONTAINER === 'true' || process.env.container === 'docker')) {
         runningInDocker = true;
       }
+      detections.runningInDocker = runningInDocker;
     } catch (err) {
-      // Detection failed, continue with other checks
+      console.warn('[System Detection] Error detecting Docker environment:', err.message);
+      // Continue with defaults
     }
     
     // Check if Docker CLI is available (for managing containers)
     let dockerAvailable = false;
     try {
-      execSync('docker --version', { stdio: 'ignore' });
+      execSync('docker --version', { stdio: 'ignore', timeout: 2000 });
       dockerAvailable = true;
     } catch (err) {
       dockerAvailable = false;
     }
+    detections.docker = dockerAvailable;
     
-    const detections = {
-      os: os.platform(),
-      arch: os.arch(),
-      cpu: os.cpus()[0]?.model || 'Unknown',
-      cpuCores: os.cpus().length,
-      ram: `${Math.round(os.totalmem() / 1024 / 1024 / 1024)}GB`,
-      docker: dockerAvailable,
-      runningInDocker: runningInDocker,
-      // Auto-detect installation type
-      installationType: runningInDocker ? 'docker' : (dockerAvailable ? 'local' : 'local'),
-      sdrDevices: []
-    };
+    // Auto-detect installation type
+    detections.installationType = runningInDocker ? 'docker' : (dockerAvailable ? 'local' : 'local');
     
-    // Detect GPU
+    // Detect GPU (optional, don't fail if this doesn't work)
     try {
       if (detections.docker) {
         try {
@@ -4462,21 +4691,33 @@ app.get('/api/wizard/detect-system', async (req, res) => {
             stdio: 'pipe',
             timeout: 5000 
           }).toString().trim();
-          if (gpuInfo) {
+          if (gpuInfo && !gpuInfo.includes('error')) {
             detections.gpu = { name: gpuInfo.split('\n')[0], vendor: 'NVIDIA' };
           }
         } catch (err) {
-          // No GPU or NVIDIA toolkit not installed
+          // No GPU or NVIDIA toolkit not installed - this is fine
         }
       }
     } catch (err) {
-      // GPU detection failed
+      // GPU detection failed - this is fine, continue without GPU info
     }
     
     res.json({ success: true, systemInfo: detections, detections: detections });
   } catch (error) {
-    console.error('Error detecting system:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn('[System Detection] Error detecting system:', error.message);
+    // Return defaults instead of error - don't fail the wizard
+    const defaults = {
+      os: process.platform || 'unknown',
+      arch: process.arch || 'unknown',
+      cpu: 'Unknown',
+      cpuCores: 0,
+      ram: 'Unknown',
+      docker: false,
+      runningInDocker: false,
+      installationType: 'local',
+      sdrDevices: []
+    };
+    res.json({ success: true, systemInfo: defaults, detections: defaults });
   }
 });
 
@@ -4555,24 +4796,59 @@ app.post('/api/wizard/apply', async (req, res) => {
     
     // Import channels if provided
     if (config.importedChannels && config.importedChannels.length > 0) {
-      // Import talkgroups to database
-      const db = new sqlite3.Database(path.join(__dirname, 'data', 'scanner-map.db'));
-      const insertStmt = db.prepare(`INSERT OR REPLACE INTO talkgroups (dec, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4703',message:'Starting talkgroups import',data:{count:config.importedChannels.length},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       
-      for (const tg of config.importedChannels) {
-        insertStmt.run(
-          tg.dec,
-          tg.hex || '',
-          tg.alphaTag || '',
-          tg.mode || '',
-          tg.description || '',
-          tg.tag || '',
-          tg.county || ''
-        );
-      }
-      
-      insertStmt.finalize();
-      db.close();
+      // Import talkgroups to database - FIXED: use correct database path and table/column names
+      const importDb = new sqlite3.Database('./botdata.db', sqlite3.OPEN_READWRITE, (err) => {
+        if (err) {
+          console.error('Error opening database for import:', err);
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4708',message:'Database open error for import',data:{error:err.message},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          return;
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4712',message:'Database opened for import',data:{path:'./botdata.db'},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        
+        // FIXED: Use correct table name (talk_groups) and column name (id instead of dec)
+        const insertStmt = importDb.prepare(`INSERT OR REPLACE INTO talk_groups (id, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        
+        let imported = 0;
+        let errors = 0;
+        
+        for (const tg of config.importedChannels) {
+          try {
+            // FIXED: Use tg.dec as the id (convert to string if needed)
+            insertStmt.run(
+              String(tg.dec || tg.id || ''),
+              tg.hex || '',
+              tg.alphaTag || '',
+              tg.mode || '',
+              tg.description || '',
+              tg.tag || '',
+              tg.county || ''
+            );
+            imported++;
+          } catch (err) {
+            console.error('Error importing talkgroup:', err);
+            errors++;
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4733',message:'Error importing talkgroup',data:{error:err.message,tg:tg},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+          }
+        }
+        
+        insertStmt.finalize();
+        importDb.close();
+        
+        console.log(`Imported ${imported} talkgroups${errors > 0 ? ` (${errors} errors)` : ''}`);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/2b494bf2-d357-4b23-b8b5-608776efa70d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'webserver.js:4742',message:'Import completed',data:{imported,errors},timestamp:Date.now(),sessionId:'debug-session',runId:'db-init',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+      });
     }
     
     // Write .env file

@@ -5866,18 +5866,33 @@ const wizardTotalSteps = 6;
 let wizardConfig = {};
 
 function showSetupWizard() {
-    const modal = document.getElementById('setup-wizard-modal');
-    if (modal) {
+    try {
+        const modal = document.getElementById('setup-wizard-modal');
+        if (!modal) {
+            console.error('[Setup Wizard] Modal element not found!');
+            showNotification('Setup wizard modal not found. Please refresh the page.', 'error');
+            return;
+        }
+        
         console.log('[Setup Wizard] Opening wizard modal');
         wizardCurrentStep = 1;
-        wizardConfig = {};
+        wizardConfig = wizardConfig || {}; // Ensure it's initialized
         updateWizardProgress();
         showWizardStep(1);
-        startSystemDetection();
+        
+        // Start system detection (this might fail, but shouldn't prevent modal from showing)
+        try {
+            startSystemDetection();
+        } catch (error) {
+            console.error('[Setup Wizard] Error starting system detection:', error);
+            // Continue anyway - detection is optional
+        }
+        
         modal.style.display = 'block';
         console.log('[Setup Wizard] Modal display set to block');
-    } else {
-        console.error('[Setup Wizard] Modal element not found!');
+    } catch (error) {
+        console.error('[Setup Wizard] Error in showSetupWizard:', error);
+        showNotification('Error opening setup wizard. Please refresh the page.', 'error');
     }
 }
 
@@ -6155,24 +6170,38 @@ function startSystemDetection() {
 }
 
 function showDetectionResults(detections) {
-    const statusEl = document.getElementById('wizard-detection-status');
-    const resultsEl = document.getElementById('wizard-detection-results');
-    const summaryEl = document.getElementById('wizard-detection-summary');
-    
-    if (statusEl) statusEl.style.display = 'none';
-    if (resultsEl) resultsEl.style.display = 'block';
-    
-    if (summaryEl) {
-        let summary = '';
-        summary += `OS: ${detections.os || 'Unknown'} (${detections.arch || 'Unknown'})\n`;
-        summary += `CPU: ${detections.cpu || 'Unknown'} (${detections.cpuCores || 'Unknown'} cores)\n`;
-        summary += `RAM: ${detections.ram || 'Unknown'}\n`;
-        if (detections.gpu) {
-            summary += `GPU: ${detections.gpu.name || 'Unknown'} (${detections.gpu.vendor || 'Unknown'})\n`;
+    try {
+        if (!detections) {
+            console.warn('[Setup Wizard] showDetectionResults called with no detections');
+            return;
         }
-        summary += `Docker: ${detections.docker ? 'Available' : 'Not available'}\n`;
-        summary += `SDR Devices: ${detections.sdrDevices?.length || 0} detected\n`;
-        summaryEl.textContent = summary;
+        
+        const statusEl = document.getElementById('wizard-detection-status');
+        const resultsEl = document.getElementById('wizard-detection-results');
+        const summaryEl = document.getElementById('wizard-detection-summary');
+        
+        if (statusEl) statusEl.style.display = 'none';
+        if (resultsEl) resultsEl.style.display = 'block';
+        
+        if (summaryEl) {
+            let summary = '';
+            summary += `OS: ${detections.os || 'Unknown'} (${detections.arch || 'Unknown'})\n`;
+            summary += `CPU: ${detections.cpu || 'Unknown'} (${detections.cpuCores || 'Unknown'} cores)\n`;
+            summary += `RAM: ${detections.ram || 'Unknown'}\n`;
+            if (detections.gpu) {
+                summary += `GPU: ${detections.gpu.name || 'Unknown'} (${detections.gpu.vendor || 'Unknown'})\n`;
+            }
+            if (detections.runningInDocker) {
+                summary += `Docker: Running in Docker container\n`;
+            } else {
+                summary += `Docker: ${detections.docker ? 'Available' : 'Not available'}\n`;
+            }
+            summary += `SDR Devices: ${detections.sdrDevices?.length || 0} detected\n`;
+            summaryEl.textContent = summary;
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in showDetectionResults:', error);
+        // Don't throw - just log the error so it doesn't break the wizard
     }
 }
 
@@ -6924,22 +6953,40 @@ function setupSetupWizard() {
 }
 
 function updateInstallationWarnings(installType) {
-    const warningsEl = document.getElementById('wizard-install-warnings');
-    if (!warningsEl) return;
-    
-    let warnings = [];
-    if (installType === 'docker' && !wizardConfig.system?.docker) {
-        warnings.push('⚠️ Docker is not available. Please install Docker first.');
-    }
-    if (installType === 'local' && wizardConfig.system?.docker) {
-        warnings.push('ℹ️ Docker is available but you chose local installation.');
-    }
-    
-    if (warnings.length > 0) {
-        warningsEl.innerHTML = warnings.map(w => `<div style="padding: 10px; margin: 5px 0; background-color: rgba(255, 170, 0, 0.1); border: 1px solid #ffaa00; border-radius: 4px;">${w}</div>`).join('');
-        warningsEl.style.display = 'block';
-    } else {
-        warningsEl.style.display = 'none';
+    try {
+        const warningsEl = document.getElementById('wizard-install-warnings');
+        if (!warningsEl) return;
+        
+        let warnings = [];
+        // Safely access wizardConfig - it might not be initialized yet
+        const system = (wizardConfig && wizardConfig.system) ? wizardConfig.system : {};
+        const runningInDocker = system.runningInDocker || false;
+        const dockerAvailable = system.docker || false;
+        
+        // Only warn about Docker not being available if:
+        // 1. User selected Docker installation
+        // 2. NOT already running in Docker (if running in Docker, Docker CLI isn't needed)
+        // 3. Docker CLI is not available
+        if (installType === 'docker' && !runningInDocker && !dockerAvailable) {
+            warnings.push('⚠️ Docker is not available. Please install Docker first.');
+        }
+        // If already running in Docker, show a helpful message
+        if (installType === 'docker' && runningInDocker) {
+            // Don't show warning - they're already in Docker, which is perfect!
+        }
+        if (installType === 'local' && dockerAvailable && !runningInDocker) {
+            warnings.push('ℹ️ Docker is available but you chose local installation.');
+        }
+        
+        if (warnings.length > 0) {
+            warningsEl.innerHTML = warnings.map(w => `<div style="padding: 10px; margin: 5px 0; background-color: rgba(255, 170, 0, 0.1); border: 1px solid #ffaa00; border-radius: 4px;">${w}</div>`).join('');
+            warningsEl.style.display = 'block';
+        } else {
+            warningsEl.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in updateInstallationWarnings:', error);
+        // Don't throw - just log the error so it doesn't break the wizard
     }
 }
 
