@@ -1,0 +1,35 @@
+{
+  "summary": "During the hour, a routine fire law drill was conducted at Burt Mills Elementary, a minor traffic obstruction was reported at 1590 Rockville Pike, a light smoke fire incident occurred at 1707 Gullabrook Farm Lane, and an ambulance response was dispatched to an automatic medical alarm at Four Corners Apartments.",
+  "highlights": [
+    {
+      "id": 1151468,
+      "talk_group": "MCFR 7A2 Disp",
+      "importance": "Low",
+      "description": "Fire department conducted a scheduled fire law drill at Burt Mills Elementary, directing crew to 712 and truck 716 for routine training.",
+      "time": "1:26 PM"
+    },
+    {
+      "id": 1151494,
+      "talk_group": "MCFR 7A2 Disp",
+      "importance": "Medium",
+      "description": "Crew responded to a vehicle obstruction on Rockville Pike where a vehicle was stuck over the wheel, creating a potential traffic hazard; units 701 and Blockhead were dispatched.",
+      "time": "1:40 PM"
+    },
+    {
+      "id": 1151551,
+      "talk_group": "MCFR 7A4 Inc 10",
+      "importance": "High",
+      "description": "Firefighters arrived at 1707 Gullabrook Farm Lane and observed light smoke emerging from the garage of a two‑story home; they conducted a 360 check, secured occupants, and established a command post.",
+      "time": "2:07 PM"
+    },
+    {
+      "id": 1151601,
+      "talk_group": "MCFR 7A2 Disp",
+      "importance": "High",
+      "description": "Ambulance 716 responded to an automatic medical alarm at Four Corners Apartments on University Boulevard West; units 7 alpha 1 were dispatched to provide medical assistance.",
+      "time": "2:23 PM"
+    }
+  ],
+  "updated": "2025-12-20T19:24:40.014Z",
+  "time_range": "Past 1 Hour"
+}
