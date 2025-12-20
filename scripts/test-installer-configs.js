@@ -228,7 +228,8 @@ const COMMON_CONFIG = {
 class ConfigTester {
   constructor(projectRoot) {
     this.projectRoot = projectRoot;
-    this.testDir = path.join(projectRoot, 'test-installer-output');
+    // Store test outputs in test/output/ subdirectory
+    this.testDir = path.join(projectRoot, 'test', 'output', 'test-installer-output');
     this.envGenerator = new EnvGenerator(projectRoot);
     this.dockerComposeBuilder = new DockerComposeBuilder(projectRoot);
     this.serviceConfig = new ServiceConfig(projectRoot);

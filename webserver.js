@@ -54,7 +54,9 @@ const {
   // --- Transcription Env Vars ---
   TRANSCRIPTION_MODE = 'local',
   ICAD_URL = '',
-  ICAD_API_KEY = ''
+  ICAD_API_KEY = '',
+  // --- Bot Port ---
+  BOT_PORT
 } = process.env;
 
 // Debug mode flag for verbose logging
@@ -219,7 +221,7 @@ app.get('/api/settings', (req, res) => {
     const settings = {
       // General
       webserverPort: WEBSERVER_PORT,
-      botPort: BOT_PORT,
+      botPort: BOT_PORT || '',
       publicDomain: PUBLIC_DOMAIN,
       timezone: process.env.TIMEZONE || 'America/New_York',
       authEnabled: process.env.AUTH_ENABLED === 'true',
@@ -249,16 +251,31 @@ app.get('/api/settings', (req, res) => {
       transcriptionMode: TRANSCRIPTION_MODE || 'local',
       transcriptionEnabled: true, // Always enabled, but mode can vary
       icadUrl: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : '',
-      icadPort: TRANSCRIPTION_MODE === 'icad' ? ((process.env.ICAD_URL && process.env.ICAD_URL.match(/:(\d+)/)) ? process.env.ICAD_URL.match(/:(\d+)/)[1] : '9912') : '9912',
+      icadPort: (() => {
+        if (TRANSCRIPTION_MODE !== 'icad') return '9912';
+        const url = process.env.ICAD_URL || 'http://localhost:9912';
+        const match = url.match(/:(\d+)/);
+        return match ? match[1] : '9912';
+      })(),
       icadWebUI: TRANSCRIPTION_MODE === 'icad' ? (process.env.ICAD_URL || 'http://localhost:9912') : null,
       fasterWhisperUrl: TRANSCRIPTION_MODE === 'faster-whisper' ? (process.env.FASTER_WHISPER_URL || 'http://localhost:8000') : '',
-      fasterWhisperPort: TRANSCRIPTION_MODE === 'faster-whisper' ? ((process.env.FASTER_WHISPER_URL && process.env.FASTER_WHISPER_URL.match(/:(\d+)/)) ? process.env.FASTER_WHISPER_URL.match(/:(\d+)/)[1] : '8000') : '8000',
+      fasterWhisperPort: (() => {
+        if (TRANSCRIPTION_MODE !== 'faster-whisper') return '8000';
+        const url = process.env.FASTER_WHISPER_URL || 'http://localhost:8000';
+        const match = url.match(/:(\d+)/);
+        return match ? match[1] : '8000';
+      })(),
       
       // AI
       aiProvider: AI_PROVIDER || 'ollama',
       aiEnabled: true, // Always enabled, but provider can vary
       ollamaUrl: AI_PROVIDER === 'ollama' ? (OLLAMA_URL || 'http://localhost:11434') : '',
-      ollamaPort: AI_PROVIDER === 'ollama' ? ((OLLAMA_URL && OLLAMA_URL.match(/:(\d+)/)) ? OLLAMA_URL.match(/:(\d+)/)[1] : '11434') : '11434',
+      ollamaPort: (() => {
+        if (AI_PROVIDER !== 'ollama') return '11434';
+        const url = OLLAMA_URL || 'http://localhost:11434';
+        const match = url.match(/:(\d+)/);
+        return match ? match[1] : '11434';
+      })(),
       ollamaModel: AI_PROVIDER === 'ollama' ? (process.env.OLLAMA_MODEL || 'llama3.1:8b') : '',
       openaiModel: AI_PROVIDER === 'openai' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : '',
       
@@ -3646,8 +3663,20 @@ app.get('/audio/:id', async (req, res) => {
 // Apply authentication middleware to protected routes if auth is enabled
 app.use(basicAuth);
 
-// Serve static files from the 'public' directory
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static files from the 'public' directory with cache control
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, filePath) => {
+        // Disable caching for HTML and JS files to ensure updates are loaded
+        if (filePath.endsWith('.html') || filePath.endsWith('.js')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        } else {
+            // Allow caching for CSS and other static assets
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
+    }
+}));
 
 // Session Management Routes (Only relevant when auth is enabled)
 app.get('/api/sessions/current', (req, res) => {
@@ -4278,6 +4307,61 @@ server.listen(portNum, () => {
   }
 });
 
+// Get application logs endpoint
+app.get('/api/logs', (req, res) => {
+  try {
+    const filter = req.query.filter || 'all';
+    let logContent = '';
+    
+    // Read log files from logs directory
+    const logFiles = fs.readdirSync(logsDir).filter(file => file.endsWith('.log')).sort().reverse();
+    
+    // Get the most recent log file or filter by type
+    let relevantFiles = logFiles;
+    if (filter !== 'all') {
+      relevantFiles = logFiles.filter(file => {
+        const lowerFile = file.toLowerCase();
+        if (filter === 'errors') {
+          return lowerFile.includes('error') || lowerFile.includes('err');
+        } else if (filter === 'webserver') {
+          return lowerFile.includes('webserver') || lowerFile.includes('web');
+        } else if (filter === 'bot') {
+          return lowerFile.includes('bot') || lowerFile.includes('discord');
+        } else if (filter === 'transcription') {
+          return lowerFile.includes('transcription') || lowerFile.includes('transcribe');
+        } else if (filter === 'geocoding') {
+          return lowerFile.includes('geocod') || lowerFile.includes('geo');
+        }
+        return true;
+      });
+    }
+    
+    // Read last 1000 lines from relevant files
+    const maxLines = 1000;
+    let allLines = [];
+    
+    for (const file of relevantFiles.slice(0, 5)) { // Limit to 5 most recent files
+      try {
+        const filePath = path.join(logsDir, file);
+        const content = fs.readFileSync(filePath, 'utf8');
+        const lines = content.split('\n').filter(l => l.trim());
+        allLines.push(...lines.map(line => `[${file}] ${line}`));
+      } catch (err) {
+        console.error(`Error reading log file ${file}:`, err);
+      }
+    }
+    
+    // Sort by timestamp if possible, otherwise reverse
+    allLines = allLines.slice(-maxLines);
+    logContent = allLines.join('\n');
+    
+    res.json({ success: true, logs: logContent || 'No logs available' });
+  } catch (error) {
+    console.error('Error reading logs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Add correction logging endpoint
 app.post('/api/log/correction', (req, res) => {
   const { callId, originalAddress, newAddress } = req.body;
@@ -4318,6 +4402,200 @@ app.post('/api/log/correction', (req, res) => {
     res.json({ success: true });
   });
 });
+
+// Setup Wizard API Endpoints
+app.get('/api/wizard/detect-system', async (req, res) => {
+  try {
+    const os = require('os');
+    const { execSync } = require('child_process');
+    const fs = require('fs');
+    
+    // Check if running inside Docker container
+    let runningInDocker = false;
+    try {
+      // Check for .dockerenv file
+      if (fs.existsSync('/.dockerenv')) {
+        runningInDocker = true;
+      }
+      // Check cgroup (Linux)
+      if (!runningInDocker && fs.existsSync('/proc/self/cgroup')) {
+        const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+        if (cgroup.includes('docker') || cgroup.includes('containerd')) {
+          runningInDocker = true;
+        }
+      }
+      // Check environment variables
+      if (!runningInDocker && (process.env.DOCKER_CONTAINER === 'true' || process.env.container === 'docker')) {
+        runningInDocker = true;
+      }
+    } catch (err) {
+      // Detection failed, continue with other checks
+    }
+    
+    // Check if Docker CLI is available (for managing containers)
+    let dockerAvailable = false;
+    try {
+      execSync('docker --version', { stdio: 'ignore' });
+      dockerAvailable = true;
+    } catch (err) {
+      dockerAvailable = false;
+    }
+    
+    const detections = {
+      os: os.platform(),
+      arch: os.arch(),
+      cpu: os.cpus()[0]?.model || 'Unknown',
+      cpuCores: os.cpus().length,
+      ram: `${Math.round(os.totalmem() / 1024 / 1024 / 1024)}GB`,
+      docker: dockerAvailable,
+      runningInDocker: runningInDocker,
+      // Auto-detect installation type
+      installationType: runningInDocker ? 'docker' : (dockerAvailable ? 'local' : 'local'),
+      sdrDevices: []
+    };
+    
+    // Detect GPU
+    try {
+      if (detections.docker) {
+        try {
+          const gpuInfo = execSync('docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi --query-gpu=name --format=csv,noheader', { 
+            stdio: 'pipe',
+            timeout: 5000 
+          }).toString().trim();
+          if (gpuInfo) {
+            detections.gpu = { name: gpuInfo.split('\n')[0], vendor: 'NVIDIA' };
+          }
+        } catch (err) {
+          // No GPU or NVIDIA toolkit not installed
+        }
+      }
+    } catch (err) {
+      // GPU detection failed
+    }
+    
+    res.json({ success: true, systemInfo: detections, detections: detections });
+  } catch (error) {
+    console.error('Error detecting system:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/wizard/detect-sdr', async (req, res) => {
+  try {
+    const SDRDetector = require('./scripts/installer/sdr-detector');
+    const detector = new SDRDetector();
+    const devices = await detector.detectDevices();
+    
+    res.json({ success: true, devices });
+  } catch (error) {
+    console.error('Error detecting SDR devices:', error);
+    res.json({ success: true, devices: [] }); // Return empty array on error
+  }
+});
+
+app.get('/api/wizard/detect-service', async (req, res) => {
+  try {
+    const serviceName = req.query.service;
+    const defaultPort = parseInt(req.query.port) || 11434;
+    const currentUrl = req.query.currentUrl || null;
+    
+    const detectedUrl = await detectServiceUrl(serviceName, defaultPort, currentUrl);
+    
+    res.json({ success: true, url: detectedUrl });
+  } catch (error) {
+    console.error('Error detecting service:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/wizard/apply', async (req, res) => {
+  try {
+    const config = req.body;
+    const envPath = path.join(process.cwd(), '.env');
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+    
+    // Apply location configuration
+    if (config.location) {
+      envContent = updateEnvVar(envContent, 'GEOCODING_CITY', config.location.city);
+      envContent = updateEnvVar(envContent, 'GEOCODING_STATE', config.location.state);
+      envContent = updateEnvVar(envContent, 'GEOCODING_COUNTRY', config.location.country || 'us');
+      if (config.location.counties) {
+        envContent = updateEnvVar(envContent, 'GEOCODING_COUNTIES', config.location.counties);
+      }
+    }
+    
+    // Apply installation type
+    if (config.installationType) {
+      // This affects how services are configured
+      // For now, we'll set appropriate defaults based on type
+    }
+    
+    // Apply transcription mode
+    if (config.transcriptionMode) {
+      envContent = updateEnvVar(envContent, 'TRANSCRIPTION_MODE', config.transcriptionMode);
+      if (config.transcriptionMode === 'icad' && config.icadUrl) {
+        envContent = updateEnvVar(envContent, 'ICAD_URL', config.icadUrl);
+      }
+      if (config.transcriptionMode === 'openai' && config.openaiApiKey) {
+        envContent = updateEnvVar(envContent, 'OPENAI_API_KEY', config.openaiApiKey);
+      }
+    }
+    
+    // Apply AI provider
+    if (config.aiProvider) {
+      envContent = updateEnvVar(envContent, 'AI_PROVIDER', config.aiProvider);
+      if (config.aiProvider === 'ollama') {
+        if (config.ollamaUrl) envContent = updateEnvVar(envContent, 'OLLAMA_URL', config.ollamaUrl);
+        if (config.ollamaModel) envContent = updateEnvVar(envContent, 'OLLAMA_MODEL', config.ollamaModel);
+      } else if (config.aiProvider === 'openai') {
+        if (config.openaiAiApiKey) envContent = updateEnvVar(envContent, 'OPENAI_API_KEY', config.openaiAiApiKey);
+        if (config.openaiModel) envContent = updateEnvVar(envContent, 'OPENAI_MODEL', config.openaiModel);
+      }
+    }
+    
+    // Import channels if provided
+    if (config.importedChannels && config.importedChannels.length > 0) {
+      // Import talkgroups to database
+      const db = new sqlite3.Database(path.join(__dirname, 'data', 'scanner-map.db'));
+      const insertStmt = db.prepare(`INSERT OR REPLACE INTO talkgroups (dec, hex, alpha_tag, mode, description, tag, county) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      
+      for (const tg of config.importedChannels) {
+        insertStmt.run(
+          tg.dec,
+          tg.hex || '',
+          tg.alphaTag || '',
+          tg.mode || '',
+          tg.description || '',
+          tg.tag || '',
+          tg.county || ''
+        );
+      }
+      
+      insertStmt.finalize();
+      db.close();
+    }
+    
+    // Write .env file
+    fs.writeFileSync(envPath, envContent);
+    
+    res.json({ 
+      success: true, 
+      message: 'Configuration applied successfully. Please restart the application for changes to take effect.' 
+    });
+  } catch (error) {
+    console.error('Error applying wizard configuration:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+function updateEnvVar(envContent, key, value) {
+  const regex = new RegExp(`^${key}=.*$`, 'm');
+  if (regex.test(envContent)) {
+    return envContent.replace(regex, `${key}=${value}`);
+  } else {
+    return envContent + (envContent.endsWith('\n') ? '' : '\n') + `${key}=${value}\n`;
+  }
+}
 
 // NEW Endpoint for logging deletions
 app.post('/api/log/deletion', (req, res) => {

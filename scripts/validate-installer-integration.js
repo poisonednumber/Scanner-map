@@ -42,22 +42,29 @@ pythonPackages.forEach(pkg => {
 
 // Check .env.example vs env-generator.js
 console.log('Checking environment variables...');
-const envExample = fs.readFileSync(path.join(projectRoot, '.env.example'), 'utf8');
+const envExamplePath = path.join(projectRoot, '.env.example');
 const envGenerator = fs.readFileSync(path.join(projectRoot, 'scripts/installer/env-generator.js'), 'utf8');
 
-// Extract env vars from .env.example (lines like KEY=value)
-const envVars = envExample.split('\n')
-  .filter(line => line.trim() && !line.startsWith('#') && line.includes('='))
-  .map(line => line.split('=')[0].trim())
-  .filter(key => key.length > 0);
+if (fs.existsSync(envExamplePath)) {
+  const envExample = fs.readFileSync(envExamplePath, 'utf8');
+  
+  // Extract env vars from .env.example (lines like KEY=value)
+  const envVars = envExample.split('\n')
+    .filter(line => line.trim() && !line.startsWith('#') && line.includes('='))
+    .map(line => line.split('=')[0].trim())
+    .filter(key => key.length > 0);
 
-envVars.forEach(envVar => {
-  // Check if it's in env-generator.js (either as variable or in template)
-  if (!envGenerator.includes(envVar) && !envGenerator.includes(envVar.toLowerCase())) {
-    // Some vars might be auto-generated, so this is a warning
-    warnings.push(`⚠️  Environment variable "${envVar}" in .env.example but not found in env-generator.js`);
-  }
-});
+  envVars.forEach(envVar => {
+    // Check if it's in env-generator.js (either as variable or in template)
+    if (!envGenerator.includes(envVar) && !envGenerator.includes(envVar.toLowerCase())) {
+      // Some vars might be auto-generated, so this is a warning
+      warnings.push(`⚠️  Environment variable "${envVar}" in .env.example but not found in env-generator.js`);
+    }
+  });
+} else {
+  // .env.example is optional - installer generates .env directly
+  warnings.push(`⚠️  .env.example file not found (optional - installer generates .env automatically)`);
+}
 
 // Check docker-compose-builder.js for service consistency
 console.log('Checking Docker services...');

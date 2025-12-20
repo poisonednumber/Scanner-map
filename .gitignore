@@ -89,10 +89,19 @@ build/
 # Don't ignore docker-compose files, but ignore generated data
 docker-data/
 
-# ----------------
+# ---------------- 
 # Testing & Debug
 # ----------------
-test/
+# Test output directories (keep test scripts, ignore outputs)
+test/output/
+test/tmp/
+test/test-installer-configs/
+test/test-installer-output/
+test/*.json
+test/*.log
+# Keep test utility scripts
+!test/README.md
+!test/test-run.bat
 *.test.js
 *.spec.js
 coverage/
@@ -101,11 +110,16 @@ test-output/
 debug/
 *.debug.js
 *.debug.log
-# Test scripts in scripts directory
-scripts/test-*.js
-scripts/*/test-*.js
-scripts/validate-*.js
+# Test scripts in scripts directory (keep these - they're part of the build system)
+# scripts/test-*.js
+# scripts/*/test-*.js
+# scripts/validate-*.js
 test-release/
+# Legacy test output directories (for backwards compatibility)
+test-installer-configs/
+test-installer-output/
+# Release snapshots (backup folders)
+release-*/
 
 # ----------------
 # Temporary Files
@@ -118,12 +132,15 @@ temp/
 *.backup
 *.orig
 
-# ----------------
+# ---------------- 
 # Development Artifacts
 # ----------------
 # Installer test outputs
 install-test/
 test-install/
+# Development documentation (moved to docs/dev/)
+# These are kept in repo but organized
+# docs/dev/
 
 # Nested repo (if accidentally cloned)
 Scanner-map/

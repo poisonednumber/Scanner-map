@@ -481,7 +481,7 @@
         <div id="user-menu-content" class="dropdown-content">
           <a href="#" id="settings-btn">⚙️ Settings</a>
           <hr style="margin: 5px 0; border-color: var(--border-color);">
-          <a href="#" id="quick-start-btn">🚀 Quick Start</a>
+          <a href="#" id="setup-wizard-btn">🪄 Setup Wizard</a>
           <a href="#" id="service-config-btn">🔧 Service Configuration</a>
           <hr style="margin: 5px 0; border-color: var(--border-color);">
           <a href="#" id="add-user-btn">👤 Add User</a>
@@ -717,6 +717,7 @@
         <button class="settings-tab" data-tab="storage">Storage</button>
         <button class="settings-tab" data-tab="display">Display</button>
         <button class="settings-tab" data-tab="api-keys">API Keys</button>
+        <button class="settings-tab" data-tab="logs">Logs</button>
       </div>
       
       <!-- General Settings Tab -->
@@ -767,14 +768,14 @@
         <p class="config-description">Configure service URLs and monitor service status. URLs are auto-detected based on your environment.</p>
         
         <!-- Service Status Display -->
-        <div style="margin-bottom: 25px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+        <div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
           <h4 style="margin-top: 0;">Service Status</h4>
           <div id="settings-service-status-content">Loading service status...</div>
           <button type="button" class="install-btn" onclick="loadSettingsServiceStatus()" style="margin-top: 10px;">Refresh Status</button>
         </div>
         
         <!-- Ollama Configuration -->
-        <div style="margin-bottom: 25px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+        <div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
           <h4 style="margin-top: 0;">🤖 Ollama (AI Service)</h4>
           <div class="form-group">
             <label for="settings-services-ollama-url">Ollama URL:</label>
@@ -790,7 +791,7 @@
         </div>
         
         <!-- iCAD Transcribe Configuration -->
-        <div style="margin-bottom: 25px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+        <div style="margin-bottom: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
           <h4 style="margin-top: 0;">🚨 iCAD Transcribe (Transcription Service)</h4>
           <div class="form-group">
             <label for="settings-services-icad-url">iCAD Transcribe URL:</label>
@@ -805,8 +806,11 @@
           </div>
         </div>
         
-        <div class="modal-buttons">
-          <button type="button" id="save-services-settings-btn" class="confirm-btn">Save Service Configuration</button>
+        <div class="modal-buttons" style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button type="button" id="external-services-action-btn" class="confirm-btn" style="flex: 1; min-width: 200px;">
+            <span id="external-services-action-text">Configure & Launch Services</span>
+          </button>
+          <button type="button" id="save-services-settings-btn" class="confirm-btn" style="flex: 1; min-width: 200px;">Save Service Configuration</button>
         </div>
       </div>
       
@@ -953,40 +957,16 @@
         <h3>Transcription Settings</h3>
         <p class="config-description">Select one transcription service. Only one can be enabled at a time.</p>
         <div class="form-group">
-          <label>Transcription Service:</label>
-          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="transcription-mode" value="local" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>Local (Whisper)</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Built-in Whisper transcription (no external service)</div>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="transcription-mode" value="icad" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>iCAD Transcribe</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Advanced transcription with web UI</div>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="transcription-mode" value="openai" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>OpenAI Whisper API</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Cloud-based transcription via OpenAI</div>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="transcription-mode" value="faster-whisper" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>Faster-Whisper Server</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Remote Faster-Whisper server</div>
-              </div>
-            </label>
-          </div>
+          <label for="settings-transcription-mode-select">Transcription Service:</label>
+          <select id="settings-transcription-mode-select" class="styled-select" style="width: 100%;">
+            <option value="local">Local (Whisper) - Built-in Whisper transcription (no external service)</option>
+            <option value="icad">iCAD Transcribe - Advanced transcription with web UI</option>
+            <option value="openai">OpenAI Whisper API - Cloud-based transcription via OpenAI</option>
+            <option value="faster-whisper">Faster-Whisper Server - Remote Faster-Whisper server</option>
+          </select>
           <input type="hidden" id="settings-transcription-mode" />
         </div>
-        <div id="transcription-icad-settings" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+        <div id="transcription-icad-settings" style="display: none; margin-top: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
           <h4 style="margin-top: 0;">iCAD Transcribe Configuration</h4>
           <div class="form-group">
             <label for="settings-icad-url">iCAD Transcribe URL:</label>
@@ -1008,7 +988,7 @@
             <small>API key for iCAD Transcribe (optional)</small>
           </div>
         </div>
-        <div id="transcription-faster-whisper-settings" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+        <div id="transcription-faster-whisper-settings" style="display: none; margin-top: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
           <h4 style="margin-top: 0;">Faster-Whisper Server Configuration</h4>
           <div class="form-group">
             <label for="settings-faster-whisper-url">Faster-Whisper Server URL:</label>
@@ -1031,26 +1011,14 @@
         <h3>AI Settings</h3>
         <p class="config-description">Select one AI provider. Only one can be enabled at a time.</p>
         <div class="form-group">
-          <label>AI Provider:</label>
-          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="ai-provider" value="openai" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>OpenAI</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Cloud-based AI (requires API key, best accuracy)</div>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
-              <input type="radio" name="ai-provider" value="ollama" style="margin-right: 10px;" />
-              <div style="flex: 1;">
-                <strong>Ollama (Local)</strong>
-                <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">Local AI service (free, runs on your machine)</div>
-              </div>
-            </label>
-          </div>
+          <label for="settings-ai-provider-select">AI Provider:</label>
+          <select id="settings-ai-provider-select" class="styled-select" style="width: 100%;">
+            <option value="openai">OpenAI - Cloud-based AI (requires API key, best accuracy)</option>
+            <option value="ollama">Ollama (Local) - Local AI service (free, runs on your machine)</option>
+          </select>
           <input type="hidden" id="settings-ai-provider" />
         </div>
-        <div id="ai-openai-settings" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+        <div id="ai-openai-settings" style="display: none; margin-top: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
           <h4 style="margin-top: 0;">OpenAI Configuration</h4>
           <div class="form-group">
             <label for="settings-openai-api-key">OpenAI API Key:</label>
@@ -1067,7 +1035,7 @@
             <small>Model to use for AI processing</small>
           </div>
         </div>
-        <div id="ai-ollama-settings" style="display: none; margin-top: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+        <div id="ai-ollama-settings" style="display: none; margin-top: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
           <h4 style="margin-top: 0;">Ollama Configuration</h4>
           <div class="form-group">
             <label for="settings-ollama-url">Ollama URL:</label>
@@ -1230,6 +1198,43 @@
         </div>
       </div>
       
+      <!-- Logs Tab -->
+      <div id="settings-logs-tab" class="settings-tab-content">
+        <h3>Application Logs</h3>
+        <p class="config-description">View and monitor application logs in real-time.</p>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="logs-filter">Filter Logs:</label>
+          <select id="logs-filter" class="styled-select" style="width: 100%;">
+            <option value="all">All Logs</option>
+            <option value="webserver">Webserver</option>
+            <option value="bot">Discord Bot</option>
+            <option value="transcription">Transcription</option>
+            <option value="geocoding">Geocoding</option>
+            <option value="errors">Errors Only</option>
+          </select>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label>
+            <input type="checkbox" id="logs-auto-refresh" checked />
+            Auto-refresh (every 5 seconds)
+          </label>
+        </div>
+        
+        <div id="logs-container" style="background-color: rgba(0, 0, 0, 0.5); border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; max-height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4;">
+          <div id="logs-content" style="color: var(--text-color); white-space: pre-wrap; word-wrap: break-word;">
+            Loading logs...
+          </div>
+        </div>
+        
+        <div class="modal-buttons" style="margin-top: 10px;">
+          <button type="button" class="install-btn" onclick="refreshLogs()">Refresh Logs</button>
+          <button type="button" class="install-btn" onclick="clearLogsDisplay()">Clear Display</button>
+          <button type="button" class="install-btn" onclick="downloadLogs()">Download Logs</button>
+        </div>
+      </div>
+      
       <div class="modal-buttons" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
         <button type="button" class="cancel-btn" onclick="document.getElementById('settings-modal').style.display='none'">Close</button>
       </div>
@@ -1263,21 +1268,331 @@
   </div>
   <!-- END Service Configuration Modal -->
 
-  <!-- Quick Start Modal -->
-  <div id="quick-start-modal" class="modal">
-    <div class="modal-content quick-start-modal-content">
-      <h2>Quick Start</h2>
-      <div class="quick-start-tabs">
-        <button class="quick-start-tab active" data-tab="location">Location</button>
-        <button class="quick-start-tab" data-tab="system">System Status</button>
-        <button class="quick-start-tab" data-tab="models">Models</button>
-        <button class="quick-start-tab" data-tab="updates">Updates</button>
-        <button class="quick-start-tab" data-tab="radio">Radio Config</button>
-        <button class="quick-start-tab" data-tab="ai-commands">AI Commands</button>
+  <!-- Setup Wizard Modal -->
+  <div id="setup-wizard-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+        <h2 style="margin: 0;">Scanner Map Setup Wizard</h2>
+        <button type="button" class="cancel-btn" onclick="closeSetupWizard()" style="margin: 0;">✕</button>
+      </div>
+      <!-- Progress Indicator -->
+      <div id="wizard-progress" style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+          <span id="wizard-step-indicator" style="font-size: 0.9em; color: var(--text-color); opacity: 0.8;">Step 1 of 6</span>
+          <span id="wizard-progress-percent" style="font-size: 0.9em; color: var(--text-color); opacity: 0.8;">0%</span>
+        </div>
+        <div style="width: 100%; height: 8px; background-color: rgba(0, 255, 0, 0.1); border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden;">
+          <div id="wizard-progress-bar" style="height: 100%; background-color: var(--primary-color); width: 0%; transition: width 0.3s;"></div>
+        </div>
       </div>
       
+      <!-- Step 1: Welcome & System Detection -->
+      <div id="wizard-step-1" class="wizard-step active">
+        <h3>Welcome to Scanner Map</h3>
+        <p class="config-description">This wizard will guide you through setting up Scanner Map for first-time use. We'll automatically detect your system capabilities and configure everything for optimal performance.</p>
+        
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+          <h4 style="margin-top: 0;">What we'll configure:</h4>
+          <ul style="margin: 10px 0; padding-left: 20px;">
+            <li>System hardware and capabilities</li>
+            <li>Installation type (Local, Docker, or Hybrid)</li>
+            <li>Location for accurate geocoding</li>
+            <li>SDR devices and radio configuration</li>
+            <li>AI and transcription services</li>
+            <li>Complete working configuration</li>
+          </ul>
+        </div>
+        
+        <div id="wizard-detection-status" style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4>Detecting System...</h4>
+          <div id="wizard-detection-details" style="margin-top: 10px;">
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>Operating system and architecture...</span>
+            </div>
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>CPU and available resources...</span>
+            </div>
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>GPU and hardware acceleration...</span>
+            </div>
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>SDR devices...</span>
+            </div>
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>Docker availability...</span>
+            </div>
+            <div style="display: flex; align-items: center; margin: 5px 0;">
+              <span style="width: 20px;">⏳</span>
+              <span>Available services...</span>
+            </div>
+          </div>
+        </div>
+        
+        <div id="wizard-detection-results" style="display: none; margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+          <h4>Detection Results</h4>
+          <div id="wizard-detection-summary" style="margin-top: 10px; font-family: 'Courier New', monospace; font-size: 0.9em;"></div>
+        </div>
+      </div>
+      
+      <!-- Step 2: Installation Type -->
+      <div id="wizard-step-2" class="wizard-step">
+        <h3>Choose Installation Type</h3>
+        <p class="config-description">Select how you want to run Scanner Map. The wizard will adapt based on your system capabilities.</p>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0;">
+          <label class="wizard-option-card" data-install-type="local">
+            <input type="radio" name="installation-type" value="local" />
+            <div style="padding: 15px;">
+              <h4 style="margin-top: 0;">🖥️ Local Installation</h4>
+              <p style="font-size: 0.9em; opacity: 0.8; margin: 10px 0;">Run everything directly on your computer. Best for single-machine setups.</p>
+              <ul style="font-size: 0.85em; margin: 10px 0; padding-left: 20px; opacity: 0.7;">
+                <li>No Docker required</li>
+                <li>Direct hardware access</li>
+                <li>Simpler setup</li>
+              </ul>
+            </div>
+          </label>
+          
+          <label class="wizard-option-card" data-install-type="docker">
+            <input type="radio" name="installation-type" value="docker" />
+            <div style="padding: 15px;">
+              <h4 style="margin-top: 0;">🐳 Docker Installation</h4>
+              <p style="font-size: 0.9em; opacity: 0.8; margin: 10px 0;">Run in containers. Best for isolation and easy updates.</p>
+              <ul style="font-size: 0.85em; margin: 10px 0; padding-left: 20px; opacity: 0.7;">
+                <li>Isolated services</li>
+                <li>Easy updates</li>
+                <li>GPU support</li>
+              </ul>
+            </div>
+          </label>
+          
+          <label class="wizard-option-card" data-install-type="hybrid">
+            <input type="radio" name="installation-type" value="hybrid" />
+            <div style="padding: 15px;">
+              <h4 style="margin-top: 0;">🔀 Hybrid Installation</h4>
+              <p style="font-size: 0.9em; opacity: 0.8; margin: 10px 0;">Mix of local and remote services. Best for distributed setups.</p>
+              <ul style="font-size: 0.85em; margin: 10px 0; padding-left: 20px; opacity: 0.7;">
+                <li>Local UI, remote services</li>
+                <li>Flexible configuration</li>
+                <li>Network-based SDR</li>
+              </ul>
+            </div>
+          </label>
+        </div>
+        
+        <div id="wizard-install-warnings" style="margin-top: 20px; display: none;"></div>
+      </div>
+      
+      <!-- Step 3: Location Configuration -->
+      <div id="wizard-step-3" class="wizard-step">
+        <h3>Configure Your Location</h3>
+        <p class="config-description">Set your location for accurate geocoding of radio calls. This helps the system understand addresses in your area.</p>
+        
+        <div class="form-group">
+          <button type="button" id="wizard-detect-location-btn" class="confirm-btn">📍 Detect My Location</button>
+          <span id="wizard-location-detect-status" style="margin-left: 10px;"></span>
+        </div>
+        
+        <div id="wizard-location-map-container" style="height: 300px; margin: 15px 0; display: none; border: 1px solid var(--border-color); border-radius: 4px;"></div>
+        
+        <div class="form-group">
+          <label for="wizard-geocoding-city">City:</label>
+          <input type="text" id="wizard-geocoding-city" placeholder="e.g., Baltimore" />
+          <small>Your city name</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="wizard-geocoding-state">State/Province:</label>
+          <input type="text" id="wizard-geocoding-state" placeholder="e.g., MD" />
+          <small>State or province code</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="wizard-geocoding-country">Country:</label>
+          <input type="text" id="wizard-geocoding-country" placeholder="e.g., us" value="us" />
+          <small>Country code (ISO 3166-1 alpha-2)</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="wizard-geocoding-counties">Target Counties (optional):</label>
+          <input type="text" id="wizard-geocoding-counties" placeholder="e.g., Baltimore, Baltimore City, Anne Arundel" />
+          <small>Comma-separated list of counties to prioritize in geocoding</small>
+        </div>
+        
+        <div id="wizard-location-suggestions" style="margin: 15px 0;"></div>
+      </div>
+      
+      <!-- Step 4: SDR & Radio Configuration -->
+      <div id="wizard-step-4" class="wizard-step">
+        <h3>SDR Devices & Radio Configuration</h3>
+        <p class="config-description">Configure your Software Defined Radio devices and import channel information.</p>
+        
+        <!-- SDR Detection -->
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4 style="margin-top: 0;">Detected SDR Devices</h4>
+          <div id="wizard-sdr-devices" style="margin-top: 10px;">
+            <div style="padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+              <div style="display: flex; align-items: center;">
+                <span style="width: 20px;">⏳</span>
+                <span>Detecting SDR devices...</span>
+              </div>
+            </div>
+          </div>
+          <button type="button" id="wizard-rescan-sdr-btn" class="install-btn" style="margin-top: 10px; display: none;">Rescan Devices</button>
+        </div>
+        
+        <!-- Radio Software Selection -->
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4 style="margin-top: 0;">Radio Software</h4>
+          <p style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">Select the software you'll use to capture radio signals:</p>
+          <select id="wizard-radio-software" class="styled-select" style="width: 100%;">
+            <option value="">Auto-detect</option>
+            <option value="trunk-recorder">TrunkRecorder</option>
+            <option value="sdrtrunk">SDRTrunk</option>
+            <option value="rdio-scanner">Rdio Scanner</option>
+            <option value="op25">OP25</option>
+          </select>
+          <small>We'll auto-configure the selected software with your channels</small>
+        </div>
+        
+        <!-- Channel Import -->
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4 style="margin-top: 0;">Import Channels</h4>
+          <p style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">Import talkgroups and frequencies from RadioReference or CSV files:</p>
+          
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button type="button" id="wizard-import-radioreference-btn" class="confirm-btn">Import RadioReference CSV</button>
+            <button type="button" id="wizard-import-custom-csv-btn" class="confirm-btn">Import Custom CSV</button>
+          </div>
+          
+          <div id="wizard-import-section" style="display: none; margin-top: 15px; padding: 15px; border: 2px dashed var(--border-color); border-radius: 4px;">
+            <input type="file" id="wizard-channel-file" accept=".csv" style="display: none;" />
+            <div id="wizard-channel-drop-zone" style="text-align: center; padding: 20px; cursor: pointer;">
+              <p>📁 Drag and drop CSV file here, or click to select</p>
+            </div>
+            <div id="wizard-import-preview" style="display: none; margin-top: 15px; max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.85em;"></div>
+            <div id="wizard-import-status" style="margin-top: 10px;"></div>
+          </div>
+          
+          <div id="wizard-imported-channels" style="display: none; margin-top: 15px; padding: 10px; background-color: rgba(0, 51, 0, 0.2); border-radius: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Imported: <strong id="wizard-imported-count">0</strong> talkgroups, <strong id="wizard-imported-freq-count">0</strong> frequencies</span>
+              <button type="button" id="wizard-clear-import-btn" class="cancel-btn" style="padding: 5px 10px; font-size: 0.9em;">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Step 5: Services Configuration -->
+      <div id="wizard-step-5" class="wizard-step">
+        <h3>AI & Transcription Services</h3>
+        <p class="config-description">Configure optional AI and transcription services. These enhance Scanner Map with intelligent features.</p>
+        
+        <!-- Transcription Service -->
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4 style="margin-top: 0;">Transcription Service</h4>
+          <p style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">Choose how audio will be transcribed:</p>
+          <select id="wizard-transcription-mode" class="styled-select" style="width: 100%;">
+            <option value="local">Local (Whisper) - Built-in, no external service</option>
+            <option value="icad">iCAD Transcribe - Advanced with web UI</option>
+            <option value="openai">OpenAI Whisper API - Cloud-based</option>
+            <option value="faster-whisper">Faster-Whisper Server - Remote server</option>
+          </select>
+          
+          <div id="wizard-transcription-icad-settings" style="display: none; margin-top: 15px; padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+            <div class="form-group">
+              <label for="wizard-icad-url">iCAD URL:</label>
+              <input type="text" id="wizard-icad-url" placeholder="Auto-detected" />
+              <button type="button" class="install-btn" onclick="wizardAutoDetectService('icad-transcribe', 9912, 'wizard-icad-url')" style="margin-top: 5px;">Auto-Detect</button>
+            </div>
+          </div>
+          
+          <div id="wizard-transcription-openai-settings" style="display: none; margin-top: 15px; padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+            <div class="form-group">
+              <label for="wizard-openai-api-key">OpenAI API Key:</label>
+              <input type="password" id="wizard-openai-api-key" placeholder="sk-..." />
+              <small>Required for OpenAI Whisper API</small>
+            </div>
+          </div>
+        </div>
+        
+        <!-- AI Service -->
+        <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4 style="margin-top: 0;">AI Service</h4>
+          <p style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">Choose AI provider for intelligent features:</p>
+          <select id="wizard-ai-provider" class="styled-select" style="width: 100%;">
+            <option value="ollama">Ollama (Local) - Free, runs on your machine</option>
+            <option value="openai">OpenAI - Cloud-based, best accuracy</option>
+          </select>
+          
+          <div id="wizard-ai-ollama-settings" style="margin-top: 15px; padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+            <div class="form-group">
+              <label for="wizard-ollama-url">Ollama URL:</label>
+              <input type="text" id="wizard-ollama-url" placeholder="Auto-detected" />
+              <button type="button" class="install-btn" onclick="wizardAutoDetectService('ollama', 11434, 'wizard-ollama-url')" style="margin-top: 5px;">Auto-Detect</button>
+            </div>
+            <div class="form-group">
+              <label for="wizard-ollama-model">Model:</label>
+              <input type="text" id="wizard-ollama-model" placeholder="llama3.1:8b" />
+              <small>Recommended model will be suggested based on your hardware</small>
+            </div>
+          </div>
+          
+          <div id="wizard-ai-openai-settings" style="display: none; margin-top: 15px; padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+            <div class="form-group">
+              <label for="wizard-openai-ai-api-key">OpenAI API Key:</label>
+              <input type="password" id="wizard-openai-ai-api-key" placeholder="sk-..." />
+              <small>Required for OpenAI AI features</small>
+            </div>
+            <div class="form-group">
+              <label for="wizard-openai-model">Model:</label>
+              <select id="wizard-openai-model" class="styled-select" style="width: 100%;">
+                <option value="gpt-4o-mini">gpt-4o-mini (Recommended)</option>
+                <option value="gpt-4o">gpt-4o (Best accuracy)</option>
+                <option value="gpt-3.5-turbo">gpt-3.5-turbo (Cheapest)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Step 6: Review & Apply -->
+      <div id="wizard-step-6" class="wizard-step">
+        <h3>Review Configuration</h3>
+        <p class="config-description">Review your configuration before applying. Everything will be set up automatically.</p>
+        
+        <div id="wizard-review-summary" style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; background-color: rgba(0, 51, 0, 0.2);">
+          <h4 style="margin-top: 0;">Configuration Summary</h4>
+          <div id="wizard-review-content" style="margin-top: 10px; font-family: 'Courier New', monospace; font-size: 0.9em; line-height: 1.6;"></div>
+        </div>
+        
+        <div id="wizard-validation-errors" style="display: none; margin: 20px 0; padding: 15px; border: 1px solid #ff0000; border-radius: 4px; background-color: rgba(255, 0, 0, 0.1);">
+          <h4 style="margin-top: 0; color: #ff0000;">⚠️ Configuration Issues</h4>
+          <div id="wizard-validation-errors-content" style="margin-top: 10px; color: #ff0000;"></div>
+        </div>
+        
+        <div id="wizard-apply-progress" style="display: none; margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 4px;">
+          <h4>Applying Configuration...</h4>
+          <div id="wizard-apply-status" style="margin-top: 10px;"></div>
+          <div style="width: 100%; height: 8px; background-color: rgba(0, 255, 0, 0.1); border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden; margin-top: 10px;">
+            <div id="wizard-apply-progress-bar" style="height: 100%; background-color: var(--primary-color); width: 0%; transition: width 0.3s;"></div>
+          </div>
+        </div>
+        
+        <div id="wizard-apply-success" style="display: none; margin: 20px 0; padding: 15px; border: 1px solid var(--primary-color); border-radius: 4px; background-color: rgba(0, 255, 0, 0.1);">
+          <h4 style="margin-top: 0; color: var(--primary-color);">✅ Configuration Applied Successfully!</h4>
+          <p>Scanner Map is now configured and ready to use. You can start using the application immediately.</p>
+        </div>
+      </div>
+      
+      <!-- OLD QUICK START CONTENT TO BE REMOVED -->
       <!-- Location Tab -->
-      <div id="quick-start-location-tab" class="quick-start-tab-content active">
+      <div id="quick-start-location-tab" class="quick-start-tab-content" style="display: none;">
         <h3>Location Configuration</h3>
         <p class="config-description">Configure your location for accurate geocoding of radio calls.</p>
         
@@ -1757,12 +2072,16 @@
         </div>
       </div>
       
-      <div class="modal-buttons" style="margin-top: 20px;">
-        <button type="button" class="cancel-btn" onclick="closeQuickStartModal()">Close</button>
+      <!-- Navigation Buttons -->
+      <div class="modal-buttons" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+        <button type="button" id="wizard-prev-btn" class="cancel-btn" style="display: none;">← Previous</button>
+        <button type="button" id="wizard-next-btn" class="confirm-btn">Next →</button>
+        <button type="button" id="wizard-apply-btn" class="confirm-btn" style="display: none;">Apply Configuration</button>
+        <button type="button" id="wizard-finish-btn" class="confirm-btn" style="display: none;">Finish</button>
       </div>
     </div>
   </div>
-  <!-- END Quick Start Modal -->
+  <!-- END Setup Wizard Modal -->
 
   <script src="config.js"></script>
   <script src="utils.js"></script>
@@ -1775,7 +2094,7 @@
   <script src="modals.js"></script>
   <script src="api.js"></script>
   <script src="ui.js"></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=3.1.2" defer></script>
 
   <script>
     // Function to initialize Google Maps

@@ -3609,14 +3609,20 @@ function setupUserManagement() {
         });
     }
     
-    // Quick Start button click
-    const quickStartBtn = document.getElementById('quick-start-btn');
-    if (quickStartBtn) {
-        quickStartBtn.addEventListener('click', function(e) {
+    // Setup Wizard button click
+    const setupWizardBtn = document.getElementById('setup-wizard-btn');
+    if (setupWizardBtn) {
+        setupWizardBtn.addEventListener('click', function(e) {
             e.preventDefault();
-            showQuickStartModal();
-            dropdownContent.classList.remove('show');
+            e.stopPropagation();
+            console.log('[Setup Wizard] Button clicked');
+            showSetupWizard();
+            if (dropdownContent) {
+                dropdownContent.classList.remove('show');
+            }
         });
+    } else {
+        console.error('[Setup Wizard] Setup wizard button not found!');
     }
     
     // Settings button click
@@ -3634,7 +3640,7 @@ function setupUserManagement() {
     setupModalCancelButtons();
     setupCallPurgeModal();
     setupServiceConfigModal();
-    setupQuickStartModal();
+    setupSetupWizard();
     setupSettingsModal();
 }
 
@@ -3950,7 +3956,26 @@ function setupSidebarToggle() {
 // REMOVED DOMContentLoaded listener - initializeApp is called directly now
 // document.addEventListener('DOMContentLoaded', initializeApp);
 
-document.addEventListener('DOMContentLoaded', initializeApp); // Re-add DOMContentLoaded listener
+// Check for wizard parameter immediately on page load (before DOMContentLoaded)
+(function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    const hasWizardParam = urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard';
+    
+    if (hasWizardParam) {
+        console.log('[App] Wizard parameter detected on page load, will open after initialization');
+        // Store flag for later use
+        window._pendingWizardOpen = true;
+    }
+})();
+
+// Initialize app when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    // DOM is already ready, initialize immediately
+    initializeApp();
+}
 
 // Register service worker with automatic cache clearing
 if ('serviceWorker' in navigator) {
@@ -4020,6 +4045,12 @@ if ('serviceWorker' in navigator) {
 
 function initializeApp() {
     console.log("[App] Initializing..."); // Add log
+    
+    // Force check for wizard URL parameter immediately
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    const hasWizardParam = urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard' || window._pendingWizardOpen;
+    
     // Initialize configuration variables from the config
     timeRangeHours = appConfig.time.defaultTimeRangeHours;
     heatmapIntensity = appConfig.heatmap.defaultIntensity;
@@ -4043,7 +4074,7 @@ function initializeApp() {
     setupLiveFeed();
     setupUserLocationButton(); // ADDED: Setup for the new location button
     loadCalls(timeRangeHours);
-    setupUserManagement();
+    setupUserManagement(); // This calls setupSetupWizard() internally
     setupSidebarToggle();
 
     // Initialize the category sidebar content dynamically
@@ -4058,9 +4089,48 @@ function initializeApp() {
     // Set up periodic admin status check
     setInterval(checkAdminStatus, 30000); // Check every 30 seconds
     
-    // Helper function to check and show Quick Start modal
-    const checkAndShowQuickStart = () => {
+    // Helper function to check and show Setup Wizard or Quick Start modal
+    const checkAndShowWizard = () => {
         const urlParams = new URLSearchParams(window.location.search);
+        const hash = window.location.hash;
+        
+        // Check for setup wizard (new)
+        if (urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard') {
+            console.log('[App] Setup wizard URL parameter/hash detected');
+            const modal = document.getElementById('setup-wizard-modal');
+            console.log('[App] Modal element:', modal ? 'found' : 'NOT FOUND');
+            console.log('[App] showSetupWizard function:', typeof showSetupWizard);
+            
+            // Ensure modal exists and function is available
+            if (!modal) {
+                console.error('[App] Setup wizard modal not found in DOM');
+                return false;
+            }
+            
+            if (typeof showSetupWizard !== 'function') {
+                console.error('[App] showSetupWizard function not available yet');
+                return false;
+            }
+            
+            console.log('[App] Auto-opening Setup Wizard from URL parameter/hash');
+            // Use requestAnimationFrame to ensure DOM is fully ready
+            requestAnimationFrame(() => {
+                setTimeout(() => {
+                    try {
+                        showSetupWizard();
+                        // Remove the query parameter and hash from URL (clean URL)
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                        return true; // Successfully opened
+                    } catch (error) {
+                        console.error('[App] Error opening wizard:', error);
+                        return false;
+                    }
+                }, 50);
+            });
+            return true; // Will attempt to open
+        }
+        
+        // Check for quickstart (legacy, kept for compatibility)
         if (urlParams.get('quickstart') === '1') {
             const modal = document.getElementById('quick-start-modal');
             if (modal && typeof showQuickStartModal === 'function') {
@@ -4072,7 +4142,7 @@ function initializeApp() {
             }
             return false;
         }
-        return true; // Not a quickstart URL, nothing to do
+        return true; // Not a wizard URL, nothing to do
     };
     
     fetch('/api/sessions/current')
@@ -4083,29 +4153,79 @@ function initializeApp() {
             // Re-check admin status after session setup
             checkAdminStatus();
             
-            // Try to show Quick Start modal after session setup completes
-            if (!checkAndShowQuickStart()) {
+            // Try to show Setup Wizard or Quick Start modal after session setup completes
+            if (!checkAndShowWizard()) {
                 // If modal not ready, wait a bit and retry
-                setTimeout(checkAndShowQuickStart, 500);
+                setTimeout(checkAndShowWizard, 500);
             }
         })
         .catch(error => {
             console.error('Error getting current session:', error);
             setupSessionManagement();
             
-            // Try to show Quick Start modal even if session fetch failed
-            if (!checkAndShowQuickStart()) {
-                setTimeout(checkAndShowQuickStart, 500);
+            // Try to show Setup Wizard or Quick Start modal even if session fetch failed
+            if (!checkAndShowWizard()) {
+                setTimeout(checkAndShowWizard, 500);
             }
         });
     
     loadCalls(timeRangeHours);
     
-    // Also try to show Quick Start modal after a delay (in case session fetch is slow)
+    // Also try to show Setup Wizard or Quick Start modal after a delay (in case session fetch is slow)
     setTimeout(() => {
-        checkAndShowQuickStart();
+        checkAndShowWizard();
     }, 2000);
+    
+    // If wizard parameter is present, try multiple times with increasing delays
+    if (hasWizardParam) {
+        // Try immediately after setupUserManagement (which sets up the wizard)
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after setupUserManagement (attempt 1)');
+            checkAndShowWizard();
+        }, 100);
+        
+        // Try again after a short delay
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 2)');
+            checkAndShowWizard();
+        }, 500);
+        
+        // Try again after longer delay (in case of slow initialization)
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 3)');
+            checkAndShowWizard();
+        }, 1500);
+        
+        // Final attempt
+        setTimeout(() => {
+            console.log('[App] Force checking wizard after initialization (attempt 4)');
+            checkAndShowWizard();
+        }, 3000);
+        
+        // Clear the pending flag
+        window._pendingWizardOpen = false;
+    }
 }
+
+// Also check on window load event (after all resources are loaded, including deferred scripts)
+window.addEventListener('load', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    if (urlParams.get('setup-wizard') === '1' || hash === '#setup-wizard') {
+        console.log('[App] Window loaded, final check for wizard parameter');
+        setTimeout(() => {
+            const modal = document.getElementById('setup-wizard-modal');
+            if (modal && typeof showSetupWizard === 'function') {
+                console.log('[App] Opening wizard on window load event');
+                showSetupWizard();
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+                console.warn('[App] Wizard not ready on window load - modal:', !!modal, 'function:', typeof showSetupWizard);
+            }
+        }, 200);
+    }
+});
 // Function to load and display summary
 function loadSummary() {
   fetch('/summary.json')
@@ -5740,29 +5860,382 @@ function setupServiceConfigModal() {
     }
 }
 
-// Quick Start Modal Functions
-function showQuickStartModal() {
-    const modal = document.getElementById('quick-start-modal');
+// Setup Wizard Functions
+let wizardCurrentStep = 1;
+const wizardTotalSteps = 6;
+let wizardConfig = {};
+
+function showSetupWizard() {
+    const modal = document.getElementById('setup-wizard-modal');
     if (modal) {
-        // Reset to first tab
-        switchQuickStartTab('location');
-        // Load initial data for active tabs
-        loadLocationConfig();
-        loadSystemStatus();
-        loadGPUStatus();
-        loadAutoStartStatus();
-        loadUpdateStatus();
-        loadTalkgroups();
-        loadFrequencies();
+        console.log('[Setup Wizard] Opening wizard modal');
+        wizardCurrentStep = 1;
+        wizardConfig = {};
+        updateWizardProgress();
+        showWizardStep(1);
+        startSystemDetection();
         modal.style.display = 'block';
+        console.log('[Setup Wizard] Modal display set to block');
+    } else {
+        console.error('[Setup Wizard] Modal element not found!');
     }
 }
 
-function closeQuickStartModal() {
-    const modal = document.getElementById('quick-start-modal');
+// Auto-advance past installation type step if already detected
+function autoSelectInstallationType(detections) {
+    if (detections && detections.installationType) {
+        const installType = detections.installationType;
+        wizardConfig.installationType = installType;
+        
+        // Select the radio button
+        const radio = document.querySelector(`input[name="installation-type"][value="${installType}"]`);
+        if (radio) {
+            radio.checked = true;
+            // Trigger change event to update UI
+            radio.dispatchEvent(new Event('change'));
+        }
+        
+        // Show a message that it was auto-detected
+        const warningsDiv = document.getElementById('wizard-install-warnings');
+        if (warningsDiv) {
+            warningsDiv.style.display = 'block';
+            warningsDiv.style.backgroundColor = 'rgba(0, 255, 0, 0.1)';
+            warningsDiv.style.borderColor = 'var(--primary-color)';
+            warningsDiv.innerHTML = `
+                <p style="margin: 0; color: var(--primary-color);">
+                    ✓ Installation type automatically detected: <strong>${installType === 'docker' ? 'Docker' : installType === 'hybrid' ? 'Hybrid' : 'Local'}</strong>
+                </p>
+            `;
+        }
+    }
+}
+
+function closeSetupWizard() {
+    const modal = document.getElementById('setup-wizard-modal');
     if (modal) {
         modal.style.display = 'none';
     }
+}
+
+function updateWizardProgress() {
+    try {
+        const percent = Math.round((wizardCurrentStep / wizardTotalSteps) * 100);
+        const stepIndicator = document.getElementById('wizard-step-indicator');
+        const progressPercent = document.getElementById('wizard-progress-percent');
+        const progressBar = document.getElementById('wizard-progress-bar');
+        
+        if (stepIndicator) {
+            stepIndicator.textContent = `Step ${wizardCurrentStep} of ${wizardTotalSteps}`;
+        }
+        if (progressPercent) {
+            progressPercent.textContent = `${percent}%`;
+        }
+        if (progressBar) {
+            progressBar.style.width = `${percent}%`;
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error updating progress:', error);
+    }
+}
+
+function showWizardStep(step) {
+    try {
+        // Validate step number
+        if (step < 1 || step > wizardTotalSteps) {
+            console.error('[Setup Wizard] Invalid step number:', step);
+            return;
+        }
+        
+        // Skip step 2 (installation type) if already detected (only when going forward)
+        // Don't skip when going back - allow user to see/change it
+        const isStep2Skipped = (step === 2 && wizardConfig.system && wizardConfig.system.installationType);
+        if (isStep2Skipped && wizardCurrentStep > 2) {
+            // Only skip if we're going forward, not backward
+            console.log('[Setup Wizard] Skipping installation type step, already detected:', wizardConfig.system.installationType);
+            // Auto-advance to step 3
+            step = 3;
+            wizardCurrentStep = 3;
+        }
+        
+        // Hide all steps
+        document.querySelectorAll('.wizard-step').forEach(s => {
+            s.classList.remove('active');
+            s.style.display = 'none';
+        });
+        
+        // Show current step
+        const stepEl = document.getElementById(`wizard-step-${step}`);
+        if (stepEl) {
+            stepEl.classList.add('active');
+            stepEl.style.display = 'block';
+        } else {
+            console.error('[Setup Wizard] Step element not found:', `wizard-step-${step}`);
+            return;
+        }
+        
+        // Update navigation buttons
+        const prevBtn = document.getElementById('wizard-prev-btn');
+        const nextBtn = document.getElementById('wizard-next-btn');
+        const applyBtn = document.getElementById('wizard-apply-btn');
+        const finishBtn = document.getElementById('wizard-finish-btn');
+        
+        // Calculate effective step for button display (account for skipped step 2)
+        const effectiveStep = (step === 2 && isStep2Skipped) ? 3 : step;
+        const canGoBack = effectiveStep > 1;
+        const canGoNext = effectiveStep < wizardTotalSteps;
+        
+        if (prevBtn) prevBtn.style.display = canGoBack ? 'inline-block' : 'none';
+        if (nextBtn) nextBtn.style.display = canGoNext ? 'inline-block' : 'none';
+        if (applyBtn) applyBtn.style.display = effectiveStep === wizardTotalSteps ? 'inline-block' : 'none';
+        if (finishBtn) finishBtn.style.display = 'none';
+        
+        // Load step-specific data
+        if (step === 1) {
+            // Already detecting in showSetupWizard
+        } else if (step === 4) {
+            if (typeof detectSDRDevices === 'function') {
+                detectSDRDevices();
+            }
+        } else if (step === 6) {
+            if (typeof generateReviewSummary === 'function') {
+                generateReviewSummary();
+            }
+        }
+        
+        updateWizardProgress();
+    } catch (error) {
+        console.error('[Setup Wizard] Error in showWizardStep:', error);
+        showNotification('Error displaying wizard step. Please refresh and try again.', 'error');
+    }
+}
+
+function wizardNext() {
+    try {
+        // Validate current step before proceeding
+        if (!validateWizardStep(wizardCurrentStep)) {
+            return; // Validation failed, don't proceed
+        }
+        
+        if (wizardCurrentStep < wizardTotalSteps) {
+            let nextStep = wizardCurrentStep + 1;
+            
+            // Skip step 2 if installation type is already detected
+            if (nextStep === 2 && wizardConfig.system && wizardConfig.system.installationType) {
+                nextStep = 3;
+            }
+            
+            wizardCurrentStep = nextStep;
+            showWizardStep(wizardCurrentStep);
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in wizardNext:', error);
+        showNotification('Error advancing to next step. Please try again.', 'error');
+    }
+}
+
+function wizardPrevious() {
+    try {
+        if (wizardCurrentStep > 1) {
+            let prevStep = wizardCurrentStep - 1;
+            
+            // If going back from step 3 and step 2 is skipped, go to step 1
+            if (prevStep === 2 && wizardConfig.system && wizardConfig.system.installationType) {
+                prevStep = 1;
+            }
+            
+            wizardCurrentStep = prevStep;
+            showWizardStep(wizardCurrentStep);
+        }
+    } catch (error) {
+        console.error('[Setup Wizard] Error in wizardPrevious:', error);
+        showNotification('Error going to previous step. Please try again.', 'error');
+    }
+}
+
+function validateWizardStep(step) {
+    try {
+        // Validation logic for each step
+        if (step === 2) {
+            // Skip validation if installation type is already set from detection
+            if (wizardConfig.system && wizardConfig.system.installationType) {
+                wizardConfig.installationType = wizardConfig.system.installationType;
+                return true;
+            }
+            
+            const selected = document.querySelector('input[name="installation-type"]:checked');
+            if (!selected) {
+                showNotification('Please select an installation type', 'error');
+                return false;
+            }
+            wizardConfig.installationType = selected.value;
+        } else if (step === 3) {
+            const cityEl = document.getElementById('wizard-geocoding-city');
+            const stateEl = document.getElementById('wizard-geocoding-state');
+            const countryEl = document.getElementById('wizard-geocoding-country');
+            const countiesEl = document.getElementById('wizard-geocoding-counties');
+            
+            if (!cityEl || !stateEl) {
+                console.error('[Setup Wizard] Location input elements not found');
+                return true; // Don't block if elements don't exist
+            }
+            
+            const city = cityEl.value.trim();
+            const state = stateEl.value.trim();
+            
+            if (!city || !state) {
+                showNotification('Please enter at least city and state', 'error');
+                return false;
+            }
+            
+            wizardConfig.location = {
+                city,
+                state,
+                country: (countryEl ? countryEl.value.trim() : '') || 'us',
+                counties: countiesEl ? countiesEl.value.trim() : ''
+            };
+        }
+        return true;
+    } catch (error) {
+        console.error('[Setup Wizard] Error validating step:', error);
+        // Don't block progression on validation errors
+        return true;
+    }
+}
+
+function startSystemDetection() {
+    const details = document.getElementById('wizard-detection-details');
+    if (!details) {
+        console.error('[Setup Wizard] Detection details element not found');
+        return;
+    }
+    
+    const statusItems = details.querySelectorAll('div');
+    let completed = 0;
+    
+    fetch('/api/wizard/detect-system')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                const detections = data.systemInfo || data.detections || {};
+                
+                // Update detection status
+                statusItems.forEach((item, index) => {
+                    setTimeout(() => {
+                        const icon = item.querySelector('span');
+                        if (icon) {
+                            icon.textContent = '✓';
+                            icon.style.color = '#00ff00';
+                        }
+                        completed++;
+                        if (completed === statusItems.length) {
+                            showDetectionResults(detections);
+                        }
+                    }, index * 300);
+                });
+                
+                wizardConfig.system = detections;
+                
+                // Auto-select installation type if detected
+                if (detections.installationType) {
+                    autoSelectInstallationType(detections);
+                }
+            } else {
+                console.error('[Setup Wizard] System detection failed:', data.error);
+            }
+        })
+        .catch(error => {
+            console.error('[Setup Wizard] Error detecting system:', error);
+            showNotification('Error detecting system. Continuing with defaults.', 'error');
+        });
+}
+
+function showDetectionResults(detections) {
+    const statusEl = document.getElementById('wizard-detection-status');
+    const resultsEl = document.getElementById('wizard-detection-results');
+    const summaryEl = document.getElementById('wizard-detection-summary');
+    
+    if (statusEl) statusEl.style.display = 'none';
+    if (resultsEl) resultsEl.style.display = 'block';
+    
+    if (summaryEl) {
+        let summary = '';
+        summary += `OS: ${detections.os || 'Unknown'} (${detections.arch || 'Unknown'})\n`;
+        summary += `CPU: ${detections.cpu || 'Unknown'} (${detections.cpuCores || 'Unknown'} cores)\n`;
+        summary += `RAM: ${detections.ram || 'Unknown'}\n`;
+        if (detections.gpu) {
+            summary += `GPU: ${detections.gpu.name || 'Unknown'} (${detections.gpu.vendor || 'Unknown'})\n`;
+        }
+        summary += `Docker: ${detections.docker ? 'Available' : 'Not available'}\n`;
+        summary += `SDR Devices: ${detections.sdrDevices?.length || 0} detected\n`;
+        summaryEl.textContent = summary;
+    }
+}
+
+function detectSDRDevices() {
+    fetch('/api/wizard/detect-sdr')
+        .then(response => response.json())
+        .then(data => {
+            const devicesEl = document.getElementById('wizard-sdr-devices');
+            if (devicesEl && data.success) {
+                const devices = data.devices || [];
+                if (devices.length === 0) {
+                    devicesEl.innerHTML = '<div style="padding: 10px; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;"><span style="color: #ffaa00;">⚠️ No SDR devices detected</span><br><small>You can still configure channels manually or use network-based SDR</small></div>';
+                } else {
+                    devicesEl.innerHTML = devices.map((device, index) => `
+                        <div style="padding: 10px; margin: 5px 0; background-color: rgba(0, 0, 0, 0.3); border-radius: 4px;">
+                            <strong>${device.type || 'Unknown'}</strong> - ${device.name || 'Device ' + (index + 1)}<br>
+                            <small>Serial: ${device.serial || 'N/A'} | Driver: ${device.driver || 'N/A'}</small>
+                        </div>
+                    `).join('');
+                    const rescanBtn = document.getElementById('wizard-rescan-sdr-btn');
+                    if (rescanBtn) rescanBtn.style.display = 'inline-block';
+                }
+                wizardConfig.sdrDevices = devices;
+            }
+        })
+        .catch(error => {
+            console.error('Error detecting SDR devices:', error);
+        });
+}
+
+function generateReviewSummary() {
+    const reviewEl = document.getElementById('wizard-review-content');
+    if (!reviewEl) return;
+    
+    let summary = '';
+    summary += `Installation Type: ${wizardConfig.installationType || 'Not selected'}\n`;
+    summary += `Location: ${wizardConfig.location?.city || ''}, ${wizardConfig.location?.state || ''}\n`;
+    summary += `SDR Devices: ${wizardConfig.sdrDevices?.length || 0}\n`;
+    summary += `Radio Software: ${document.getElementById('wizard-radio-software')?.value || 'Auto-detect'}\n`;
+    summary += `Transcription: ${document.getElementById('wizard-transcription-mode')?.value || 'local'}\n`;
+    summary += `AI Provider: ${document.getElementById('wizard-ai-provider')?.value || 'ollama'}\n`;
+    
+    reviewEl.textContent = summary;
+}
+
+function wizardAutoDetectService(serviceName, defaultPort, inputId) {
+    fetch(`/api/wizard/detect-service?service=${serviceName}&port=${defaultPort}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.url) {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.value = data.url;
+                    showNotification(`Auto-detected ${serviceName} at ${data.url}`, 'success');
+                }
+            } else {
+                showNotification(`Could not auto-detect ${serviceName}`, 'error');
+            }
+        })
+        .catch(error => {
+            console.error(`Error detecting ${serviceName}:`, error);
+            showNotification(`Error detecting ${serviceName}`, 'error');
+        });
 }
 
 // Settings Modal Functions
@@ -5811,6 +6284,12 @@ function switchSettingsTab(tabName) {
     } else if (tabName === 'models') {
         loadSettingsModelRecommendations();
         loadSettingsInstalledModels();
+    } else if (tabName === 'logs') {
+        refreshLogs();
+        const autoRefresh = document.getElementById('logs-auto-refresh');
+        if (autoRefresh && autoRefresh.checked) {
+            startLogsAutoRefresh();
+        }
     }
 }
 
@@ -5856,9 +6335,9 @@ function loadAllSettings() {
                 // Transcription settings - only show if enabled
                 if (s.transcriptionEnabled !== false) {
                     if (s.transcriptionMode) {
-                        const transcriptionRadio = document.querySelector(`input[name="transcription-mode"][value="${s.transcriptionMode}"]`);
-                        if (transcriptionRadio) {
-                            transcriptionRadio.checked = true;
+                        const transcriptionSelect = document.getElementById('settings-transcription-mode-select');
+                        if (transcriptionSelect) {
+                            transcriptionSelect.value = s.transcriptionMode;
                             document.getElementById('settings-transcription-mode').value = s.transcriptionMode;
                         }
                         updateTranscriptionSettingsVisibility();
@@ -5892,9 +6371,9 @@ function loadAllSettings() {
                 // AI settings - only show if enabled
                 if (s.aiEnabled !== false) {
                     if (s.aiProvider) {
-                        const aiRadio = document.querySelector(`input[name="ai-provider"][value="${s.aiProvider}"]`);
-                        if (aiRadio) {
-                            aiRadio.checked = true;
+                        const aiSelect = document.getElementById('settings-ai-provider-select');
+                        if (aiSelect) {
+                            aiSelect.value = s.aiProvider;
                             document.getElementById('settings-ai-provider').value = s.aiProvider;
                         }
                         updateAISettingsVisibility();
@@ -5958,8 +6437,8 @@ function loadAllSettings() {
 }
 
 function updateTranscriptionSettingsVisibility() {
-    const selectedRadio = document.querySelector('input[name="transcription-mode"]:checked');
-    const mode = selectedRadio ? selectedRadio.value : 'local';
+    const select = document.getElementById('settings-transcription-mode-select');
+    const mode = select ? select.value : 'local';
     
     // Update hidden input
     const hiddenInput = document.getElementById('settings-transcription-mode');
@@ -5976,8 +6455,8 @@ function updateTranscriptionSettingsVisibility() {
 }
 
 function updateAISettingsVisibility() {
-    const selectedRadio = document.querySelector('input[name="ai-provider"]:checked');
-    const provider = selectedRadio ? selectedRadio.value : 'ollama';
+    const select = document.getElementById('settings-ai-provider-select');
+    const provider = select ? select.value : 'ollama';
     
     // Update hidden input
     const hiddenInput = document.getElementById('settings-ai-provider');
@@ -6082,8 +6561,8 @@ function saveGeocodingSettings() {
 }
 
 function saveTranscriptionSettings() {
-    const selectedRadio = document.querySelector('input[name="transcription-mode"]:checked');
-    const mode = selectedRadio ? selectedRadio.value : 'local';
+    const select = document.getElementById('settings-transcription-mode-select');
+    const mode = select ? select.value : 'local';
     
     const settings = {
         transcriptionMode: mode
@@ -6120,8 +6599,8 @@ function saveServicesSettings() {
 }
 
 function saveAISettings() {
-    const selectedRadio = document.querySelector('input[name="ai-provider"]:checked');
-    const provider = selectedRadio ? selectedRadio.value : 'ollama';
+    const select = document.getElementById('settings-ai-provider-select');
+    const provider = select ? select.value : 'ollama';
     
     const settings = {
         aiProvider: provider
@@ -6133,11 +6612,20 @@ function saveAISettings() {
         const openaiKey = document.getElementById('settings-openai-api-key').value;
         if (openaiKey) settings.openaiApiKey = openaiKey;
     } else if (provider === 'ollama') {
-        const url = document.getElementById('settings-ollama-url').value || 'http://localhost';
-        const port = document.getElementById('settings-ollama-port').value || '11434';
+        const urlInput = document.getElementById('settings-ollama-url');
+        const url = urlInput ? urlInput.value || 'http://localhost' : 'http://localhost';
+        // Extract port from URL if present, otherwise use default
+        let port = '11434';
+        const urlMatch = url.match(/:(\d+)/);
+        if (urlMatch) {
+            port = urlMatch[1];
+        }
         const baseUrl = url.replace(/:\d+$/, '').replace(/\/$/, '');
         settings.ollamaUrl = `${baseUrl}:${port}`;
-        settings.ollamaModel = document.getElementById('settings-ollama-model').value;
+        const modelInput = document.getElementById('settings-ollama-model');
+        if (modelInput) {
+            settings.ollamaModel = modelInput.value;
+        }
     }
     
     saveSettings('ai', settings);
@@ -6221,15 +6709,17 @@ function setupSettingsModal() {
         });
     });
     
-    // Transcription mode radio buttons
-    document.querySelectorAll('input[name="transcription-mode"]').forEach(radio => {
-        radio.addEventListener('change', updateTranscriptionSettingsVisibility);
-    });
+    // Transcription mode dropdown
+    const transcriptionSelect = document.getElementById('settings-transcription-mode-select');
+    if (transcriptionSelect) {
+        transcriptionSelect.addEventListener('change', updateTranscriptionSettingsVisibility);
+    }
     
-    // AI provider radio buttons
-    document.querySelectorAll('input[name="ai-provider"]').forEach(radio => {
-        radio.addEventListener('change', updateAISettingsVisibility);
-    });
+    // AI provider dropdown
+    const aiProviderSelect = document.getElementById('settings-ai-provider-select');
+    if (aiProviderSelect) {
+        aiProviderSelect.addEventListener('change', updateAISettingsVisibility);
+    }
     
     // iCAD URL/Port changes - update web UI link
     const icadUrl = document.getElementById('settings-icad-url');
@@ -6281,6 +6771,28 @@ function setupSettingsModal() {
         });
     }
     
+    // External services action button
+    const externalServicesBtn = document.getElementById('external-services-action-btn');
+    if (externalServicesBtn) {
+        externalServicesBtn.addEventListener('click', handleExternalServicesAction);
+    }
+    
+    // Logs tab setup
+    const logsAutoRefresh = document.getElementById('logs-auto-refresh');
+    const logsFilter = document.getElementById('logs-filter');
+    if (logsAutoRefresh) {
+        logsAutoRefresh.addEventListener('change', function() {
+            if (this.checked) {
+                startLogsAutoRefresh();
+            } else {
+                stopLogsAutoRefresh();
+            }
+        });
+    }
+    if (logsFilter) {
+        logsFilter.addEventListener('change', refreshLogs);
+    }
+    
     // Save buttons
     const saveButtons = {
         'save-general-settings-btn': saveGeneralSettings,
@@ -6302,243 +6814,383 @@ function setupSettingsModal() {
     });
 }
 
-function switchQuickStartTab(tabName) {
-    // Hide all tab contents
-    document.querySelectorAll('.quick-start-tab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    // Remove active from all tabs
-    document.querySelectorAll('.quick-start-tab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    // Show selected tab content
-    const tabContent = document.getElementById(`quick-start-${tabName}-tab`);
-    if (tabContent) {
-        tabContent.classList.add('active');
-    }
-    // Activate selected tab button
-    const tabButton = document.querySelector(`.quick-start-tab[data-tab="${tabName}"]`);
-    if (tabButton) {
-        tabButton.classList.add('active');
-    }
+// Old Quick Start functions removed - replaced by Setup Wizard
+
+function setupSetupWizard() {
+    // Wizard navigation buttons
+    const nextBtn = document.getElementById('wizard-next-btn');
+    const prevBtn = document.getElementById('wizard-prev-btn');
+    const applyBtn = document.getElementById('wizard-apply-btn');
+    const finishBtn = document.getElementById('wizard-finish-btn');
     
-    // Start/stop service status auto-refresh based on tab
-    if (tabName === 'system') {
-        loadServiceStatus(); // Load immediately
-        startServiceStatusAutoRefresh();
-    } else if (tabName === 'models') {
-        // Load model recommendations and installed models for Models tab
-        if (typeof loadQuickStartModelRecommendations === 'function') {
-            loadQuickStartModelRecommendations();
-        }
-        if (typeof loadQuickStartInstalledModels === 'function') {
-            loadQuickStartInstalledModels();
-        }
-    } else {
-        stopServiceStatusAutoRefresh();
-    }
-}
-
-function switchRadioSubtab(subtabName) {
-    // Hide all sub-tab contents
-    document.querySelectorAll('.quick-start-subtab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    // Remove active from all sub-tabs
-    document.querySelectorAll('.quick-start-subtab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    // Show selected sub-tab content
-    let subtabContent = null;
-    if (subtabName === 'software-config') {
-        subtabContent = document.getElementById('radio-software-config-subtab');
-    } else {
-        subtabContent = document.getElementById(`radio-${subtabName}-subtab`);
-    }
-    if (subtabContent) {
-        subtabContent.classList.add('active');
-    }
-    // Activate selected sub-tab button
-    const subtabButton = document.querySelector(`.quick-start-subtab[data-subtab="${subtabName}"]`);
-    if (subtabButton) {
-        subtabButton.classList.add('active');
-    }
-}
-
-function setupQuickStartModal() {
-    // Tab switching
-    document.querySelectorAll('.quick-start-tab').forEach(tab => {
-        tab.addEventListener('click', function() {
-            const tabName = this.getAttribute('data-tab');
-            switchQuickStartTab(tabName);
+    if (nextBtn) nextBtn.addEventListener('click', wizardNext);
+    if (prevBtn) prevBtn.addEventListener('click', wizardPrevious);
+    if (applyBtn) applyBtn.addEventListener('click', applyWizardConfiguration);
+    if (finishBtn) finishBtn.addEventListener('click', closeSetupWizard);
+    
+    // Installation type selection
+    document.querySelectorAll('input[name="installation-type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const installType = this.value;
+            wizardConfig.installationType = installType;
+            updateInstallationWarnings(installType);
         });
     });
     
-    // Radio sub-tab switching
-    document.querySelectorAll('.quick-start-subtab').forEach(subtab => {
-        subtab.addEventListener('click', function() {
-            const subtabName = this.getAttribute('data-subtab');
-            switchRadioSubtab(subtabName);
-        });
-    });
-    
-    // Location configuration
-    const detectLocationBtn = document.getElementById('detect-location-btn');
+    // Location detection
+    const detectLocationBtn = document.getElementById('wizard-detect-location-btn');
     if (detectLocationBtn) {
-        detectLocationBtn.addEventListener('click', detectUserLocation);
+        detectLocationBtn.addEventListener('click', wizardDetectLocation);
     }
     
-    const saveLocationBtn = document.getElementById('save-location-btn');
-    if (saveLocationBtn) {
-        saveLocationBtn.addEventListener('click', saveLocationConfig);
+    // SDR rescan
+    const rescanSdrBtn = document.getElementById('wizard-rescan-sdr-btn');
+    if (rescanSdrBtn) {
+        rescanSdrBtn.addEventListener('click', detectSDRDevices);
     }
     
-    // System status - Install buttons
-    const installDockerBtn = document.getElementById('install-docker-btn');
-    if (installDockerBtn) {
-        installDockerBtn.addEventListener('click', function() {
-            installDependency('docker');
+    // Channel import
+    const importRadioRefBtn = document.getElementById('wizard-import-radioreference-btn');
+    const importCustomBtn = document.getElementById('wizard-import-custom-csv-btn');
+    const channelFileInput = document.getElementById('wizard-channel-file');
+    const channelDropZone = document.getElementById('wizard-channel-drop-zone');
+    
+    if (importRadioRefBtn) {
+        importRadioRefBtn.addEventListener('click', () => {
+            document.getElementById('wizard-import-section').style.display = 'block';
+            wizardConfig.importType = 'radioreference';
+        });
+    }
+    if (importCustomBtn) {
+        importCustomBtn.addEventListener('click', () => {
+            document.getElementById('wizard-import-section').style.display = 'block';
+            wizardConfig.importType = 'custom';
+        });
+    }
+    if (channelFileInput) {
+        channelFileInput.addEventListener('change', handleWizardChannelImport);
+    }
+    if (channelDropZone) {
+        channelDropZone.addEventListener('click', () => channelFileInput?.click());
+        channelDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            channelDropZone.style.borderColor = 'var(--primary-color)';
+        });
+        channelDropZone.addEventListener('dragleave', () => {
+            channelDropZone.style.borderColor = 'var(--border-color)';
+        });
+        channelDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            channelDropZone.style.borderColor = 'var(--border-color)';
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.csv')) {
+                channelFileInput.files = files;
+                handleWizardChannelImport({ target: channelFileInput });
+            }
         });
     }
     
-    const installNodejsBtn = document.getElementById('install-nodejs-btn');
-    if (installNodejsBtn) {
-        installNodejsBtn.addEventListener('click', function() {
-            installDependency('nodejs');
+    // Transcription mode change
+    const transcriptionMode = document.getElementById('wizard-transcription-mode');
+    if (transcriptionMode) {
+        transcriptionMode.addEventListener('change', function() {
+            document.getElementById('wizard-transcription-icad-settings').style.display = 
+                this.value === 'icad' ? 'block' : 'none';
+            document.getElementById('wizard-transcription-openai-settings').style.display = 
+                this.value === 'openai' ? 'block' : 'none';
         });
     }
     
-    const installPythonBtn = document.getElementById('install-python-btn');
-    if (installPythonBtn) {
-        installPythonBtn.addEventListener('click', function() {
-            installDependency('python');
+    // AI provider change
+    const aiProvider = document.getElementById('wizard-ai-provider');
+    if (aiProvider) {
+        aiProvider.addEventListener('change', function() {
+            document.getElementById('wizard-ai-ollama-settings').style.display = 
+                this.value === 'ollama' ? 'block' : 'none';
+            document.getElementById('wizard-ai-openai-settings').style.display = 
+                this.value === 'openai' ? 'block' : 'none';
         });
     }
     
-    // Service installation buttons
-    const installOllamaLocalBtn = document.getElementById('install-ollama-local-btn');
-    if (installOllamaLocalBtn) {
-        installOllamaLocalBtn.addEventListener('click', function() {
-            installService('ollama', false);
+    // Clear import
+    const clearImportBtn = document.getElementById('wizard-clear-import-btn');
+    if (clearImportBtn) {
+        clearImportBtn.addEventListener('click', () => {
+            wizardConfig.importedChannels = null;
+            wizardConfig.importedFrequencies = null;
+            document.getElementById('wizard-imported-channels').style.display = 'none';
         });
     }
+}
+
+function updateInstallationWarnings(installType) {
+    const warningsEl = document.getElementById('wizard-install-warnings');
+    if (!warningsEl) return;
     
-    const installOllamaDockerBtn = document.getElementById('install-ollama-docker-btn');
-    if (installOllamaDockerBtn) {
-        installOllamaDockerBtn.addEventListener('click', function() {
-            installService('ollama', true);
+    let warnings = [];
+    if (installType === 'docker' && !wizardConfig.system?.docker) {
+        warnings.push('⚠️ Docker is not available. Please install Docker first.');
+    }
+    if (installType === 'local' && wizardConfig.system?.docker) {
+        warnings.push('ℹ️ Docker is available but you chose local installation.');
+    }
+    
+    if (warnings.length > 0) {
+        warningsEl.innerHTML = warnings.map(w => `<div style="padding: 10px; margin: 5px 0; background-color: rgba(255, 170, 0, 0.1); border: 1px solid #ffaa00; border-radius: 4px;">${w}</div>`).join('');
+        warningsEl.style.display = 'block';
+    } else {
+        warningsEl.style.display = 'none';
+    }
+}
+
+function wizardDetectLocation() {
+    const statusEl = document.getElementById('wizard-location-detect-status');
+    if (statusEl) statusEl.textContent = 'Detecting...';
+    
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                
+                // Reverse geocode to get address
+                fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const address = data.address || {};
+                        if (document.getElementById('wizard-geocoding-city')) {
+                            document.getElementById('wizard-geocoding-city').value = address.city || address.town || address.village || '';
+                        }
+                        if (document.getElementById('wizard-geocoding-state')) {
+                            document.getElementById('wizard-geocoding-state').value = address.state || address.region || '';
+                        }
+                        if (document.getElementById('wizard-geocoding-country')) {
+                            document.getElementById('wizard-geocoding-country').value = (address.country_code || 'us').toLowerCase();
+                        }
+                        
+                        if (statusEl) statusEl.textContent = '✓ Location detected';
+                        if (statusEl) statusEl.style.color = '#00ff00';
+                        
+                        // Show map
+                        const mapContainer = document.getElementById('wizard-location-map-container');
+                        if (mapContainer) {
+                            mapContainer.style.display = 'block';
+                            if (!window.wizardMap) {
+                                window.wizardMap = L.map('wizard-location-map-container').setView([lat, lng], 13);
+                                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(window.wizardMap);
+                                L.marker([lat, lng]).addTo(window.wizardMap).bindPopup('Your location').openPopup();
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error reverse geocoding:', error);
+                        if (statusEl) statusEl.textContent = 'Location detected but address lookup failed';
+                    });
+            },
+            (error) => {
+                if (statusEl) {
+                    statusEl.textContent = 'Location detection failed. Please enter manually.';
+                    statusEl.style.color = '#ff0000';
+                }
+            }
+        );
+    } else {
+        if (statusEl) {
+            statusEl.textContent = 'Geolocation not supported. Please enter manually.';
+            statusEl.style.color = '#ff0000';
+        }
+    }
+}
+
+function handleWizardChannelImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        
+        // Detect format (RadioReference or custom)
+        const isRadioReference = headers.includes('decimal') && headers.includes('alpha tag');
+        
+        let talkgroups = [];
+        let frequencies = [];
+        
+        for (let i = 1; i < lines.length && i < 11; i++) {
+            const values = lines[i].split(',').map(v => v.trim());
+            if (isRadioReference) {
+                const decIndex = headers.indexOf('decimal');
+                const alphaIndex = headers.indexOf('alpha tag');
+                const descIndex = headers.indexOf('description');
+                if (decIndex >= 0 && values[decIndex]) {
+                    talkgroups.push({
+                        dec: values[decIndex],
+                        alpha: alphaIndex >= 0 ? values[alphaIndex] : '',
+                        description: descIndex >= 0 ? values[descIndex] : ''
+                    });
+                }
+            }
+        }
+        
+        // Show preview
+        const previewEl = document.getElementById('wizard-import-preview');
+        if (previewEl) {
+            previewEl.style.display = 'block';
+            previewEl.textContent = `Found ${talkgroups.length} talkgroups in preview (first 10 rows)\nFull file will be processed on import.`;
+        }
+        
+        // Process full file
+        processWizardChannelFile(text, isRadioReference);
+    };
+    reader.readAsText(file);
+}
+
+function processWizardChannelFile(text, isRadioReference) {
+    const lines = text.split('\n').filter(l => l.trim());
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    
+    let talkgroups = [];
+    let frequencies = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        if (isRadioReference) {
+            const decIndex = headers.indexOf('decimal');
+            const hexIndex = headers.indexOf('hex');
+            const alphaIndex = headers.indexOf('alpha tag');
+            const modeIndex = headers.indexOf('mode');
+            const descIndex = headers.indexOf('description');
+            const tagIndex = headers.indexOf('tag');
+            const countyIndex = headers.indexOf('county');
+            
+            if (decIndex >= 0 && values[decIndex]) {
+                talkgroups.push({
+                    dec: parseInt(values[decIndex]),
+                    hex: hexIndex >= 0 ? values[hexIndex] : '',
+                    alphaTag: alphaIndex >= 0 ? values[alphaIndex] : '',
+                    mode: modeIndex >= 0 ? values[modeIndex] : '',
+                    description: descIndex >= 0 ? values[descIndex] : '',
+                    tag: tagIndex >= 0 ? values[tagIndex] : '',
+                    county: countyIndex >= 0 ? values[countyIndex] : ''
+                });
+            }
+        }
+    }
+    
+    wizardConfig.importedChannels = talkgroups;
+    wizardConfig.importedFrequencies = frequencies;
+    
+    // Update UI
+    const importedEl = document.getElementById('wizard-imported-channels');
+    if (importedEl) {
+        importedEl.style.display = 'block';
+        document.getElementById('wizard-imported-count').textContent = talkgroups.length;
+        document.getElementById('wizard-imported-freq-count').textContent = frequencies.length;
+    }
+    
+    showNotification(`Imported ${talkgroups.length} talkgroups and ${frequencies.length} frequencies`, 'success');
+}
+
+function applyWizardConfiguration() {
+    // Collect all configuration
+    const config = {
+        installationType: wizardConfig.installationType,
+        location: wizardConfig.location,
+        sdrDevices: wizardConfig.sdrDevices || [],
+        radioSoftware: document.getElementById('wizard-radio-software')?.value || '',
+        transcriptionMode: document.getElementById('wizard-transcription-mode')?.value || 'local',
+        aiProvider: document.getElementById('wizard-ai-provider')?.value || 'ollama',
+        importedChannels: wizardConfig.importedChannels || [],
+        importedFrequencies: wizardConfig.importedFrequencies || []
+    };
+    
+    // Add service-specific config
+    if (config.transcriptionMode === 'icad') {
+        config.icadUrl = document.getElementById('wizard-icad-url')?.value || '';
+    } else if (config.transcriptionMode === 'openai') {
+        config.openaiApiKey = document.getElementById('wizard-openai-api-key')?.value || '';
+    }
+    
+    if (config.aiProvider === 'ollama') {
+        config.ollamaUrl = document.getElementById('wizard-ollama-url')?.value || '';
+        config.ollamaModel = document.getElementById('wizard-ollama-model')?.value || 'llama3.1:8b';
+    } else if (config.aiProvider === 'openai') {
+        config.openaiAiApiKey = document.getElementById('wizard-openai-ai-api-key')?.value || '';
+        config.openaiModel = document.getElementById('wizard-openai-model')?.value || 'gpt-4o-mini';
+    }
+    
+    // Validate
+    const errors = validateWizardConfig(config);
+    if (errors.length > 0) {
+        const errorsEl = document.getElementById('wizard-validation-errors');
+        const errorsContent = document.getElementById('wizard-validation-errors-content');
+        if (errorsEl && errorsContent) {
+            errorsEl.style.display = 'block';
+            errorsContent.innerHTML = errors.map(e => `<div>• ${e}</div>`).join('');
+        }
+        return;
+    }
+    
+    // Apply configuration
+    const progressEl = document.getElementById('wizard-apply-progress');
+    const statusEl = document.getElementById('wizard-apply-status');
+    const progressBar = document.getElementById('wizard-apply-progress-bar');
+    
+    if (progressEl) progressEl.style.display = 'block';
+    if (statusEl) statusEl.textContent = 'Generating configuration...';
+    if (progressBar) progressBar.style.width = '20%';
+    
+    fetch('/api/wizard/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (progressBar) progressBar.style.width = '100%';
+                if (statusEl) statusEl.textContent = 'Configuration applied successfully!';
+                
+                setTimeout(() => {
+                    const successEl = document.getElementById('wizard-apply-success');
+                    const applyBtn = document.getElementById('wizard-apply-btn');
+                    if (progressEl) progressEl.style.display = 'none';
+                    if (successEl) successEl.style.display = 'block';
+                    if (applyBtn) applyBtn.style.display = 'none';
+                    const finishBtn = document.getElementById('wizard-finish-btn');
+                    if (finishBtn) finishBtn.style.display = 'inline-block';
+                }, 1000);
+            } else {
+                if (statusEl) statusEl.textContent = `Error: ${data.error || 'Unknown error'}`;
+                showNotification('Error applying configuration', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error applying configuration:', error);
+            if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+            showNotification('Error applying configuration', 'error');
         });
+}
+
+function validateWizardConfig(config) {
+    const errors = [];
+    
+    if (!config.installationType) {
+        errors.push('Installation type is required');
+    }
+    if (!config.location || !config.location.city || !config.location.state) {
+        errors.push('Location (city and state) is required');
+    }
+    if (config.transcriptionMode === 'openai' && !config.openaiApiKey) {
+        errors.push('OpenAI API key is required for OpenAI Whisper API');
+    }
+    if (config.aiProvider === 'openai' && !config.openaiAiApiKey) {
+        errors.push('OpenAI API key is required for OpenAI AI provider');
     }
     
-    const installFasterWhisperBtn = document.getElementById('install-faster-whisper-btn');
-    if (installFasterWhisperBtn) {
-        installFasterWhisperBtn.addEventListener('click', function() {
-            installService('faster-whisper', false);
-        });
-    }
-    
-    const installIcadLocalBtn = document.getElementById('install-icad-local-btn');
-    if (installIcadLocalBtn) {
-        installIcadLocalBtn.addEventListener('click', function() {
-            installService('icad-transcribe', false);
-        });
-    }
-    
-    const installIcadDockerBtn = document.getElementById('install-icad-docker-btn');
-    if (installIcadDockerBtn) {
-        installIcadDockerBtn.addEventListener('click', function() {
-            installService('icad-transcribe', true);
-        });
-    }
-    
-    // GPU configuration
-    const gpuEnabledCheckbox = document.getElementById('gpu-enabled-checkbox');
-    if (gpuEnabledCheckbox) {
-        gpuEnabledCheckbox.addEventListener('change', function() {
-            saveGPUConfig(this.checked);
-        });
-    }
-    
-    const installNvidiaToolkitBtn = document.getElementById('install-nvidia-toolkit-btn');
-    if (installNvidiaToolkitBtn) {
-        installNvidiaToolkitBtn.addEventListener('click', installNvidiaToolkit);
-    }
-    
-    // Auto-start configuration
-    const autostartEnabledCheckbox = document.getElementById('autostart-enabled-checkbox');
-    if (autostartEnabledCheckbox) {
-        autostartEnabledCheckbox.addEventListener('change', function() {
-            saveAutoStartConfig(this.checked);
-        });
-    }
-    
-    // Updates
-    const checkUpdatesBtn = document.getElementById('check-updates-btn');
-    if (checkUpdatesBtn) {
-        checkUpdatesBtn.addEventListener('click', checkForUpdates);
-    }
-    
-    const installUpdateBtn = document.getElementById('install-update-btn');
-    if (installUpdateBtn) {
-        installUpdateBtn.addEventListener('click', installUpdate);
-    }
-    
-    const autoUpdateCheckbox = document.getElementById('auto-update-checkbox');
-    if (autoUpdateCheckbox) {
-        autoUpdateCheckbox.addEventListener('change', function() {
-            saveUpdateConfig(this.checked);
-        });
-    }
-    
-    // Radio configuration - Talkgroups
-    const addTalkgroupBtn = document.getElementById('add-talkgroup-btn');
-    if (addTalkgroupBtn) {
-        addTalkgroupBtn.addEventListener('click', function() {
-            showTalkgroupEditForm();
-        });
-    }
-    
-    const saveTalkgroupBtn = document.getElementById('save-talkgroup-btn');
-    if (saveTalkgroupBtn) {
-        saveTalkgroupBtn.addEventListener('click', saveTalkgroup);
-    }
-    
-    const cancelTalkgroupBtn = document.getElementById('cancel-talkgroup-btn');
-    if (cancelTalkgroupBtn) {
-        cancelTalkgroupBtn.addEventListener('click', function() {
-            document.getElementById('talkgroup-edit-form').style.display = 'none';
-        });
-    }
-    
-    // Radio configuration - Frequencies
-    const addFrequencyBtn = document.getElementById('add-frequency-btn');
-    if (addFrequencyBtn) {
-        addFrequencyBtn.addEventListener('click', function() {
-            showFrequencyEditForm();
-        });
-    }
-    
-    const saveFrequencyBtn = document.getElementById('save-frequency-btn');
-    if (saveFrequencyBtn) {
-        saveFrequencyBtn.addEventListener('click', saveFrequency);
-    }
-    
-    const cancelFrequencyBtn = document.getElementById('cancel-frequency-btn');
-    if (cancelFrequencyBtn) {
-        cancelFrequencyBtn.addEventListener('click', function() {
-            document.getElementById('frequency-edit-form').style.display = 'none';
-        });
-    }
-    
-    // Setup CSV import
-    setupCSVImport('talkgroups');
-    setupCSVImport('frequencies');
-    
-    // Setup radio software detection and configuration
-    setupRadioSoftwareConfig();
-    
-    // Setup AI commands
-    setupAICommands();
+    return errors;
 }
 
 // Radio Software Detection and Configuration Functions
@@ -7439,6 +8091,117 @@ function pollModelPullStatus(service, jobId, modelName) {
     };
     
     poll();
+}
+
+// External services action handler
+let externalServicesActionState = 'configure'; // 'configure', 'launch', 'load'
+function handleExternalServicesAction() {
+    const btn = document.getElementById('external-services-action-btn');
+    const textSpan = document.getElementById('external-services-action-text');
+    
+    if (externalServicesActionState === 'configure') {
+        // Auto-detect and configure services
+        showNotification('Auto-detecting service URLs...', 'info');
+        
+        Promise.all([
+            autoDetectServiceUrl('ollama', 11434, 'settings-services-ollama-url'),
+            autoDetectServiceUrl('icad-transcribe', 9912, 'settings-services-icad-url')
+        ]).then(() => {
+            showNotification('Service URLs auto-detected', 'success');
+            externalServicesActionState = 'launch';
+            if (textSpan) textSpan.textContent = 'Launch Services';
+        }).catch(err => {
+            showNotification('Error detecting services: ' + err.message, 'error');
+        });
+    } else if (externalServicesActionState === 'launch') {
+        // Launch/start services (if Docker)
+        showNotification('Checking service status...', 'info');
+        loadSettingsServiceStatus();
+        externalServicesActionState = 'load';
+        if (textSpan) textSpan.textContent = 'Load Service Status';
+    } else if (externalServicesActionState === 'load') {
+        // Refresh service status
+        loadSettingsServiceStatus();
+        showNotification('Service status refreshed', 'success');
+        externalServicesActionState = 'configure';
+        if (textSpan) textSpan.textContent = 'Configure & Launch Services';
+    }
+}
+
+// Logs functions
+let logsAutoRefreshInterval = null;
+function startLogsAutoRefresh() {
+    if (logsAutoRefreshInterval) return;
+    logsAutoRefreshInterval = setInterval(refreshLogs, 5000);
+}
+
+function stopLogsAutoRefresh() {
+    if (logsAutoRefreshInterval) {
+        clearInterval(logsAutoRefreshInterval);
+        logsAutoRefreshInterval = null;
+    }
+}
+
+function refreshLogs() {
+    const filter = document.getElementById('logs-filter');
+    const filterValue = filter ? filter.value : 'all';
+    const content = document.getElementById('logs-content');
+    
+    if (!content) return;
+    
+    fetch(`/api/logs?filter=${filterValue}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.logs) {
+                content.textContent = data.logs;
+                // Auto-scroll to bottom
+                const container = document.getElementById('logs-container');
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            } else {
+                content.textContent = 'No logs available';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading logs:', error);
+            content.textContent = 'Error loading logs: ' + error.message;
+        });
+}
+
+function clearLogsDisplay() {
+    const content = document.getElementById('logs-content');
+    if (content) {
+        content.textContent = '';
+    }
+}
+
+function downloadLogs() {
+    const filter = document.getElementById('logs-filter');
+    const filterValue = filter ? filter.value : 'all';
+    
+    fetch(`/api/logs?filter=${filterValue}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.logs) {
+                const blob = new Blob([data.logs], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scanner-map-logs-${filterValue}-${new Date().toISOString().split('T')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showNotification('Logs downloaded', 'success');
+            } else {
+                showNotification('No logs to download', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error downloading logs:', error);
+            showNotification('Error downloading logs', 'error');
+        });
 }
 
 // Settings-specific functions
