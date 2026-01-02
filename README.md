@@ -1,4 +1,5 @@
-# Scanner Map
+# Scanner Map [![Discord](https://img.shields.io/badge/Discord-Join%20Now-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/X7vej75zZy)
+
 
 A **real-time mapping system** for radio calls.  
 Ingests calls from SDRTrunk, TrunkRecorder, or any **rdio-scanner compatible endpoint**, then:
