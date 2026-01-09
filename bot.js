@@ -5016,9 +5016,10 @@ async function generateSummary(transcriptions) {
 
 First, write a concise summary (2-3 sentences long max) of notable activity in the past ${LOOKBACK_HOURS} ${LOOKBACK_HOURS === 1 ? 'hour' : 'hours'} (from ${earliestTime} to ${latestTime}).
 
-Then, I'veselected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
+Then, I've selected ${highlightSelections.length} important transmissions from different time periods for you to analyze. For EACH of these transmissions, provide:
 1) A clear, detailed description of what's happening (1 sentence long max)
-2) An importance rating (High/Medium/Low)
+2) Do not over generalize the details. Keep things like addresses, street names, license plate numbers/etc.
+3) An importance rating (High/Medium/Low)
 
 The transmissions I've selected span across the hour to give a representative view:
 ${JSON.stringify(highlightSelections)}
