@@ -3098,10 +3098,10 @@ function handleNewAudio(audioData) {
             logger.info(`[MERGED CHECK] srcList variable exists: ${typeof srcList !== 'undefined'}, value: ${srcList === null ? 'null' : srcList === undefined ? 'undefined' : 'has value'}`);
             
             const hasSrcList = srcList && (typeof srcList === 'string' ? srcList.trim() !== '' && srcList.trim() !== '[]' : (srcList !== null && srcList !== undefined));
-            logger.info(`[MERGED CHECK] hasSrcList=${hasSrcList}, srcList type=${typeof srcList}`);
+            /* logger.info(`[MERGED CHECK] hasSrcList=${hasSrcList}, srcList type=${typeof srcList}`); */
             
             if (!hasSrcList) {
-              logger.warn(`[MERGED CHECK] No srcList available for ID ${transcriptionId}, skipping merged call detection`);
+              /* logger.warn(`[MERGED CHECK] No srcList available for ID ${transcriptionId}, skipping merged call detection`); */
             }
             
             const merged = (isTrunkRecorder || hasSrcList) && isMergedCall(srcList);
